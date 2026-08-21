@@ -1,16 +1,19 @@
-# Repo Onboarding Agent 设计文档
+# Code Reader Agent 设计文档
 
 - **创建日期**：2026-08-20
+- **最后更新**：2026-08-21（改名 + §7 待决问题全部澄清）
 - **状态**：设计阶段（待 review）
 - **目标版本**：v1 MVP
 - **License**：MIT
 - **作者**：泰哥
 
+> **改名说明**：项目原名 "Repo Onboarding Agent"，2026-08-21 改名为 "Code Reader Agent"。设计文档文件名保留原命名以保留历史,内容统一用新名。
+
 ---
 
 ## 0. 项目定位（一句话 + 故事）
 
-> Claude Code + 手写 CLAUDE.md 是个人高手读大 repo 的方案；Repo Onboarding Agent 把这套高手玩法**自动化、结构化、团队化、产品化**——3 分钟自动建索引 vs 手写半个月、结构化调用图查询 vs 自然语言笔记推理、团队共享 vs 个人笔记、可评测 vs 体感。
+> Claude Code + 手写 CLAUDE.md 是个人高手读大 repo 的方案；Code Reader Agent 把这套高手玩法**自动化、结构化、团队化、产品化**——3 分钟自动建索引 vs 手写半个月、结构化调用图查询 vs 自然语言笔记推理、团队共享 vs 个人笔记、可评测 vs 体感。
 
 ### 前传故事（面试叙事核心）
 
@@ -18,7 +21,7 @@
 
 ### 四大差异化（扛住"Claude Code + 好 prompt 不就行了"的追问）
 
-| 维度 | Claude Code + 手写 CLAUDE.md | Repo Onboarding Agent |
+| 维度 | Claude Code + 手写 CLAUDE.md | Code Reader Agent |
 |------|------------------------------|------------------------|
 | 建索引成本 | 人类高手手写，单 repo 半个月 | Agent 自动建，3 分钟 |
 | 知识形态 | 自然语言笔记（LLM 读） | 结构化 AST + 调用图（程序查） |
@@ -34,6 +37,14 @@
 ### 一句话定位
 
 丢一个 GitHub repo URL 进去，Agent 花 1-3 分钟构建"代码库地图"，然后能用自然语言问"支付模块怎么工作"这类问题，它跨文件追踪调用链、带源码引用回答；还能产出可分享的 onboarding 文档。
+
+### LLM 接入说明（关键架构决策）
+
+项目本身**不绑死任何模型厂商**，支持用户自带任意 **OpenAI 兼容 endpoint**：
+- 用户配置 `base_url` + `api_key` + `model_name`，agent_core 用这个调
+- 兼容 OpenAI / DeepSeek / 通义千问 / Moonshot / 本地 Ollama / 自部署 vLLM 等
+- 配置项在 `~/.code-reader/settings.json` 或环境变量 `CODE_READER_LLM_*`
+- 推荐组合：索引摘要用便宜模型（如 DeepSeek-V3），Agent 循环用强模型（如 Claude / GPT-4），用户可分别配置
 
 ### 三层架构
 
@@ -182,19 +193,19 @@ while not done and budget_remaining:
   - 引用准确率（引用的文件行号对得上 ground truth 的比例）
   - 调用链完整率（多跳题追到的真实链长度 / 应有链长度）
 - **输出**：一份 ablation 表格，行是三类问题，列是四种方法，格子里是分数——**面试杀手锏**
-- **自动化**：`onboard eval run --suite v1 --repo fastapi` 一条命令跑完，产出 HTML 报告
+- **自动化**：`code-reader eval run --suite v1 --repo fastapi` 一条命令跑完，产出 HTML 报告
 
 ### 2.6 cli + web —— 入口
 
 **CLI 命令**：
-- `onboard index <repo_url>` —— 建索引
-- `onboard ask "<question>"` —— 问问题
-- `onboard doc` —— 生成 onboarding 文档
-- `onboard eval <suite>` —— 跑评测
-- `onboard traces list/clean/export` —— trace 管理
-- `onboard ask --resume <session_id>` / `--continue` —— 恢复上次对话
+- `code-reader index <repo_url>` —— 建索引
+- `code-reader ask "<question>"` —— 问问题
+- `code-reader doc` —— 生成 onboarding 文档
+- `code-reader eval <suite>` —— 跑评测
+- `code-reader traces list/clean/export` —— trace 管理
+- `code-reader ask --resume <session_id>` / `--continue` —— 恢复上次对话
 
-**Web 端**：极简，输入 repo URL + 问题，在线问答。MVP 只支持公开 repo + 用户自带 API key（省 token 钱）。
+**Web 端**：FastAPI 后端 + 前端页面（开发时使用 `frontend-design` skill 设计），输入 repo URL + 问题，在线问答。MVP 只支持公开 repo + 用户自带 LLM API key（省 token 钱，与 CLI 共享同一套 LLM 配置）。
 
 ### 组件依赖关系
 
@@ -258,7 +269,7 @@ user_question
 ### 3.3 三类落盘文件（职责分离）
 
 ```
-~/.repo-onboarding/
+~/.code-reader/
 ├── indices/<repo_hash>/         # 索引产物
 │   ├── ast.db                    # AST/符号/调用图 (SQLite)
 │   ├── repo_map.json             # 三层摘要
@@ -278,14 +289,14 @@ user_question
 
 **trace 文件策略**：
 - 默认开（评测/self-improvement/bug 复现都需要）
-- `onboard ask --no-trace` 给隐私敏感用户关闭选项
+- `code-reader ask --no-trace` 给隐私敏感用户关闭选项
 - 自动清理：traces 默认保留 7 天 + 总量上限 100MB，超了自动删最旧的
-- `onboard traces list/clean/export` 命令管理
+- `code-reader traces list/clean/export` 命令管理
 
 **session resume**：
 - CLI 启动时检测未结束 session
-- `onboard ask --resume <session_id>` 恢复：加载 messages + repo_ref → 继续对话
-- `onboard ask --continue`：恢复最近一次 session
+- `code-reader ask --resume <session_id>` 恢复：加载 messages + repo_ref → 继续对话
+- `code-reader ask --continue`：恢复最近一次 session
 - session 过期：30 天未更新归档，90 天清理
 
 > **概念区分**：trace = 过去发生的事的录像（完整可复现）；memory = 从多次问答沉淀的知识（未来要用的，v1.5）；session state = 当前会话的轻量状态（可恢复对话）。三者职责不同，不混在一个文件里。
@@ -295,7 +306,7 @@ user_question
 - **结构化日志**：structlog，每个组件一条 pipeline id 贯穿
 - **指标**：索引耗时、索引文件数、Agent 步数、token 消耗、cache 命中率、工具调用次数
 - **trace 文件**：每次问答落一份 JSONL，方便调试和评测
-- **`onboard debug`** 命令：导出最近 N 次问答的 trace，用户提 issue 时附上
+- **`code-reader debug`** 命令：导出最近 N 次问答的 trace，用户提 issue 时附上
 
 ### 3.5 缓存与增量
 
@@ -374,7 +385,7 @@ user_question
 
 **输出**：ablation 表格——行是三类问题，列是四种方法（本 Agent / Claude 裸 / Claude 塞 repo / RAG），格子里是分数。**面试杀手锏**。
 
-**自动化**：`onboard eval run --suite v1 --repo fastapi` 一条命令跑完，产出 HTML 报告。
+**自动化**：`code-reader eval run --suite v1 --repo fastapi` 一条命令跑完，产出 HTML 报告。
 
 ### 4.4 手测 / 狗食
 
@@ -412,7 +423,7 @@ user_question
 ### 5.2 README.md 结构
 
 ```
-# Repo Onboarding Agent
+# Code Reader Agent
 > 一句话：3 分钟让陌生代码库变成可问答、可追踪调用链、可生成 onboarding 文档。
 
 ## 为什么有这个项目
@@ -467,7 +478,7 @@ MIT
 
 | 形态 | 渠道 | 目标用户 |
 |------|------|---------|
-| pip 包 | PyPI | Python 开发者，`pip install repo-onboarding` |
+| pip 包 | PyPI | Python 开发者，`pip install code-reader` |
 | 源码 clone | GitHub | 想看源码/自己改的开发者 |
 | Web 端 | 自部署 / 免费托管（Vercel/Render） | 不想装 Python 的社区用户 |
 | Docker | Docker Hub | 想自部署 Web 端的团队 |
@@ -518,10 +529,16 @@ MIT
 
 ---
 
-## 7. 待决问题（v1 实现前需明确）
+## 7. 已决问题（原待决，2026-08-21 全部澄清）
 
-- [ ] 大 repo 杀手锏题选哪个开源项目子模块（django / tensorflow / kubernetes 之一？）
-- [ ] TS 评测 repo 选哪个（typescript-eslint / nx / nest？）
-- [ ] LLM mock 工具自研还是用现成（如 respx / pytest-llm）
-- [ ] Web 端技术栈（FastAPI + 极简前端 / Streamlit / Gradio）
-- [ ] pip 包名是否就叫 `repo-onboarding`（PyPI 重名检查）
+- [x] **大 repo 杀手锏题** → **kubernetes**（Go，>20 万行，同时验证 Go AST 交叉验证能力）
+- [x] **TS 评测 repo** → **nest**（NestJS，中大型 TS 项目）
+- [x] **LLM mock 工具** → 自研轻量 `MockLLM` 类（约 50 行，按调用顺序返回预设响应），不引外部库
+- [x] **Web 端技术栈** → **FastAPI 后端 + 前端页面用 `frontend-design` skill 设计**
+- [x] **pip 包名** → `code-reader`（项目改名 code-reader-agent 后定）
+
+## 8. 关键架构决策汇总（2026-08-21 新增）
+
+1. **LLM 接入不绑死厂商**：支持任意 OpenAI 兼容 endpoint（base_url + api_key + model_name），用户自带。推荐组合：摘要用便宜模型、Agent 循环用强模型，可分别配置。
+2. **Web 前端开发流程**：实现阶段调用 `superpowers:frontend-design` skill 设计前端页面（非凭空手写）。
+3. **改名**：项目原名 Repo Onboarding Agent → Code Reader Agent。pip 包名 `code-reader`，CLI 命令 `code-reader`，配置目录 `~/.code-reader/`。

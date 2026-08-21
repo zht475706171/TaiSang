@@ -1,6 +1,7 @@
-# Repo Onboarding Agent 项目上下文
+# Code Reader Agent 项目上下文
 
 > 跨 session 共享的项目理解。下次开 session 先读这份 + 设计文档，立刻接续。
+> 项目原名 Repo Onboarding Agent，2026-08-21 改名为 Code Reader Agent。
 
 ## 一句话项目定位
 
@@ -8,14 +9,17 @@
 
 ## 项目元信息
 
-- **路径**：`D:/GoProject/Repo-Onboarding-Agent/`
+- **路径**：`D:/GoProject/Repo-Onboarding-Agent/`（目录名暂不改,内部代码/包名用 code-reader）
 - **License**：MIT
-- **技术栈**：Python
+- **技术栈**：Python（后端）+ FastAPI（Web 后端）+ 前端用 frontend-design skill 设计
 - **支持语言（v1）**：Python / JS / TS / Java / Go（5 门）
 - **时间投入**：业余 2-3 个月
 - **首发渠道**：开发者社区引流（开源免费）
 - **目标用户**：开发者（开源社区引流来的）
 - **商业目标**：v1 上线 + 几个真实用户（不追营收）
+- **pip 包名**：`code-reader`
+- **CLI 命令**：`code-reader <subcommand>`
+- **配置目录**：`~/.code-reader/`
 
 ## 前传故事（面试叙事核心）
 
@@ -26,6 +30,14 @@
 1. **接入层**：CLI + 极简 Web（共享 agent_core）
 2. **Agent 内核**：从 claude-code 抽的核心循环（plan→act→observe→reflect）+ 5 工具（read_file/grep/glob/trace_call_chain/lookup_map）+ 上下文预算管理
 3. **索引层**：tree-sitter 多语言解析 + 跨文件 linker + 三层摘要 + Chroma 向量库 + BM25 + SQLite
+
+## LLM 接入（关键架构决策 2026-08-21）
+
+**不绑死任何模型厂商**,支持用户自带任意 OpenAI 兼容 endpoint:
+- 配置 `base_url` + `api_key` + `model_name`,agent_core 用这个调
+- 兼容 OpenAI / DeepSeek / 通义千问 / Moonshot / 本地 Ollama / 自部署 vLLM 等
+- 配置在 `~/.code-reader/settings.json` 或环境变量 `CODE_READER_LLM_*`
+- 推荐组合:摘要用便宜模型(DeepSeek-V3),Agent 循环用强模型(Claude/GPT-4),可分别配置
 
 ## 6 个核心组件
 
@@ -39,30 +51,37 @@
 ## 关键设计决策（防止下次 session 又问一遍）
 
 - **eval set v1 = 10 题**（单文件3/跨文件4/多跳3），多跳 3 题必须用大 repo >20 万行作为杀手锏
+- **大 repo 杀手锏题 → kubernetes**（Go，>20 万行，同时验证 Go AST 交叉验证）
+- **TS 评测 repo → nest**（NestJS，中大型 TS 项目）
+- **Python 评测 repo → fastapi**（已定）
 - **三类落盘文件职责分离**：trace（默认开+7天/100MB清理）/ session state（--resume/--continue）/ memory（v1.5）
 - **并发锁 v1 只做 URL hash 一级**，content hash 兜底 v1.5
 - **LLM 摘要失败 → 跳过文件 + 记 index_errors + Agent 自决 read_file 兜底**
 - **indexer 准确率验证**：Python 用 ast、Go 用 go/ast 交叉验证（白嫖准）；JS/TS/Java v1 人工标 50 ground truth
 - **核心模块 v1 不接外部 PR**：agent_core / indexer / summarizer
-- **Web demo 用户自带 API key**（省 token 钱）
+- **Web demo 用户自带 LLM API key**（省 token 钱,与 CLI 共享配置）
+- **Web 前端开发流程**：实现阶段调用 `superpowers:frontend-design` skill 设计前端页面
+- **LLM mock 工具**：v1 自研轻量 MockLLM 类（约 50 行,按调用顺序返回预设响应）,不引外部库
 
 ## 进度
 
 | 阶段 | 状态 |
 |------|------|
 | brainstorming | ✅ 完成 |
-| 设计文档落盘 | ✅ 完成（commit 3755c52，527 行）|
+| 设计文档落盘（v1） | ✅ 完成（commit 3755c52，527 行）|
+| 跨 session 记忆 | ✅ 完成（commit 787c396）|
+| 改名 + 5 处澄清 + §7 全部澄清 | ✅ 完成（2026-08-21，待提交）|
 | 用户 review 设计文档 | ⏳ 等待中 |
 | writing-plans 出实现计划 | ⏳ 待启动 |
 | 实现 | ⏳ 未开始 |
 
 ## 下一步
 
-调用 writing-plans 技能，基于设计文档出详细实现计划。
+调用 writing-plans 技能,基于设计文档出详细实现计划。
 
 ## 相关文件
 
-- 设计文档：`docs/superpowers/specs/2026-08-20-repo-onboarding-agent-design.md`
-- 今日日志：`memory/2026-08-20.md`
+- 设计文档：`docs/superpowers/specs/2026-08-20-repo-onboarding-agent-design.md`（文件名保留原命名以保留历史）
+- 今日日志：`memory/2026-08-20.md`（brainstorming 全过程）
 - 本文件：`memory/project-context.md`
 - 前传项目：`D:/GoProject/claude-learn/`（参考其笔记结构和 CLAUDE.md 模式）
