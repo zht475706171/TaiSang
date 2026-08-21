@@ -53,6 +53,8 @@ def test_config_from_settings_file(tmp_path, monkeypatch):
     )
     cfg = load_config()
     assert cfg.model == "gpt-4o"
+    assert cfg.base_url == "https://api.openai.com"
+    assert cfg.api_key == "sk-file"
 
 
 def test_env_overrides_file(tmp_path, monkeypatch):

@@ -39,21 +39,22 @@ def _load_settings_file() -> dict:
 def load_config() -> LLMConfig:
     """加载 LLM 配置。env 覆盖文件,文件覆盖默认值。"""
     file_cfg = _load_settings_file().get("llm", {})
-    base_url = os.environ.get(
-        "CODE_READER_LLM_BASE_URL", file_cfg.get("base_url", "https://api.openai.com/v1")
-    )
-    api_key = os.environ.get("CODE_READER_LLM_API_KEY", file_cfg.get("api_key", ""))
-    model = os.environ.get("CODE_READER_LLM_MODEL", file_cfg.get("model", "gpt-4o"))
+    base_url = os.environ.get("CODE_READER_LLM_BASE_URL", file_cfg.get("base_url"))
+    api_key = os.environ.get("CODE_READER_LLM_API_KEY", file_cfg.get("api_key"))
+    model = os.environ.get("CODE_READER_LLM_MODEL", file_cfg.get("model"))
     summ_model = os.environ.get("CODE_READER_SUMMARIZER_MODEL", file_cfg.get("summarizer_model"))
     summ_base = os.environ.get(
         "CODE_READER_SUMMARIZER_BASE_URL", file_cfg.get("summarizer_base_url")
     )
     summ_key = os.environ.get("CODE_READER_SUMMARIZER_API_KEY", file_cfg.get("summarizer_api_key"))
-    return LLMConfig(
-        base_url=base_url,
-        api_key=api_key,
-        model=model,
-        summarizer_base_url=summ_base,
-        summarizer_api_key=summ_key,
-        summarizer_model=summ_model,
-    )
+    config_data = {
+        "base_url": base_url,
+        "api_key": api_key,
+        "model": model,
+        "summarizer_base_url": summ_base,
+        "summarizer_api_key": summ_key,
+        "summarizer_model": summ_model,
+    }
+    # Drop None values so Pydantic field defaults apply
+    config_data = {k: v for k, v in config_data.items() if v is not None}
+    return LLMConfig(**config_data)
