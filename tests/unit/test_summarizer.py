@@ -8,7 +8,7 @@ from code_reader.types import RepoIndex, Symbol, SymbolKind
 
 def _idx(symbols, files=None) -> RepoIndex:
     return RepoIndex(
-        repo_url="https://github.com/test/repo",
+        source_root="https://github.com/test/repo",
         commit_hash="abc",
         symbols=symbols,
         files=files or [s.file for s in symbols],

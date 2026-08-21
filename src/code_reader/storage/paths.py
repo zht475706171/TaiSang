@@ -1,15 +1,19 @@
-"""~/.code-reader/ 路径管理。所有落盘位置都从这里取,便于测试用 env 覆盖。"""
+"""路径管理。本地 repo 索引产物落 <repo>/.code-reader/。
+
+~/.code-reader/ 只保留 settings.json(LLM 配置)。
+本地 repo 的索引产物(ast.db / repo_map.json 等)落到 <source_root>/.code-reader/。
+"""
 
 from __future__ import annotations
 
-import hashlib
 from pathlib import Path
 
 
 class PathManager:
     """统一管理所有落盘路径。
 
-    默认根目录是 ~/.code-reader/,测试时通过 monkeypatch HOME 隔离。
+    本地 repo 索引产物落 <source_root>/.code-reader/。
+    ~/.code-reader/ 只保留 settings.json。
     """
 
     def __init__(self, root: Path | None = None) -> None:
@@ -19,29 +23,29 @@ class PathManager:
         self.root.mkdir(parents=True, exist_ok=True)
 
     @property
-    def cache_dir(self) -> Path:
-        """repo clone 缓存目录。"""
-        d = self.root / "cache"
+    def settings_path(self) -> Path:
+        """LLM 配置文件路径。"""
+        return self.root / "settings.json"
+
+    @staticmethod
+    def index_dir(source_root: Path) -> Path:
+        """单个 repo 的索引产物目录:<source_root>/.code-reader/"""
+        d = source_root / ".code-reader"
         d.mkdir(parents=True, exist_ok=True)
         return d
 
-    def _repo_hash(self, repo_url: str) -> str:
-        return hashlib.sha1(repo_url.encode()).hexdigest()[:16]
+    @classmethod
+    def index_db_path(cls, source_root: Path) -> Path:
+        return cls.index_dir(source_root) / "ast.db"
 
-    def indices_dir(self, repo_url: str) -> Path:
-        """单个 repo 的索引产物目录。"""
-        d = self.root / "indices" / self._repo_hash(repo_url)
-        d.mkdir(parents=True, exist_ok=True)
-        return d
+    @classmethod
+    def repo_map_path(cls, source_root: Path) -> Path:
+        return cls.index_dir(source_root) / "repo_map.json"
 
-    def index_db_path(self, repo_url: str) -> Path:
-        return self.indices_dir(repo_url) / "ast.db"
+    @classmethod
+    def chroma_path(cls, source_root: Path) -> Path:
+        return cls.index_dir(source_root) / "chroma"
 
-    def repo_map_path(self, repo_url: str) -> Path:
-        return self.indices_dir(repo_url) / "repo_map.json"
-
-    def chroma_path(self, repo_url: str) -> Path:
-        return self.indices_dir(repo_url) / "chroma"
-
-    def index_errors_path(self, repo_url: str) -> Path:
-        return self.indices_dir(repo_url) / "index_errors.json"
+    @classmethod
+    def index_errors_path(cls, source_root: Path) -> Path:
+        return cls.index_dir(source_root) / "index_errors.json"

@@ -1,5 +1,6 @@
 """测试 CLI 入口:用 click 的 CliRunner 跑子命令。"""
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -21,9 +22,6 @@ def _make_repo(tmp_path: Path) -> Path:
         "def main():\n    print('hello')\n\n\nif __name__ == '__main__':\n    main()\n",
         encoding="utf-8",
     )
-    # Windows: subprocess 需要 PATH 找到 git;merge GIT_* 和当前 PATH
-    import os
-
     git_env = {
         "GIT_AUTHOR_NAME": "t",
         "GIT_AUTHOR_EMAIL": "t@t",
@@ -52,15 +50,16 @@ def test_cli_help():
 
 
 def test_cli_index_command(tmp_path, monkeypatch):
-    """index 命令应建索引并落盘到 ~/.code-reader/。"""
+    """index 命令应建索引并落盘到 <repo>/.code-reader/。"""
     _isolate_home(tmp_path, monkeypatch)
     monkeypatch.setenv("CODE_READER_MOCK_LLM", "1")
     repo = _make_repo(tmp_path)
     runner = CliRunner()
     result = runner.invoke(cli, ["index", str(repo)])
     assert result.exit_code == 0, result.output
-    # 索引产物应存在
-    assert (tmp_path / ".code-reader" / "indices").exists()
+    assert (repo / ".code-reader").exists()
+    assert (repo / ".code-reader" / "ast.db").exists()
+    assert (repo / ".code-reader" / "repo_map.json").exists()
 
 
 def test_cli_ask_command_with_mock_llm(tmp_path, monkeypatch):
@@ -69,9 +68,28 @@ def test_cli_ask_command_with_mock_llm(tmp_path, monkeypatch):
     monkeypatch.setenv("CODE_READER_MOCK_LLM", "1")
     repo = _make_repo(tmp_path)
     runner = CliRunner()
-    # 先建索引
     runner.invoke(cli, ["index", str(repo)])
-    # 再问
     result = runner.invoke(cli, ["ask", "main 函数干啥的", "--repo", str(repo)])
     assert result.exit_code == 0, result.output
     assert "main" in result.output or "mock" in result.output.lower()
+
+
+def test_cli_index_rejects_nonexistent_path(tmp_path, monkeypatch):
+    """路径不存在,index exit 1 + 错误提示。"""
+    _isolate_home(tmp_path, monkeypatch)
+    monkeypatch.setenv("CODE_READER_MOCK_LLM", "1")
+    runner = CliRunner()
+    result = runner.invoke(cli, ["index", str(tmp_path / "nonexistent")])
+    assert result.exit_code == 1
+    assert "路径不存在" in result.output or "not a directory" in result.output
+
+
+def test_cli_ask_without_index_exits_1(tmp_path, monkeypatch):
+    """未索引过的路径,ask exit 1 + 提示先 index。"""
+    _isolate_home(tmp_path, monkeypatch)
+    monkeypatch.setenv("CODE_READER_MOCK_LLM", "1")
+    repo = _make_repo(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(cli, ["ask", "q", "--repo", str(repo)])
+    assert result.exit_code == 1
+    assert "未索引过" in result.output

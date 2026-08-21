@@ -37,7 +37,7 @@ class Symbol(BaseModel):
 class RepoIndex(BaseModel):
     """一次索引的产物:AST 解析 + 跨文件调用图。"""
 
-    repo_url: str
+    source_root: str
     commit_hash: str
     symbols: list[Symbol]
     files: list[str]

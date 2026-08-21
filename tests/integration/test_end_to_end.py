@@ -85,7 +85,7 @@ def test_end_to_end_call_graph_built(tmp_path, monkeypatch):
 
     pm = PathManager()
     service = IndexerService(pm)
-    idx = service.update(str(repo))
+    idx = service.update(repo)
     graph = service.build_call_graph(idx)
     # main 调 helper,应解析到 utils.py::helper
     assert "utils.py::helper" in graph["main.py::main"].resolved_calls
@@ -108,7 +108,7 @@ def test_end_to_end_trace_call_chain_three_hops(tmp_path, monkeypatch):
 
     pm = PathManager()
     service = IndexerService(pm)
-    idx = service.update(str(repo))
+    idx = service.update(repo)
     graph = service.build_call_graph(idx)
 
     tool = TraceCallChainTool(call_graph=graph)

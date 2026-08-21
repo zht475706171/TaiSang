@@ -46,7 +46,7 @@ def test_repo_index_holds_symbols():
         imports=[],
     )
     idx = RepoIndex(
-        repo_url="https://github.com/test/repo",
+        source_root="/tmp/test-repo",
         commit_hash="abc123",
         symbols=[sym],
         files=["app.py"],

@@ -1,8 +1,8 @@
 """Code Reader Agent CLI 入口。
 
 命令:
-- code-reader index <repo_url>  建索引
-- code-reader ask "<question>" --repo <url>  问问题
+- code-reader index <repo_path>  建索引(本地路径)
+- code-reader ask "<question>" --repo <path>  问问题
 - code-reader --help  帮助
 
 环境变量:
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 import click
 
@@ -24,6 +25,11 @@ from ..llm_client import LLMClient, LLMResponse, MockLLM
 from ..storage.paths import PathManager
 from ..summarizer.service import SummarizerService
 from ..types import RepoMap
+
+
+def _normalize_path(path: str) -> Path:
+    """规范化路径:展开 ~ + resolve。"""
+    return Path(os.path.expanduser(path)).resolve()
 
 
 def _make_llm():
@@ -52,61 +58,71 @@ def cli() -> None:
 
 
 @cli.command("index")
-@click.argument("repo_url")
-def cmd_index(repo_url: str) -> None:
-    """建索引:clone repo → 解析 AST → 三层摘要 → 入库。"""
+@click.argument("repo_path")
+def cmd_index(repo_path: str) -> None:
+    """建索引:扫本地 repo → 解析 AST → 三层摘要 → 入库。
+
+    索引产物落到 <repo_path>/.code-reader/。
+    """
+    source_root = _normalize_path(repo_path)
+    if not source_root.is_dir():
+        click.echo(
+            f"错误:路径不存在或不是目录: {source_root}。"
+            f"v1 不再支持远程 git clone,请先 `git clone` 到本地再 index。",
+            err=True,
+        )
+        sys.exit(1)
+
+    # 先建 LLM(fail fast:无 key 直接退出,不浪费 AST 解析)
+    llm = _make_llm()
+
     pm = PathManager()
-    click.echo(f"开始索引: {repo_url}")
+    click.echo(f"开始索引: {source_root}")
     indexer = IndexerService(pm)
-    idx = indexer.build(repo_url)
+    idx = indexer.build(source_root)
     click.echo(f"AST 解析完成: {len(idx.symbols)} 个符号, {len(idx.files)} 个文件")
     if idx.index_errors:
         click.echo(f"  失败文件 {len(idx.index_errors)} 个(已跳过)")
 
-    # 跑摘要(需要 source_root,从 fetcher cache 取)
-    # 简化:从 cache 找 clone 后的目录
-    repo_hash = pm._repo_hash(repo_url)
-    source_root = pm.cache_dir / repo_hash
-    if not source_root.exists():
-        click.echo("错误:clone 目录丢失", err=True)
-        sys.exit(1)
-
-    llm = _make_llm()
     summarizer = SummarizerService(llm=llm)
     click.echo("生成三层摘要...")
     repo_map = summarizer.summarize(idx, source_root=source_root)
-    # 落盘 repo_map
-    pm.repo_map_path(repo_url).write_text(repo_map.model_dump_json(indent=2), encoding="utf-8")
+    pm.repo_map_path(source_root).write_text(repo_map.model_dump_json(indent=2), encoding="utf-8")
     n_files = len(repo_map.file_summaries)
     n_modules = len(repo_map.module_summaries)
     click.echo(f"摘要完成: {n_files} 文件, {n_modules} 模块")
     if summarizer.errors:
         click.echo(f"  摘要失败 {len(summarizer.errors)} 个(已跳过)")
     click.echo("✓ 索引完成")
+    click.echo(
+        f"提示:索引产物已落到 {source_root}/.code-reader/。建议把 .code-reader/ 加到 .gitignore"
+    )
 
 
 @cli.command("ask")
 @click.argument("question")
-@click.option("--repo", required=True, help="repo URL(必须先 index 过)")
+@click.option("--repo", required=True, help="本地 repo 路径(必须先 index 过)")
 def cmd_ask(question: str, repo: str) -> None:
     """问问题,Agent 跨文件追踪调用链回答。"""
-    pm = PathManager()
-    repo_map_path = pm.repo_map_path(repo)
-    if not repo_map_path.exists():
-        click.echo(f"错误:repo 未索引过,请先 `code-reader index {repo}`", err=True)
+    source_root = _normalize_path(repo)
+    if not source_root.is_dir():
+        click.echo(
+            f"错误:路径不存在或不是目录: {source_root}",
+            err=True,
+        )
         sys.exit(1)
 
-    # 加载 repo_map 和索引
+    pm = PathManager()
+    repo_map_path = pm.repo_map_path(source_root)
+    if not repo_map_path.exists():
+        click.echo(f"错误:repo 未索引过,请先 `code-reader index {source_root}`", err=True)
+        sys.exit(1)
+
     repo_map = RepoMap.model_validate_json(repo_map_path.read_text(encoding="utf-8"))
 
     indexer = IndexerService(pm)
-    # 走 update(会复用已有索引)
-    idx = indexer.update(repo)
+    idx = indexer.update(source_root)
     call_graph = indexer.build_call_graph(idx)
-
-    # 找 source_root
-    repo_hash = pm._repo_hash(repo)
-    source_root = pm.cache_dir / repo_hash
 
     llm = _make_llm()
     agent = AgentService(
