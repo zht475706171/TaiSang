@@ -10,16 +10,64 @@
 - glob(pattern) — 文件名匹配
 - trace_call_chain(symbol_id, depth) — 调用链追踪
 - lookup_map(layer, query) — 查 RepoMap
+
+安全:
+- ReadFileTool/GrepTool 对 path/scope 做 containment 校验,拒绝越界访问
+- GrepTool 的 regex.search 有超时保护(Linux/Mac via signal.SIGALRM,Windows 跳过)
 """
 
 from __future__ import annotations
 
 import fnmatch
+import logging
 import re
+import signal
+import sys
 from pathlib import Path
 
 from ..indexer.linker import CallGraphNode, resolve_call_chain
 from ..types import RepoMap
+
+log = logging.getLogger(__name__)
+
+# regex search 超时秒数(仅 Linux/Mac 生效,Windows 跳过)
+_REGEX_TIMEOUT = 5.0
+
+
+def _rel(source_root: Path, path: Path) -> str:
+    """返回相对 source_root 的 Unix 风格路径。消除重复的 relative_to + replace。"""
+    return str(path.relative_to(source_root)).replace("\\", "/")
+
+
+def _is_within(source_root: Path, target: Path) -> bool:
+    """校验 target 解析后仍在 source_root 内。防 path traversal。"""
+    try:
+        target_resolved = target.resolve()
+        root_resolved = source_root.resolve()
+        return target_resolved.is_relative_to(root_resolved)
+    except (OSError, ValueError):
+        return False
+
+
+def _search_with_timeout(regex: re.Pattern, line: str) -> re.Match | None:
+    """带超时的 regex.search。Linux/Mac 用 SIGALRM,Windows 跳过超时保护。"""
+    if sys.platform == "win32" or not hasattr(signal, "SIGALRM"):
+        # Windows 无 SIGALRM,直接 search(无 DoS 防护,但 re.error 仍捕获)
+        return regex.search(line)
+
+    def _handler(signum, frame):
+        raise TimeoutError("regex search timed out")
+
+    old = signal.signal(signal.SIGALRM, _handler)
+    signal.setitimer(signal.ITIMER_REAL, _REGEX_TIMEOUT)
+    try:
+        return regex.search(line)
+    except TimeoutError:
+        log.warning("regex search timed out after %ss, treating as no match", _REGEX_TIMEOUT)
+        return None
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old)
 
 
 class _BaseTool:
@@ -57,6 +105,8 @@ class ReadFileTool(_BaseTool):
     def run(self, args: dict) -> dict:
         path = args.get("path", "")
         full = self.source_root / path
+        if not _is_within(self.source_root, full):
+            return {"content": "", "error": f"path outside repo root: {path}"}
         if not full.exists() or not full.is_file():
             return {"content": "", "error": f"file not found: {path}"}
         try:
@@ -109,8 +159,11 @@ class GrepTool(_BaseTool):
         files: list[Path] = []
         if scope:
             files = list(self.source_root.glob(scope))
-            if not files and (self.source_root / scope).is_file():
-                files = [self.source_root / scope]
+            # fallback:如果 glob 无命中且 scope 是 root 内的单文件,按单文件处理
+            if not files:
+                scope_full = self.source_root / scope
+                if _is_within(self.source_root, scope_full) and scope_full.is_file():
+                    files = [scope_full]
         else:
             files = [
                 f for f in self.source_root.rglob("*") if f.is_file() and ".git" not in f.parts
@@ -124,10 +177,10 @@ class GrepTool(_BaseTool):
             except Exception:
                 continue
             for i, line in enumerate(text.splitlines(), start=1):
-                if regex.search(line):
+                if _search_with_timeout(regex, line):
                     matches.append(
                         {
-                            "file": str(f.relative_to(self.source_root)).replace("\\", "/"),
+                            "file": _rel(self.source_root, f),
                             "line": i,
                             "text": line[:200],
                         }
@@ -165,7 +218,7 @@ class GlobTool(_BaseTool):
         for f in self.source_root.rglob("*"):
             if ".git" in f.parts:
                 continue
-            rel = str(f.relative_to(self.source_root)).replace("\\", "/")
+            rel = _rel(self.source_root, f)
             if fnmatch.fnmatch(rel, pattern):
                 matched.append(rel)
         return {"matches": sorted(matched), "error": None}

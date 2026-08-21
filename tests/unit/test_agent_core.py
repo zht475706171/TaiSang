@@ -107,3 +107,61 @@ def test_agent_trace_call_chain_in_answer(tmp_path):
     )
     ans = service.run("foo 调用了谁")
     assert "foo" in ans.text and "bar" in ans.text
+
+
+def test_agent_malformed_tool_call_does_not_crash(tmp_path):
+    """LLM 返回缺 name 键的 tool_call,Agent 不应崩,应继续到下一步回答。"""
+    mock = MockLLM(
+        [
+            # 畸形 tool_call:无 name 键
+            LLMResponse(text="", tool_calls=[{"args": {"layer": "global"}}]),
+            LLMResponse(text="回答", tool_calls=[]),
+        ]
+    )
+    service = AgentService(
+        llm=mock, source_root=tmp_path, call_graph={}, repo_map=_make_empty_repo_map()
+    )
+    ans = service.run("q")
+    # 应正常到第二步回答,不崩
+    assert ans.text == "回答"
+    assert ans.steps_used == 2
+
+
+def test_agent_observation_truncation(tmp_path):
+    """生成超大 observation,Agent 应截断并加 _truncated 标记。"""
+    # 构造一个超大文件,让 read_file 返回接近上限的内容
+    big_content = "x" * 40_000
+    (tmp_path / "big.py").write_text(big_content, encoding="utf-8")
+    mock = MockLLM(
+        [
+            LLMResponse(text="", tool_calls=[{"name": "read_file", "args": {"path": "big.py"}}]),
+            LLMResponse(text="done", tool_calls=[]),
+        ]
+    )
+    service = AgentService(
+        llm=mock, source_root=tmp_path, call_graph={}, repo_map=_make_empty_repo_map()
+    )
+    ans = service.run("read big")
+    assert ans.text == "done"
+    # 验证 context 中 tool_result 被截断(查 messages 里的 tool role)
+    tool_msgs = [m for m in mock.calls[1]["messages"] if m.get("role") == "tool"]
+    assert len(tool_msgs) == 1
+    # 截断后 content 长度不应超过上限 + 标记
+    assert len(tool_msgs[0]["content"]) <= 33_000  # 32k 截断 + 标记后缀
+
+
+def test_agent_llm_protocol_error_terminates(tmp_path):
+    """LLM 抛 LLMProtocolError,Agent 应终止并返回 complete=False Answer。"""
+    from code_reader.llm_errors import LLMProtocolError
+
+    class BoomLLM:
+        def chat(self, messages, tools):
+            raise LLMProtocolError("malformed")
+
+    service = AgentService(
+        llm=BoomLLM(), source_root=tmp_path, call_graph={}, repo_map=_make_empty_repo_map()
+    )
+    ans = service.run("q")
+    assert ans.complete is False
+    assert "LLM 协议错误" in ans.text
+    assert ans.steps_used == 1

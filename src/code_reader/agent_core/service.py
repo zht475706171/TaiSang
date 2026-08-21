@@ -4,16 +4,24 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 
 from ..indexer.linker import CallGraphNode
 from ..llm_client import LLMClient, MockLLM
+from ..llm_errors import LLMError, LLMProtocolError, LLMTransientError
 from ..types import Answer, Citation, RepoMap
 from .context import ContextManager
 from .prompts import SYSTEM_PROMPT
 from .tools import ToolRegistry
 
 log = logging.getLogger(__name__)
+
+# observation 单条上限(字节)。超长截断以保护上下文预算。
+_MAX_OBSERVATION_BYTES = 32_000
+
+# citation 抽取正则,模块级预编译。
+_CITATION_RE = re.compile(r"\[([^\]\s]+\.py)(?::(\d+)(?:-(\d+))?)?\]")
 
 
 class AgentService:
@@ -59,10 +67,29 @@ class AgentService:
 
             try:
                 resp = self.llm.chat(messages=ctx.messages(), tools=registry.schemas())
-            except Exception as e:
-                log.warning("LLM call failed at step %d: %s", steps, e)
+            except LLMProtocolError as e:
+                # 协议层错误:不可重试,直接结束并报告
+                log.warning("LLM protocol error at step %d: %s", steps, e)
+                return Answer(
+                    text=f"(LLM 协议错误: {e})",
+                    citations=[],
+                    complete=False,
+                    steps_used=steps,
+                )
+            except LLMTransientError as e:
+                # 瞬时错误:网络/限流/超时,v1 不做重试,直接结束
+                log.warning("LLM transient error at step %d: %s", steps, e)
                 return Answer(
                     text=f"(LLM 调用失败: {e})",
+                    citations=[],
+                    complete=False,
+                    steps_used=steps,
+                )
+            except LLMError as e:
+                # 其他 LLM 错误兜底
+                log.warning("LLM error at step %d: %s", steps, e)
+                return Answer(
+                    text=f"(LLM 错误: {e})",
                     citations=[],
                     complete=False,
                     steps_used=steps,
@@ -80,12 +107,18 @@ class AgentService:
 
             # 有 tool calls:执行每个
             ctx.append_assistant(text=resp.text, tool_calls=resp.tool_calls)
-            for tc in resp.tool_calls:
-                name = tc["name"]
-                args = tc.get("args", {})
-                result = registry.call(name, args)
+            for i, tc in enumerate(resp.tool_calls):
+                name = tc.get("name", "<unknown>")
+                args = tc.get("args") or {}
+                try:
+                    result = registry.call(name, args)
+                except Exception as e:
+                    log.warning("tool %s dispatch failed: %s", name, e)
+                    result = {"error": f"tool {name} failed: {e}"}
                 observation = json.dumps(result, ensure_ascii=False)
-                ctx.append_tool_result(observation, name=name, tool_call_id=name)
+                if len(observation.encode("utf-8")) > _MAX_OBSERVATION_BYTES:
+                    observation = observation[:_MAX_OBSERVATION_BYTES] + '...{"_truncated": true}'
+                ctx.append_tool_result(observation, name=name, tool_call_id=f"{name}-{i}")
 
         # 超 max_steps
         return Answer(
@@ -97,11 +130,9 @@ class AgentService:
 
     def _extract_citations(self, text: str) -> list[Citation]:
         """从答案文本抽 [file.py:line] 格式引用。"""
-        import re
-
         citations: list[Citation] = []
         seen: set[str] = set()
-        for m in re.finditer(r"\[([^\]\s]+\.py)(?::(\d+)(?:-(\d+))?)?\]", text):
+        for m in _CITATION_RE.finditer(text):
             file = m.group(1)
             start = int(m.group(2)) if m.group(2) else 1
             end = int(m.group(3)) if m.group(3) else start

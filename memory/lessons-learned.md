@@ -55,17 +55,15 @@ extend-exclude = "tests/fixtures"
 
 ## 待办技术债(按 task 累积)
 
-### Task 5 遗留 — Task 16 开工前必须处理
+### Task 5 遗留 — ✅ 已修复(2026-08-21)
 
-1. **`json.loads(tc.function.arguments)` 无错误处理**(llm_client.py:51)
+1. **`json.loads(tc.function.arguments)` 无错误处理** ✅ 已修
    - 真实 LLM 偶尔返回畸形 JSON,会抛 `JSONDecodeError`,agent_core 循环会崩
-   - 解法:try/except 包装成自定义 `LLMProtocolError`,或 args 置为 `{}` + 日志
-2. **openai SDK 异常未包装**
-   - Task 16 agent_core 需区分"LLM 网络错 vs 工具执行错 vs 协议错"
-   - 解法:加一层 `LLMError` 封装 `openai.APIError`/`RateLimitError`/`APITimeoutError`
-3. **MockLLM.calls 存原始引用**(llm_client.py:72)
-   - caller 后续 mutate messages 会污染记录
-   - 解法:`copy.deepcopy` 或至少 `list(messages)` 浅拷贝
+   - 解法:try/except 包装,JSONDecodeError/AttributeError → 抛 `LLMProtocolError`
+2. **openai SDK 异常未包装** ✅ 已修
+   - 解法:加 `LLMError` 基类 + `LLMProtocolError`(不可重试) + `LLMTransientError`(可重试)层级,`chat.completions.create` 抛任何 Exception → `LLMTransientError`
+3. **MockLLM.calls 存原始引用** ✅ 已修
+   - 解法:`copy.deepcopy(messages)` + `copy.deepcopy(tools)` 防 caller mutate 污染
 
 ### Task 7 遗留 — Task 8 / Task 11 处理
 
@@ -182,22 +180,22 @@ extend-exclude = "tests/fixtures"
 10. **目录级 `git add` 误带入 `__pycache__/*.pyc`**:Task 13 首次 commit 中招,amend 清理
     - 解法:**后续 task 一律用显式文件列表 `git add`,或尽快建 `.gitignore`** 排除 `__pycache__/`、`*.pyc`、`.pytest_cache/` 等
 
-### Task 14 遗留 — 安全加固必处理(高优)
+### Task 14 遗留 — 安全加固部分已修(2026-08-21)
 
-1. **Path traversal — ReadFileTool**(tools.py:58-59):`self.source_root / path` 接受 `../../etc/passwd`,`exists()`/`is_file()` 只确认存在不确认包含关系。LLM 控制 path arg 可读进程可读的任意文件
-   - 解法:`full = (self.source_root / path).resolve(); if not full.is_relative_to(self.source_root.resolve()): return {"content":"","error":"path outside repo root"}`
-2. **Path traversal — GrepTool fallback**(tools.py:94-95):`(self.source_root / scope).is_file()` 当 scope 含 `..` 时读根外文件
-   - 解法:同上,resolve + is_relative_to 校验;或去掉 fallback 分支(要求 scope 必须是 glob)
-3. **Regex DoS — GrepTool**(tools.py:87):`re.compile(pattern)` 无超时/回溯限制,灾难性正则(`(a+)+b`)可挂死。`max_matches` 不防回溯(回溯发生在 match 之前)
-   - 解法:用 `regex` 库(支持 timeout)或加正则复杂度预校验;最低 docstring 标注风险
-4. **`GlobTool` 用 `fnmatch.fnmatch`** (tools.py:145-152):`*` 跨 `/`(与 glob 语义不同),`**/*.py` 行为不一致
+1. **Path traversal — ReadFileTool** ✅ 已修
+   - 解法:加 `_is_within(source_root, target)` helper 用 `target.resolve().is_relative_to(source_root.resolve())`,ReadFileTool.run 调它先校验
+2. **Path traversal — GrepTool fallback** ✅ 已修
+   - 解法:scope 作为 glob 无命中时,fallback 单文件分支也用 `_is_within` 校验
+3. **Regex DoS — GrepTool** ✅ 已修(部分)
+   - 解法:加 `_search_with_timeout(regex, line)` helper,Linux/Mac 用 `signal.SIGALRM` + `setitimer` 5 秒超时;Windows 无 SIGALRM 跳过超时(仅保留 re.error 捕获 + warning log)。注:compile 本身通常不 DoS,DoS 在 search
+4. **`GlobTool` 用 `fnmatch.fnmatch`** ⏳ 未修(minor,不阻塞)
    - 解法:换 `Path.match` 或手写 glob walk
-5. **`LookupMapTool` global 层忽略 query**(tools.py:222):静默忽略,应 honor 或文档化
-   - 解法:对 entry_points/core_modules 也做 query 过滤,或 docstring 注明 "global 层忽略 query"
-6. **DRY:`str(f.relative_to(self.source_root)).replace("\\","/")` 重复**(tools.py:99 & 148)
-   - 解法:抽 `_rel(self, path) -> str` helper
-7. **测试缺失**:read_file max_bytes 截断、grep bad-regex 错误路径、lookup_map module 层、path-traversal-attempt
-   - 解法:Task 18 端到端集成测试或安全加固 task 补
+5. **`LookupMapTool` global 层忽略 query** ⏳ 未修(minor)
+   - 解法:对 entry_points/core_modules 也做 query 过滤,或 docstring 注明
+6. **DRY:`str(f.relative_to(self.source_root)).replace("\\","/")` 重复** ✅ 已修
+   - 解法:抽模块级 `_rel(source_root, path) -> str` helper,GrepTool + GlobTool 共用
+7. **测试缺失** ✅ 已补
+   - 解法:本轮补 `test_read_file_tool_rejects_path_traversal`、`test_grep_tool_rejects_path_traversal_scope`、`test_grep_tool_bad_regex_returns_error`
 
 ### Task 15 spec test bug(已修)
 
@@ -226,21 +224,25 @@ extend-exclude = "tests/fixtures"
 5. **测试未覆盖**:append_assistant with tool_calls、empty compact(无 tool msg)、已压缩后再 compact
    - 解法:polish 阶段补
 
-### Task 16 遗留 — 健壮性必处理(高优)
+### Task 16 遗留 — 健壮性部分已修(2026-08-21)
 
-1. **Tool dispatch loop 无异常守卫**(service.py:71-76):`tc["name"]` 可能 KeyError(LLM 返回畸形 tool_calls),`registry.call` 可能抛异常(tool 执行错)。try/except 只包了 `llm.chat`(service.py:52-62),不包 dispatch loop。单个坏 tool_call 或 tool 异常会崩整个 run() 不返回 Answer
-   - 解法:`for tc in resp.tool_calls:` 循环体包 try/except,异常时 append error observation `{"error": "tool X failed: ..."}` 继续。镜像 `test_agent_unknown_tool_does_not_crash` 的韧性期望
+1. **Tool dispatch loop 无异常守卫** ✅ 已修
+   - 解法:dispatch 循环体包 try/except,`registry.call` 抛异常时 result 改为 `{"error": "tool X failed: ..."}` 继续;`tc["name"]` 改 `tc.get("name", "<unknown>")` 防 KeyError
    - 触发场景:Task 5 遗留 `json.loads(tc.function.arguments)` 无错误处理,真实 LLM 返回畸形 JSON 时 LLMClient 会崩,或 tool_calls 结构异常时 `tc["name"]` KeyError
-2. **observation 无大小限制**(service.py:75):`json.dumps(result)` 大 read_file/grep 结果可能在 `should_compact()` 下次触发前撑爆 token 预算
-   - 解法:截断 observation 到 N 字符(如 8000),加 `truncated` 标记
-3. **`tool_call_id=name` 复用工具名作 ID**(service.py:76):MockLLM 没问题,真实 OpenAI API 要求每步内唯一 ID,同工具调两次会冲突
-   - 解法:用 `f"{name}-{i}"` 或 UUID,或从 LLM 响应取真实 tool_call_id
-4. **`tc.get("args", {})` 不处理 `args=None`**(service.py:73):`registry.call(name, None)` 下游可能崩
+2. **observation 无大小限制** ✅ 已修
+   - 解法:加常量 `_MAX_OBSERVATION_BYTES = 32_000`,`json.dumps` 后超长截断 + 加 `...{"_truncated": true}` 后缀
+3. **`tool_call_id=name` 复用工具名作 ID** ✅ 已修
+   - 解法:改 `f"{name}-{i}"` 用 enumerate 索引唯一化
+4. **`tc.get("args", {})` 不处理 `args=None`** ✅ 已修
    - 解法:`args = tc.get("args") or {}`
-5. **测试未覆盖 LLM 异常路径**(service.py:55-62):只测了 unknown tool,没测 LLM chat 抛异常
-   - 解法:补 `test_agent_llm_exception_returns_graceful_answer`,用 FailingLLM
-6. **测试未覆盖 `tool_calls=None`**:`if not resp.tool_calls` 同时处理 None 和 [],但未验证
-   - 解法:补一个 MockLLM 返回 `tool_calls=None` 的测试
+5. **测试未覆盖 LLM 异常路径** ✅ 已补
+   - 解法:本轮补 `test_agent_llm_protocol_error_terminates` + service.py 把 LLM 异常细分为 `LLMProtocolError` / `LLMTransientError` / `LLMError` 三类捕获
+6. **测试未覆盖 `tool_calls=None`** ⏳ 未补(minor)
+   - 解法:polish 阶段补一个 MockLLM 返回 `tool_calls=None` 的测试
+7. **额外补:`test_agent_malformed_tool_call_does_not_crash`** ✅ 已补
+   - 验证 LLM 返回缺 name 键的 tool_call,Agent 不崩继续到下一步回答
+8. **额外补:`test_agent_observation_truncation`** ✅ 已补
+   - 验证 read_file 返回 40K 内容时,tool_result 被截断到 ≤33K
 
 ### Task 17 遗留 — 后续 task 顺手补
 

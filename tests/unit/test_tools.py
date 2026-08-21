@@ -152,3 +152,33 @@ def test_tool_registry_dispatches():
     result = reg.call("glob", {"pattern": "*.nonexistent"})
     assert isinstance(result, dict)
     assert "matches" in result
+
+
+def test_read_file_tool_rejects_path_traversal(tmp_path):
+    """read_file 路径含 ../../ 应被拒,返回 outside repo root 错误。"""
+    (tmp_path / "a.py").write_text("x", encoding="utf-8")
+    tool = ReadFileTool(source_root=tmp_path)
+    result = tool.run({"path": "../../etc/passwd"})
+    assert result["content"] == ""
+    assert result["error"] is not None
+    assert "outside repo root" in result["error"]
+
+
+def test_grep_tool_rejects_path_traversal_scope(tmp_path):
+    """grep 的 scope 含 ../../ 应被拒,glob + fallback 都不应越界访问。"""
+    tool = GrepTool(source_root=tmp_path)
+    # scope 作为 glob 模式,../../etc/* 不应在 tmp_path 内命中任何文件
+    result = tool.run({"pattern": "anything", "scope": "../../etc/*"})
+    # 关键:不崩,matches 为空(traversal 被拒或不命中)
+    assert result["matches"] == []
+    assert result["error"] is None
+
+
+def test_grep_tool_bad_regex_returns_error(tmp_path):
+    """grep 的 pattern 是非法正则,应返回 bad regex 错误而非崩溃。"""
+    (tmp_path / "a.py").write_text("x", encoding="utf-8")
+    tool = GrepTool(source_root=tmp_path)
+    result = tool.run({"pattern": "(a+", "scope": "a.py"})
+    assert result["matches"] == []
+    assert result["error"] is not None
+    assert "bad regex" in result["error"]
