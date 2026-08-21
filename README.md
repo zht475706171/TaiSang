@@ -15,11 +15,14 @@ export CODE_READER_LLM_BASE_URL=https://api.deepseek.com
 export CODE_READER_LLM_API_KEY=sk-xxx
 export CODE_READER_LLM_MODEL=deepseek-chat
 
-# 建索引
-code-reader index https://github.com/tiangolo/fastapi
+# 先 clone 到本地(v1 不支持远程 clone)
+git clone https://github.com/tiangolo/fastapi ~/repos/fastapi
+
+# 建索引(产物落 ~/repos/fastapi/.code-reader/)
+code-reader index ~/repos/fastapi
 
 # 问问题
-code-reader ask "FastAPI 的路由是怎么注册的" --repo https://github.com/tiangolo/fastapi
+code-reader ask "FastAPI 的路由是怎么注册的" --repo ~/repos/fastapi
 ```
 
 ## 跟 Claude Code / Cursor 的区别
