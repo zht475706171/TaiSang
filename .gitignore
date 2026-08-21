@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Testing & coverage
+.pytest_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+.nox/
+coverage.xml
+*.cover
+.cache
+
+# Type checkers
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Project specific
+# code-reader 索引缓存(本地开发时不入库,但 ~/.code-reader/ 在 home 不在 repo)
+# 如有 repo 内的 .code-reader/ 测试产物也忽略
+.code-reader/
