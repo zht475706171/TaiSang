@@ -41,6 +41,7 @@ where = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+extend-exclude = ["tests/fixtures"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]
@@ -48,6 +49,7 @@ select = ["E", "F", "W", "I", "UP", "B"]
 [tool.black]
 line-length = 100
 target-version = ["py311"]
+extend-exclude = "tests/fixtures"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
