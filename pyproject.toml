@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "code-reader"
+version = "0.1.0"
+description = "Code Reader Agent - 3 分钟让陌生代码库变成可问答、可追踪调用链"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "泰哥" }]
+dependencies = [
+    "openai>=1.0",
+    "tree-sitter>=0.21",
+    "tree-sitter-python>=0.21",
+    "chromadb>=0.5",
+    "rank-bm25>=0.2",
+    "gitpython>=3.1",
+    "click>=8.1",
+    "structlog>=24.1",
+    "tiktoken>=0.7",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.5",
+    "black>=24.0",
+    "pre-commit>=3.7",
+]
+
+[project.scripts]
+code-reader = "code_reader.cli.main:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
