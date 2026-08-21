@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 from ..indexer.linker import CallGraphNode
@@ -12,6 +13,7 @@ from ..llm_client import LLMClient, MockLLM
 from ..llm_errors import LLMError, LLMProtocolError, LLMTransientError
 from ..types import Answer, Citation, RepoMap
 from .context import ContextManager
+from .events import FINAL_ANSWER, LLM_THINKING, TOOL_CALL, TOOL_RESULT, AgentEvent
 from .prompts import SYSTEM_PROMPT
 from .tools import ToolRegistry
 
@@ -22,6 +24,9 @@ _MAX_OBSERVATION_BYTES = 32_000
 
 # citation 抽取正则,模块级预编译。
 _CITATION_RE = re.compile(r"\[([^\]\s]+\.py)(?::(\d+)(?:-(\d+))?)?\]")
+
+# on_event 回调类型
+EventCallback = Callable[[AgentEvent], None]
 
 
 class AgentService:
@@ -43,8 +48,12 @@ class AgentService:
         self.max_steps = max_steps
         self.token_budget = token_budget
 
-    def run(self, query: str) -> Answer:
-        """执行 Agent 循环,返回 Answer。"""
+    def run(self, query: str, on_event: EventCallback | None = None) -> Answer:
+        """执行 Agent 循环,返回 Answer。
+
+        on_event:可选回调,Agent 循环每一步(LLM 思考/工具调用/工具返回/最终答案)
+        都会调用它,UI 层用它实时渲染中间过程。None 表示不推送(向后兼容)。
+        """
         ctx = ContextManager(token_budget=self.token_budget)
         ctx.append_system(SYSTEM_PROMPT)
         # 初始注入:全局地图摘要(让 Agent 有起点)
@@ -59,12 +68,17 @@ class AgentService:
             repo_map=self.repo_map,
         )
 
+        def _emit(evt: AgentEvent) -> None:
+            if on_event is not None:
+                on_event(evt)
+
         steps = 0
         while steps < self.max_steps:
             steps += 1
             if ctx.should_compact():
                 ctx.compact()
 
+            _emit(AgentEvent(type=LLM_THINKING))
             try:
                 resp = self.llm.chat(messages=ctx.messages(), tools=registry.schemas())
             except LLMProtocolError as e:
@@ -98,6 +112,7 @@ class AgentService:
             if not resp.tool_calls:
                 # 给出最终答案
                 citations = self._extract_citations(resp.text)
+                _emit(AgentEvent(type=FINAL_ANSWER, payload={"text": resp.text}))
                 return Answer(
                     text=resp.text,
                     citations=citations,
@@ -110,14 +125,26 @@ class AgentService:
             for i, tc in enumerate(resp.tool_calls):
                 name = tc.get("name", "<unknown>")
                 args = tc.get("args") or {}
+                _emit(AgentEvent(type=TOOL_CALL, payload={"name": name, "args": args}))
                 try:
                     result = registry.call(name, args)
                 except Exception as e:
                     log.warning("tool %s dispatch failed: %s", name, e)
                     result = {"error": f"tool {name} failed: {e}"}
                 observation = json.dumps(result, ensure_ascii=False)
-                if len(observation.encode("utf-8")) > _MAX_OBSERVATION_BYTES:
+                total_bytes = len(observation.encode("utf-8"))
+                if total_bytes > _MAX_OBSERVATION_BYTES:
                     observation = observation[:_MAX_OBSERVATION_BYTES] + '...{"_truncated": true}'
+                _emit(
+                    AgentEvent(
+                        type=TOOL_RESULT,
+                        payload={
+                            "name": name,
+                            "preview": observation[:30],
+                            "total_bytes": total_bytes,
+                        },
+                    )
+                )
                 ctx.append_tool_result(observation, name=name, tool_call_id=f"{name}-{i}")
 
         # 超 max_steps

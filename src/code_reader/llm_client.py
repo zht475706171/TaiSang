@@ -46,7 +46,7 @@ class LLMClient:
             LLMTransientError: openai SDK 异常(网络/限流/超时等)
             LLMProtocolError: tool_calls 畸形 JSON 或结构异常
         """
-        kwargs: dict[str, Any] = {"model": self.model, "messages": messages}
+        kwargs: dict[str, Any] = {"model": self.model, "messages": messages, "timeout": 30}
         if tools:
             kwargs["tools"] = [{"type": "function", "function": t} for t in tools]
         try:

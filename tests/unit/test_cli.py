@@ -93,3 +93,44 @@ def test_cli_ask_without_index_exits_1(tmp_path, monkeypatch):
     result = runner.invoke(cli, ["ask", "q", "--repo", str(repo)])
     assert result.exit_code == 1
     assert "未索引过" in result.output
+
+
+def test_cli_shell_basic_qa(tmp_path, monkeypatch):
+    """shell 模式:先 index,进 shell 问问题,/exit 退出。"""
+    _isolate_home(tmp_path, monkeypatch)
+    monkeypatch.setenv("CODE_READER_MOCK_LLM", "1")
+    repo = _make_repo(tmp_path)
+    runner = CliRunner()
+    runner.invoke(cli, ["index", str(repo)])
+    # 进 shell 问一个问题然后 /exit;CliRunner 的 input 注入到 stdin
+    result = runner.invoke(cli, ["shell", "--repo", str(repo)], input="main 干啥的\n/exit\n")
+    assert result.exit_code == 0, result.output
+    assert "mock" in result.output.lower() or "main" in result.output
+
+
+def test_cli_shell_rejects_unindexed(tmp_path, monkeypatch):
+    """shell 模式未索引,exit 1 + 提示先 index。"""
+    _isolate_home(tmp_path, monkeypatch)
+    monkeypatch.setenv("CODE_READER_MOCK_LLM", "1")
+    repo = _make_repo(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(cli, ["shell", "--repo", str(repo)])
+    assert result.exit_code == 1
+    assert "未索引过" in result.output
+
+
+def test_cli_ask_shows_trace(tmp_path, monkeypatch):
+    """ask 默认模式应显示 emoji trace;--quiet 关闭 trace。"""
+    _isolate_home(tmp_path, monkeypatch)
+    monkeypatch.setenv("CODE_READER_MOCK_LLM", "1")
+    repo = _make_repo(tmp_path)
+    runner = CliRunner()
+    runner.invoke(cli, ["index", str(repo)])
+    # 默认模式:有 FINAL_ANSWER 的 💡
+    result = runner.invoke(cli, ["ask", "q", "--repo", str(repo)])
+    assert result.exit_code == 0
+    assert "💡" in result.output
+    # quiet 模式:无 emoji
+    result_q = runner.invoke(cli, ["ask", "q", "--repo", str(repo), "--quiet"])
+    assert result_q.exit_code == 0
+    assert "💡" not in result_q.output

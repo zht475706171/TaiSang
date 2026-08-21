@@ -6,6 +6,7 @@ LLM 失败时跳过该文件,记录到 errors,不崩。
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 
 from ..llm_client import LLMClient, MockLLM
@@ -25,6 +26,11 @@ log = logging.getLogger(__name__)
 FILE_BUDGET = 200  # 字数
 MODULE_BUDGET = 600
 GLOBAL_BUDGET = 2000
+
+# 进度回调类型:(阶段, 文件路径, 状态, 详情) -> None
+# 阶段: "file" / "module" / "global"
+# 状态: "ok" / "fail"
+ProgressCallback = Callable[[str, str, str, str], None]
 
 
 class SummarizerService:
@@ -52,9 +58,22 @@ class SummarizerService:
             log.warning("LLM chat failed: %s", e)
             return None
 
-    def summarize(self, idx: RepoIndex, source_root: Path) -> RepoMap:
-        """产三层 RepoMap。"""
+    def summarize(
+        self,
+        idx: RepoIndex,
+        source_root: Path,
+        on_progress: ProgressCallback | None = None,
+    ) -> RepoMap:
+        """产三层 RepoMap。
+
+        on_progress:可选回调,每个文件/模块/全局摘要完调用,UI 层用它打印进度。
+        None 表示不打印(测试默认)。
+        """
         self.errors = []
+
+        def _emit(stage: str, path: str, status: str, detail: str = "") -> None:
+            if on_progress is not None:
+                on_progress(stage, path, status, detail)
 
         # 文件级
         file_summaries: dict[str, FileSummary] = {}
@@ -69,11 +88,13 @@ class SummarizerService:
                 self.errors.append(
                     {"file": rel_path, "stage": "summarize", "error": "source not found"}
                 )
+                _emit("file", rel_path, "fail", "source not found")
                 continue
             try:
                 source = src_file.read_text(encoding="utf-8", errors="replace")
             except Exception as e:
                 self.errors.append({"file": rel_path, "stage": "summarize", "error": str(e)})
+                _emit("file", rel_path, "fail", str(e))
                 continue
             syms = by_file.get(rel_path, [])
             prompt = build_file_summary_prompt(rel_path, source, syms)
@@ -82,12 +103,14 @@ class SummarizerService:
                 self.errors.append(
                     {"file": rel_path, "stage": "summarize", "error": "LLM returned empty"}
                 )
+                _emit("file", rel_path, "fail", "LLM empty")
                 continue
             file_summaries[rel_path] = FileSummary(
                 file=rel_path,
                 summary=summary[:FILE_BUDGET],
                 symbol_ids=[s.id for s in syms],
             )
+            _emit("file", rel_path, "ok", f"{len(summary)} 字")
 
         # 模块级:按目录分组
         modules: dict[str, list[tuple[str, str]]] = {}
@@ -102,12 +125,14 @@ class SummarizerService:
             prompt = build_module_summary_prompt(mp, files)
             summary = self._chat(MODULE_SUMMARY_SYSTEM, prompt)
             if summary is None:
+                _emit("module", mp or "(根目录)", "fail", "LLM empty")
                 continue
             module_summaries[mp] = ModuleSummary(
                 path=mp,
                 summary=summary[:MODULE_BUDGET],
                 file_count=len(files),
             )
+            _emit("module", mp or "(根目录)", "ok", f"{len(files)} 文件")
 
         # 全局级:入口候选(用符号名,便于识别 main/__main__/run/app 等常见入口名)
         entry_candidates = [
@@ -125,6 +150,7 @@ class SummarizerService:
             core_modules=list(module_summaries.keys())[:10],
             dependency_summary=global_text[:GLOBAL_BUDGET],
         )
+        _emit("global", "", "ok" if global_text else "fail", f"{len(global_text)} 字")
 
         return RepoMap(
             global_summary=global_summary,

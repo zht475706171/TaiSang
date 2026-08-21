@@ -3,6 +3,7 @@
 命令:
 - code-reader index <repo_path>  建索引(本地路径)
 - code-reader ask "<question>" --repo <path>  问问题
+- code-reader shell --repo <path>  进入交互问答模式
 - code-reader --help  帮助
 
 环境变量:
@@ -18,6 +19,7 @@ from pathlib import Path
 
 import click
 
+from ..agent_core.events import FINAL_ANSWER, LLM_THINKING, TOOL_CALL, TOOL_RESULT, AgentEvent
 from ..agent_core.service import AgentService
 from ..config import load_config
 from ..indexer.service import IndexerService
@@ -50,6 +52,34 @@ def _make_llm():
         )
         sys.exit(2)
     return LLMClient(cfg)
+
+
+def _render_event(evt: AgentEvent) -> None:
+    """把 AgentEvent 渲染成 emoji + 缩进文本到 stdout(立即刷新)。"""
+    if evt.type == LLM_THINKING:
+        click.echo("🤖 正在思考...", nl=False)
+        sys.stdout.flush()
+    elif evt.type == TOOL_CALL:
+        # 覆盖上一行的 "正在思考..."
+        click.echo("\r🔧 调用工具: {}".format(evt.payload.get("name", "?")))
+    elif evt.type == TOOL_RESULT:
+        preview = evt.payload.get("preview", "")
+        total = evt.payload.get("total_bytes", 0)
+        click.echo(f"   ← 返回 {total} 字节: {preview[:30]}...")
+    elif evt.type == FINAL_ANSWER:
+        click.echo("💡 答案:")
+
+
+def _make_progress():
+    """返回 summarizer 进度回调。"""
+    return lambda stage, path, status, detail: click.echo(
+        "  {} {}: {}{}".format(
+            "✓" if status == "ok" else "✗",
+            stage,
+            path or "(根目录)",
+            f" ({detail})" if detail else "",
+        )
+    )
 
 
 @click.group()
@@ -86,7 +116,7 @@ def cmd_index(repo_path: str) -> None:
 
     summarizer = SummarizerService(llm=llm)
     click.echo("生成三层摘要...")
-    repo_map = summarizer.summarize(idx, source_root=source_root)
+    repo_map = summarizer.summarize(idx, source_root=source_root, on_progress=_make_progress())
     pm.repo_map_path(source_root).write_text(repo_map.model_dump_json(indent=2), encoding="utf-8")
     n_files = len(repo_map.file_summaries)
     n_modules = len(repo_map.module_summaries)
@@ -102,7 +132,8 @@ def cmd_index(repo_path: str) -> None:
 @cli.command("ask")
 @click.argument("question")
 @click.option("--repo", required=True, help="本地 repo 路径(必须先 index 过)")
-def cmd_ask(question: str, repo: str) -> None:
+@click.option("--quiet", is_flag=True, default=False, help="静默模式,不显示 Agent 中间步骤")
+def cmd_ask(question: str, repo: str, quiet: bool) -> None:
     """问问题,Agent 跨文件追踪调用链回答。"""
     source_root = _normalize_path(repo)
     if not source_root.is_dir():
@@ -131,12 +162,88 @@ def cmd_ask(question: str, repo: str) -> None:
         call_graph=call_graph,
         repo_map=repo_map,
     )
-    answer = agent.run(question)
+    if quiet:
+        answer = agent.run(question)
+    else:
+        answer = agent.run(question, on_event=_render_event)
     click.echo(answer.text)
     if answer.citations:
         click.echo("\n引用:")
         for c in answer.citations:
             click.echo(f"  - {c.file}:{c.line_range[0]}-{c.line_range[1]}")
+
+
+@cli.command("shell")
+@click.option("--repo", required=True, help="本地 repo 路径(必须先 index 过)")
+def cmd_shell(repo: str) -> None:
+    """进入交互问答模式,索引一次后持续提问。"""
+    source_root = _normalize_path(repo)
+    if not source_root.is_dir():
+        click.echo(
+            f"错误:路径不存在或不是目录: {source_root}",
+            err=True,
+        )
+        sys.exit(1)
+
+    pm = PathManager()
+    repo_map_path = pm.repo_map_path(source_root)
+    if not repo_map_path.exists():
+        click.echo(f"错误:repo 未索引过,请先 `code-reader index {source_root}`", err=True)
+        sys.exit(1)
+
+    repo_map = RepoMap.model_validate_json(repo_map_path.read_text(encoding="utf-8"))
+
+    click.echo(f"已加载索引: {source_root}")
+    click.echo("输入问题,或 /help 查看命令,或 /exit 退出\n")
+
+    llm = _make_llm()
+    indexer = IndexerService(pm)
+
+    while True:
+        try:
+            raw = click.prompt("ask", type=str, default="", show_default=False).strip()
+        except (EOFError, KeyboardInterrupt):
+            click.echo("/exit")
+            break
+
+        if not raw:
+            continue
+        if raw == "/exit":
+            break
+        if raw == "/help":
+            click.echo("  /exit  退出")
+            click.echo("  /reindex  重新索引(源码改了之后)")
+            click.echo("  /help  显示帮助")
+            continue
+        if raw == "/reindex":
+            click.echo("正在重新索引...")
+            llm = _make_llm()
+            idx = indexer.build(source_root)
+            summarizer = SummarizerService(llm=llm)
+            repo_map = summarizer.summarize(
+                idx, source_root=source_root, on_progress=_make_progress()
+            )
+            pm.repo_map_path(source_root).write_text(
+                repo_map.model_dump_json(indent=2), encoding="utf-8"
+            )
+            click.echo("✓ 重新索引完成")
+            continue
+
+        # 普通问题:增量更新 + 跑 agent
+        idx = indexer.update(source_root)
+        call_graph = indexer.build_call_graph(idx)
+        agent = AgentService(
+            llm=llm,
+            source_root=source_root,
+            call_graph=call_graph,
+            repo_map=repo_map,
+        )
+        answer = agent.run(raw, on_event=_render_event)
+        click.echo(answer.text)
+        if answer.citations:
+            click.echo("\n引用:")
+            for c in answer.citations:
+                click.echo(f"  - {c.file}:{c.line_range[0]}-{c.line_range[1]}")
 
 
 if __name__ == "__main__":
