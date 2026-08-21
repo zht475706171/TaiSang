@@ -70,14 +70,24 @@
 | brainstorming | ✅ 完成 |
 | 设计文档落盘（v1） | ✅ 完成（commit 3755c52，527 行）|
 | 跨 session 记忆 | ✅ 完成（commit 787c396）|
-| 改名 + 5 处澄清 + §7 全部澄清 | ✅ 完成（2026-08-21，待提交）|
-| 用户 review 设计文档 | ⏳ 等待中 |
-| writing-plans 出实现计划 | ⏳ 待启动 |
-| 实现 | ⏳ 未开始 |
+| 改名 + 5 处澄清 + §7 全部澄清 | ✅ 完成（2026-08-21）|
+| 用户 review 设计文档 | ✅ 完成 |
+| writing-plans Plan 1 | ✅ 完成（docs/superpowers/plans/2026-08-21-plan-1-python-mvp.md）|
+| Plan 1 实现 | ✅ 完成（19 个 task 全部实现,94 个测试通过,端到端闭环验证）|
+| Plan 2-6 | ⏳ 待启动 |
+
+## Plan 1 实现总结
+
+- 19 个 task 全部完成（Task 1 项目骨架 → Task 19 README 收尾）
+- 94 个测试全绿（单元 + 集成 + 端到端）
+- 全链路验证:Fetcher → Parser → Linker → Summarizer → Storage → IndexerService → CLI → AgentService → TraceCallChainTool
+- 技术债记录在 `memory/lessons-learned.md`（按 task 累积,高优项标注"必处理"）
+- 已知简化:retriever BM25-only（向量库留 v1.5）、MockLLM 测试（真 LLM 留手动验证）、无 session/trace 落盘（留 Plan 4）
 
 ## 下一步
 
-调用 writing-plans 技能,基于设计文档出详细实现计划。
+- Plan 1 收尾提交（README + project-context 进度更新）
+- 可选:启动 Plan 2（多语言扩展）、Plan 3（评测体系）、或先处理 lessons-learned 里的高优技术债（Task 5/14/16 健壮性 + Task 14 安全加固）
 
 ## 相关文件
 
