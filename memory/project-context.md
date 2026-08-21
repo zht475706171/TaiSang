@@ -74,6 +74,7 @@
 | 用户 review 设计文档 | ✅ 完成 |
 | writing-plans Plan 1 | ✅ 完成（docs/superpowers/plans/2026-08-21-plan-1-python-mvp.md）|
 | Plan 1 实现 | ✅ 完成（19 个 task 全部实现,94 个测试通过,端到端闭环验证）|
+| Plan 1 增量:本地 Repo 支持改造 | ✅ 完成（2026-08-21,108 测试,已 push origin/main）|
 | Plan 2-6 | ⏳ 待启动 |
 
 ## Plan 1 实现总结
@@ -84,10 +85,41 @@
 - 技术债记录在 `memory/lessons-learned.md`（按 task 累积,高优项标注"必处理"）
 - 已知简化:retriever BM25-only（向量库留 v1.5）、MockLLM 测试（真 LLM 留手动验证）、无 session/trace 落盘（留 Plan 4）
 
+## Plan 1 增量:本地 Repo 支持改造(2026-08-21)
+
+**起因**:泰哥提出强制远程 clone 反人类,索引产物集中落 `~/.code-reader/indices/<hash>/` 不可读。
+
+**改造**:
+- `Fetcher` 退化成 `current_commit(path)` 静态方法薄壳,砍 git clone
+- `PathManager` 砍 `cache_dir`/`indices_dir`/`_repo_hash`,索引产物落 `<repo>/.code-reader/`
+- `IndexerService.build/update(source_root: Path)`,扫源码排除 `.code-reader/`,双层路径防御
+- `RepoIndex.repo_url` 改名 `source_root`
+- CLI 加 `_normalize_path` + 路径校验 + fail-fast `_make_llm()` + .gitignore 提示
+- 108 passed(从 103 → 108),ruff+black clean
+- Commit `4ce0773`(源码+测试) + `be9dd74`(docs),已 push origin/main
+- Spec:`docs/superpowers/specs/2026-08-21-local-repo-support-design.md`
+- Plan:`docs/superpowers/plans/2026-08-21-local-repo-support.md`
+
+**当前 CLI 用法**:
+```bash
+# 配置(~/.code-reader/settings.json 已配好 kimi-k2.6)
+# 先 clone 到本地(v1 不支持远程 clone)
+code-reader index <local_repo_path>
+code-reader ask "<问题>" --repo <local_repo_path>
+# 索引产物落 <local_repo_path>/.code-reader/
+```
+
+**遗留技术债**(详见 lessons-learned):
+1. ast.db 损坏场景 CLI 兜底未实现
+2. `str(source_root)` 完整路径作 SQLite repo_hash 键,长期可优化为短 hash
+3. `PathManager` property vs staticmethod API 风格不统一
+4. Minor:fetcher 异常列表措辞与 spec 不一致(行为等价)
+5. Minor:test_summarizer fixture source_root 还用 URL 字符串
+
 ## 下一步
 
-- Plan 1 收尾提交（README + project-context 进度更新）
-- 可选:启动 Plan 2（多语言扩展）、Plan 3（评测体系）、或先处理 lessons-learned 里的高优技术债（Task 5/14/16 健壮性 + Task 14 安全加固）
+- **当前**:泰哥要真实 LLM 闭环测试(预计 `code-reader index D:/GoProject/wwBuy` + ask)
+- 测试通过后可选:启动 Plan 2(多语言扩展)、Plan 3(评测体系)、或处理 lessons-learned 高优技术债
 
 ## 相关文件
 
