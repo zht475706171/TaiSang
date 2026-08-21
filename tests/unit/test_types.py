@@ -27,6 +27,7 @@ def test_symbol_basic():
     assert s.kind == SymbolKind.FUNCTION
     assert s.line_range == (110, 145)
     assert s.calls == ["uvicorn.run"]
+    assert s.imports == ["uvicorn"]
 
 
 def test_symbol_kind_values():
@@ -93,3 +94,62 @@ def test_snippet_basic():
 def test_snippet_optional_symbol_id():
     s = Snippet(file="app.py", line_range=(1, 10), text="x", score=0.5)
     assert s.symbol_id is None
+
+
+def test_symbol_serialization_round_trip():
+    """Symbol should survive model_dump + model_validate round-trip."""
+    original = Symbol(
+        id="fastapi:src/main.py:func_main",
+        kind=SymbolKind.FUNCTION,
+        name="main",
+        file="src/main.py",
+        line_range=(1, 10),
+        calls=["uvicorn.run"],
+        imports=["uvicorn"],
+    )
+    dumped = original.model_dump()
+    restored = Symbol.model_validate(dumped)
+    assert restored == original
+    assert restored.line_range == (1, 10)
+    assert restored.calls == ["uvicorn.run"]
+    assert restored.imports == ["uvicorn"]
+
+
+def test_repo_map_json_round_trip():
+    """RepoMap should survive model_dump_json + model_validate_json round-trip."""
+    original = RepoMap(
+        global_summary=GlobalSummary(
+            entry_points=["main"],
+            core_modules=["src"],
+            dependency_summary="Depends on uvicorn and starlette.",
+        ),
+        module_summaries={
+            "src": ModuleSummary(path="src", summary="Top-level package.", file_count=1)
+        },
+        file_summaries={
+            "src/main.py": FileSummary(
+                file="src/main.py",
+                summary="Entry point.",
+                symbol_ids=["fastapi:src/main.py:func_main"],
+            )
+        },
+    )
+    json_str = original.model_dump_json()
+    restored = RepoMap.model_validate_json(json_str)
+    assert restored == original
+    assert restored.file_summaries["src/main.py"].symbol_ids == ["fastapi:src/main.py:func_main"]
+    assert restored.global_summary.core_modules == ["src"]
+
+
+def test_line_range_accepts_tuple():
+    """line_range tuple is accepted as given; behavior locked for downstream contract."""
+    s = Symbol(
+        id="x:f:fn",
+        kind=SymbolKind.FUNCTION,
+        name="fn",
+        file="f.py",
+        line_range=(10, 5),
+    )
+    # Pydantic accepts the tuple as given; we do not enforce start <= end here
+    # (indexer guarantees ordering at construction time).
+    assert s.line_range == (10, 5)

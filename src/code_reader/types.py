@@ -41,7 +41,7 @@ class RepoIndex(BaseModel):
     commit_hash: str
     symbols: list[Symbol]
     files: list[str]
-    index_errors: list[dict] = Field(default_factory=list)
+    index_errors: list[dict[str, str]] = Field(default_factory=list)
 
 
 class FileSummary(BaseModel):
