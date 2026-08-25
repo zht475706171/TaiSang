@@ -1,4 +1,4 @@
-"""端到端:本地多文件 repo → index → ask → Answer。"""
+"""端到端:本地多文件 repo → index → 调用图验证。"""
 
 import os
 import subprocess
@@ -50,24 +50,6 @@ def _make_realistic_repo(tmp_path: Path) -> Path:
         env=git_env,
     )
     return repo
-
-
-def test_end_to_end_index_then_ask(tmp_path, monkeypatch):
-    _isolate_home(tmp_path, monkeypatch)
-    monkeypatch.setenv("CODE_READER_MOCK_LLM", "1")
-    repo = _make_realistic_repo(tmp_path)
-
-    runner = CliRunner()
-    # 1. index
-    r1 = runner.invoke(cli, ["index", str(repo)])
-    assert r1.exit_code == 0, r1.output
-    assert "索引完成" in r1.output
-
-    # 2. ask
-    r2 = runner.invoke(cli, ["ask", "main 函数调用了谁", "--repo", str(repo)])
-    assert r2.exit_code == 0, r2.output
-    # mock LLM 固定回答包含 main
-    assert "main" in r2.output
 
 
 def test_end_to_end_call_graph_built(tmp_path, monkeypatch):

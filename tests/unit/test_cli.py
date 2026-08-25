@@ -46,7 +46,7 @@ def test_cli_help():
     result = runner.invoke(cli, ["--help"])
     assert result.exit_code == 0
     assert "index" in result.output
-    assert "ask" in result.output
+    assert "doc" in result.output
 
 
 def test_cli_index_command(tmp_path, monkeypatch):
@@ -62,18 +62,6 @@ def test_cli_index_command(tmp_path, monkeypatch):
     assert (repo / ".code-reader" / "repo_map.json").exists()
 
 
-def test_cli_ask_command_with_mock_llm(tmp_path, monkeypatch):
-    """ask 命令用 MockLLM 应能跑通,返回字符串。"""
-    _isolate_home(tmp_path, monkeypatch)
-    monkeypatch.setenv("CODE_READER_MOCK_LLM", "1")
-    repo = _make_repo(tmp_path)
-    runner = CliRunner()
-    runner.invoke(cli, ["index", str(repo)])
-    result = runner.invoke(cli, ["ask", "main 函数干啥的", "--repo", str(repo)])
-    assert result.exit_code == 0, result.output
-    assert "main" in result.output or "mock" in result.output.lower()
-
-
 def test_cli_index_rejects_nonexistent_path(tmp_path, monkeypatch):
     """路径不存在,index exit 1 + 错误提示。"""
     _isolate_home(tmp_path, monkeypatch)
@@ -84,53 +72,15 @@ def test_cli_index_rejects_nonexistent_path(tmp_path, monkeypatch):
     assert "路径不存在" in result.output or "not a directory" in result.output
 
 
-def test_cli_ask_without_index_exits_1(tmp_path, monkeypatch):
-    """未索引过的路径,ask exit 1 + 提示先 index。"""
-    _isolate_home(tmp_path, monkeypatch)
+def test_doc_command_exists(tmp_path, monkeypatch):
+    """doc 命令存在,accept repo 参数,未索引时给出提示。"""
+    from click.testing import CliRunner
+    from code_reader.cli.main import cli
     monkeypatch.setenv("CODE_READER_MOCK_LLM", "1")
-    repo = _make_repo(tmp_path)
     runner = CliRunner()
-    result = runner.invoke(cli, ["ask", "q", "--repo", str(repo)])
-    assert result.exit_code == 1
-    assert "未索引过" in result.output
-
-
-def test_cli_shell_basic_qa(tmp_path, monkeypatch):
-    """shell 模式:先 index,进 shell 问问题,/exit 退出。"""
-    _isolate_home(tmp_path, monkeypatch)
-    monkeypatch.setenv("CODE_READER_MOCK_LLM", "1")
-    repo = _make_repo(tmp_path)
-    runner = CliRunner()
-    runner.invoke(cli, ["index", str(repo)])
-    # 进 shell 问一个问题然后 /exit;CliRunner 的 input 注入到 stdin
-    result = runner.invoke(cli, ["shell", "--repo", str(repo)], input="main 干啥的\n/exit\n")
-    assert result.exit_code == 0, result.output
-    assert "mock" in result.output.lower() or "main" in result.output
-
-
-def test_cli_shell_rejects_unindexed(tmp_path, monkeypatch):
-    """shell 模式未索引,exit 1 + 提示先 index。"""
-    _isolate_home(tmp_path, monkeypatch)
-    monkeypatch.setenv("CODE_READER_MOCK_LLM", "1")
-    repo = _make_repo(tmp_path)
-    runner = CliRunner()
-    result = runner.invoke(cli, ["shell", "--repo", str(repo)])
-    assert result.exit_code == 1
-    assert "未索引过" in result.output
-
-
-def test_cli_ask_shows_trace(tmp_path, monkeypatch):
-    """ask 默认模式应显示 emoji trace;--quiet 关闭 trace。"""
-    _isolate_home(tmp_path, monkeypatch)
-    monkeypatch.setenv("CODE_READER_MOCK_LLM", "1")
-    repo = _make_repo(tmp_path)
-    runner = CliRunner()
-    runner.invoke(cli, ["index", str(repo)])
-    # 默认模式:有 FINAL_ANSWER 的 💡
-    result = runner.invoke(cli, ["ask", "q", "--repo", str(repo)])
-    assert result.exit_code == 0
-    assert "💡" in result.output
-    # quiet 模式:无 emoji
-    result_q = runner.invoke(cli, ["ask", "q", "--repo", str(repo), "--quiet"])
-    assert result_q.exit_code == 0
-    assert "💡" not in result_q.output
+    repo = tmp_path / "demo"
+    repo.mkdir()
+    (repo / "a.py").write_text("def f():\n    pass\n", encoding="utf-8")
+    r = runner.invoke(cli, ["doc", str(repo)])
+    assert r.exit_code == 0
+    assert "REPO_GUIDE.md" in r.output or "文档" in r.output
