@@ -134,10 +134,16 @@ def cmd_doc(repo_path: str, lang: str, update: bool, force: bool) -> None:
 
     click.echo(f"开始为 {source_root} 生成文档...")
 
-    # 1. indexer
+    # 1. indexer(--update 且非 --force 走增量;否则全量)
     indexer = IndexerService(pm)
-    idx = indexer.build(source_root)
-    click.echo(f"AST 解析完成: {len(idx.symbols)} 个符号, {len(idx.files)} 个文件")
+    if update and not force:
+        # 增量:indexer.update 复用已有 fingerprints,只重解析变动文件。
+        # v0.1 简化:索引层增量,文档层仍全量重生成。v0.2 再做文档层增量。
+        idx = indexer.update(source_root)
+        click.echo("增量模式:索引增量更新 + 文档重生成")
+    else:
+        idx = indexer.build(source_root)
+        click.echo(f"AST 解析完成: {len(idx.symbols)} 个符号, {len(idx.files)} 个文件")
 
     # 2. summarizer
     summarizer = SummarizerService(llm=llm)
