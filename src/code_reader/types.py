@@ -101,3 +101,54 @@ class Answer(BaseModel):
     citations: list[Citation] = Field(default_factory=list)
     complete: bool = True  # False 表示因 max_steps/token 提前终止
     steps_used: int = 0
+
+
+class EntryPoint(BaseModel):
+    """挖掘出的入口。"""
+
+    symbol_id: str
+    kind: str  # "cli" / "main" / "api_endpoint" / "test"
+    description: str = ""
+
+
+class MechanismCandidate(BaseModel):
+    """核心机制候选(调用图指标筛出来的)。"""
+
+    symbol_id: str
+    name: str
+    file: str
+    in_degree: int  # 被多少符号调用
+    cross_module_refs: int  # 跨模块引用数
+    out_degree: int  # 它调用多少符号
+    score: float  # 加权打分
+    one_liner: str = ""  # LLM 给的一句话定位
+
+
+class FlowCandidate(BaseModel):
+    """关键流程候选(端到端调用链)。"""
+
+    name: str  # 流程名(从入口 symbol 派生)
+    entry_symbol_id: str
+    chain: list[str]  # symbol_id 列表
+    hop_count: int
+    rendered: str  # 人话叙事(render_chain 输出)
+
+
+class ModuleCandidate(BaseModel):
+    """核心模块候选。"""
+
+    path: str  # 目录路径
+    file_count: int
+    symbol_count: int
+    in_degree: int  # 该模块所有符号被引用总和
+    one_liner: str = ""
+
+
+class Outline(BaseModel):
+    """outliner 的完整产物。"""
+
+    entry_points: list[EntryPoint]
+    mechanism_candidates: list[MechanismCandidate]  # top 20
+    flow_candidates: list[FlowCandidate]
+    module_candidates: list[ModuleCandidate]
+    selected_mechanisms: list[MechanismCandidate]  # LLM 选 5-10 个
