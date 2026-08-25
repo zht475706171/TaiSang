@@ -18,9 +18,13 @@ from pathlib import Path
 
 import click
 
+from ..agent_core.service import AgentService
 from ..config import load_config
+from ..docgen.tree import build_doc_tree_structure
 from ..indexer.service import IndexerService
 from ..llm_client import LLMClient, LLMResponse, MockLLM
+from ..outliner.service import OutlinerService
+from ..session_memory.service import SessionMemoryService
 from ..storage.paths import PathManager
 from ..summarizer.service import SummarizerService
 
@@ -37,7 +41,7 @@ def _make_llm():
             [
                 LLMResponse(text="(mock) 这个 repo 定义了 main 函数 [a.py:1]", tool_calls=[]),
             ]
-            * 10
+            * 50
         )
     cfg = load_config()
     if not cfg.api_key:
@@ -120,9 +124,69 @@ def cmd_doc(repo_path: str, lang: str, update: bool, force: bool) -> None:
     if not source_root.is_dir():
         click.echo(f"错误:路径不存在或不是目录: {source_root}", err=True)
         sys.exit(1)
+
+    # 语言检测
+    if lang == "auto":
+        lang = "zh"  # v0.1 简化:默认中文
+
+    llm = _make_llm()
+    pm = PathManager()
+
     click.echo(f"开始为 {source_root} 生成文档...")
-    # 骨架:Task 2-11 逐步填充
-    click.echo("✓ 文档生成完成(骨架)")
+
+    # 1. indexer
+    indexer = IndexerService(pm)
+    idx = indexer.build(source_root)
+    click.echo(f"AST 解析完成: {len(idx.symbols)} 个符号, {len(idx.files)} 个文件")
+
+    # 2. summarizer
+    summarizer = SummarizerService(llm=llm)
+    repo_map = summarizer.summarize(idx, source_root=source_root, on_progress=_make_progress())
+    pm.repo_map_path(source_root).write_text(repo_map.model_dump_json(indent=2), encoding="utf-8")
+
+    # 3. outliner
+    outliner = OutlinerService(llm=llm)
+    outline = outliner.outline(idx)
+    click.echo(
+        f"重点挖掘: {len(outline.selected_mechanisms)} 机制, "
+        f"{len(outline.flow_candidates)} 流程, {len(outline.module_candidates)} 模块"
+    )
+
+    # 4. docgen 准备章节树(只搭骨架占位,真正内容由 agent 填)
+    sections = build_doc_tree_structure(outline, repo_name=source_root.name, language=lang)
+    all_section_paths = [s.path for s in sections]
+    doc_dir = pm.doc_dir(source_root)
+    # 预先创建占位文件(force 时重写)
+    for s in sections:
+        full = doc_dir / s.path
+        full.parent.mkdir(parents=True, exist_ok=True)
+        if not full.exists() or force:
+            full.write_text(f"# {s.title}\n\n(待填)\n", encoding="utf-8")
+
+    # 5. agent 跑主循环(on_event 传 None,CLI 自己 echo 阶段性进度就够了)
+    call_graph = indexer.build_call_graph(idx)
+    session_mem = SessionMemoryService(
+        llm=llm,
+        memory_path=pm.session_memory_path(source_root, "main"),
+    )
+    agent = AgentService(
+        llm=llm,
+        source_root=source_root,
+        call_graph=call_graph,
+        repo_map=repo_map,
+        idx=idx,
+        outline=outline,
+        doc_dir=doc_dir,
+        all_sections=all_section_paths,
+        session_memory=session_mem,
+    )
+    click.echo("agent 开始生成文档...")
+    answer = agent.run(
+        f"为 {source_root.name} 这个 repo 生成完整文档树,语言: {lang}",
+        on_event=None,
+    )
+    click.echo(answer.text)
+    click.echo(f"✓ 文档生成完成,产物在 {doc_dir}")
 
 
 if __name__ == "__main__":
