@@ -152,3 +152,25 @@ class Outline(BaseModel):
     flow_candidates: list[FlowCandidate]
     module_candidates: list[ModuleCandidate]
     selected_mechanisms: list[MechanismCandidate]  # LLM 选 5-10 个
+
+
+class DocSection(BaseModel):
+    """一个章节。
+
+    path 是落盘相对路径,如 "02_核心机制/01_依赖注入.md";
+    content 是章节正文(markdown),空字符串表示待 agent 填充;
+    kind 用于 DocGenService 分派渲染策略。
+    """
+
+    path: str
+    title: str
+    content: str = ""
+    kind: str = "generic"  # guide / overview / mechanism / flow / module / glossary / reading_map
+
+
+class DocTree(BaseModel):
+    """完整文档树:章节列表 + 元信息。"""
+
+    repo_name: str
+    language: str  # "zh" / "en"
+    sections: list[DocSection]
