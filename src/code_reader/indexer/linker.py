@@ -80,11 +80,7 @@ def build_call_graph(symbols: list[Symbol]) -> dict[str, CallGraphNode]:
             # 策略 1: method 内调 self.foo → 同 class 的 method
             if caller_class:
                 candidate = next(
-                    (
-                        sid
-                        for sid in candidates
-                        if _method_class(sid) == caller_class
-                    ),
+                    (sid for sid in candidates if _method_class(sid) == caller_class),
                     None,
                 )
                 if candidate:
