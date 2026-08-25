@@ -49,3 +49,29 @@ class PathManager:
     @classmethod
     def index_errors_path(cls, source_root: Path) -> Path:
         return cls.index_dir(source_root) / "index_errors.json"
+
+    @classmethod
+    def doc_dir(cls, source_root: Path) -> Path:
+        """文档产物目录:<source_root>/.code-reader/docs/"""
+        d = cls.index_dir(source_root) / "docs"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    @classmethod
+    def session_memory_dir(cls, source_root: Path, session_id: str) -> Path:
+        """session memory 目录:.code-reader/sessions/<id>/session-memory/"""
+        d = cls.index_dir(source_root) / "sessions" / session_id / "session-memory"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    @classmethod
+    def session_memory_path(cls, source_root: Path, session_id: str) -> Path:
+        """session memory summary 路径。"""
+        return cls.session_memory_dir(source_root, session_id) / "summary.md"
+
+    @classmethod
+    def observations_dir(cls, source_root: Path) -> Path:
+        """大 observation 持久化目录:.code-reader/observations/"""
+        d = cls.index_dir(source_root) / "observations"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
