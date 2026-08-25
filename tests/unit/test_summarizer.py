@@ -108,3 +108,24 @@ def test_summarize_global_level(tmp_path):
     (tmp_path / "a.py").write_text("def main():\n    pass\n", encoding="utf-8")
     repo_map = service.summarize(idx, source_root=tmp_path)
     assert "main" in repo_map.global_summary.entry_points
+
+
+def test_file_summary_not_truncated_to_200(tmp_path):
+    """LLM 返回 600 字摘要,终值不应被切到 200 字。"""
+    from code_reader.summarizer.service import SummarizerService
+    from code_reader.types import RepoIndex, Symbol
+    from code_reader.llm_client import MockLLM, LLMResponse
+
+    long_summary = "x" * 600  # 600 字
+    mock = MockLLM([LLMResponse(text=long_summary, tool_calls=[])])
+    service = SummarizerService(llm=mock)
+    src = tmp_path / "a.py"
+    src.write_text("def f():\n    pass\n", encoding="utf-8")
+    idx = RepoIndex(
+        source_root=str(tmp_path), commit_hash="x",
+        symbols=[Symbol(id="a.py::f", kind="function", name="f", file="a.py",
+                       line_range=(1, 2), calls=[], imports=[])],
+        files=["a.py"], index_errors=[],
+    )
+    repo_map = service.summarize(idx, source_root=tmp_path)
+    assert len(repo_map.file_summaries["a.py"].summary) == 600
