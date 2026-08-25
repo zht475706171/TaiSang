@@ -88,3 +88,45 @@ def test_build_call_graph_method_call_to_other_method_in_same_class():
     graph = build_call_graph(symbols)
     # push 调 pop,pop 在同一个 class Stack 里,应解析
     assert "stack.py::Stack.pop" in graph["stack.py::Stack.push"].resolved_calls
+
+
+def test_linker_resolves_via_import():
+    """a.py 的 helper 调用,通过 import 解析到 b.py::helper。"""
+    symbols = [
+        Symbol(id="a.py::main", kind=SymbolKind.FUNCTION, name="main", file="a.py",
+               line_range=(1, 3), calls=["helper"], imports=["b"]),
+        Symbol(id="b.py::helper", kind=SymbolKind.FUNCTION, name="helper", file="b.py",
+               line_range=(1, 2), calls=[], imports=[]),
+    ]
+    graph = build_call_graph(symbols)
+    assert "b.py::helper" in graph["a.py::main"].resolved_calls
+
+
+def test_linker_same_module_priority():
+    """a.py 调 foo,同模块的 a.py::foo 优先于其他模块的 foo。"""
+    symbols = [
+        Symbol(id="a.py::caller", kind=SymbolKind.FUNCTION, name="caller", file="a.py",
+               line_range=(1, 3), calls=["foo"], imports=[]),
+        Symbol(id="a.py::foo", kind=SymbolKind.FUNCTION, name="foo", file="a.py",
+               line_range=(5, 6), calls=[], imports=[]),
+        Symbol(id="b.py::foo", kind=SymbolKind.FUNCTION, name="foo", file="b.py",
+               line_range=(1, 2), calls=[], imports=[]),
+    ]
+    graph = build_call_graph(symbols)
+    assert graph["a.py::caller"].resolved_calls == ["a.py::foo"]
+
+
+def test_render_chain_renders_human_readable(tmp_path):
+    """render_chain 把 [symbol_id, ...] 展开成 'name (file:line) → ...' 格式。"""
+    from code_reader.indexer.linker import render_chain
+    symbols = [
+        Symbol(id="a.py::main", kind=SymbolKind.FUNCTION, name="main", file="a.py",
+               line_range=(10, 20), calls=["helper"], imports=[]),
+        Symbol(id="b.py::helper", kind=SymbolKind.FUNCTION, name="helper", file="b.py",
+               line_range=(5, 8), calls=[], imports=[]),
+    ]
+    graph = build_call_graph(symbols)
+    rendered = render_chain(graph, ["a.py::main", "b.py::helper"])
+    assert "main (a.py:10-20)" in rendered
+    assert "helper (b.py:5-8)" in rendered
+    assert "→" in rendered
