@@ -73,9 +73,8 @@ def test_cli_index_rejects_nonexistent_path(tmp_path, monkeypatch):
 
 
 def test_doc_command_exists(tmp_path, monkeypatch):
-    """doc 命令存在,accept repo 参数,未索引时给出提示。"""
-    from click.testing import CliRunner
-    from code_reader.cli.main import cli
+    """doc 命令存在,accept repo_path 参数,正常路径下退出码 0。"""
+    _isolate_home(tmp_path, monkeypatch)
     monkeypatch.setenv("CODE_READER_MOCK_LLM", "1")
     runner = CliRunner()
     repo = tmp_path / "demo"
@@ -83,4 +82,4 @@ def test_doc_command_exists(tmp_path, monkeypatch):
     (repo / "a.py").write_text("def f():\n    pass\n", encoding="utf-8")
     r = runner.invoke(cli, ["doc", str(repo)])
     assert r.exit_code == 0
-    assert "REPO_GUIDE.md" in r.output or "文档" in r.output
+    assert "文档" in r.output
