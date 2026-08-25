@@ -23,7 +23,7 @@ from .prompts import (
 log = logging.getLogger(__name__)
 
 # 简单 token 预算控制:超过这个字数就再压一层(简化版,不做真 token 计数)
-FILE_BUDGET = 800   # 字数(原 200,放宽到 800)
+FILE_BUDGET = 800  # 字数(原 200,放宽到 800)
 MODULE_BUDGET = 1500  # 字数(原 600,放宽)
 GLOBAL_BUDGET = 3000  # 字数(原 2000,放宽)
 
