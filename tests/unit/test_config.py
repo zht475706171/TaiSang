@@ -17,9 +17,6 @@ def _clear_llm_env(monkeypatch):
         "CODE_READER_LLM_BASE_URL",
         "CODE_READER_LLM_API_KEY",
         "CODE_READER_LLM_MODEL",
-        "CODE_READER_SUMMARIZER_BASE_URL",
-        "CODE_READER_SUMMARIZER_API_KEY",
-        "CODE_READER_SUMMARIZER_MODEL",
     ]:
         monkeypatch.delenv(k, raising=False)
 
@@ -69,15 +66,3 @@ def test_env_overrides_file(tmp_path, monkeypatch):
     cfg = load_config()
     assert cfg.model == "from-env"
     assert cfg.base_url == "https://from-file"
-
-
-def test_summarizer_config_separate(tmp_path, monkeypatch):
-    _isolate_home(tmp_path, monkeypatch)
-    _clear_llm_env(monkeypatch)
-    monkeypatch.setenv("CODE_READER_LLM_BASE_URL", "https://api.x.com")
-    monkeypatch.setenv("CODE_READER_LLM_API_KEY", "k")
-    monkeypatch.setenv("CODE_READER_LLM_MODEL", "strong-model")
-    monkeypatch.setenv("CODE_READER_SUMMARIZER_MODEL", "cheap-model")
-    cfg = load_config()
-    assert cfg.model == "strong-model"
-    assert cfg.summarizer_model == "cheap-model"

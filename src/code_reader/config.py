@@ -1,7 +1,7 @@
 """LLM endpoint 配置加载。
 
 优先级: 环境变量 > ~/.code-reader/settings.json > 默认值。
-支持两套独立配置: 主模型(Agent 循环) 和 摘要模型(便宜模型)。
+单一 LLM 配置(summarizer / outliner / agent 全用同一个模型)。
 """
 
 from __future__ import annotations
@@ -19,10 +19,6 @@ class LLMConfig(BaseModel):
     base_url: str = "https://api.openai.com/v1"
     api_key: str = ""
     model: str = "gpt-4o"
-    # 摘要模型(可选,默认跟主模型一致)
-    summarizer_base_url: str | None = None
-    summarizer_api_key: str | None = None
-    summarizer_model: str | None = None
 
 
 def _settings_path() -> Path:
@@ -42,18 +38,10 @@ def load_config() -> LLMConfig:
     base_url = os.environ.get("CODE_READER_LLM_BASE_URL", file_cfg.get("base_url"))
     api_key = os.environ.get("CODE_READER_LLM_API_KEY", file_cfg.get("api_key"))
     model = os.environ.get("CODE_READER_LLM_MODEL", file_cfg.get("model"))
-    summ_model = os.environ.get("CODE_READER_SUMMARIZER_MODEL", file_cfg.get("summarizer_model"))
-    summ_base = os.environ.get(
-        "CODE_READER_SUMMARIZER_BASE_URL", file_cfg.get("summarizer_base_url")
-    )
-    summ_key = os.environ.get("CODE_READER_SUMMARIZER_API_KEY", file_cfg.get("summarizer_api_key"))
     config_data = {
         "base_url": base_url,
         "api_key": api_key,
         "model": model,
-        "summarizer_base_url": summ_base,
-        "summarizer_api_key": summ_key,
-        "summarizer_model": summ_model,
     }
     # Drop None values so Pydantic field defaults apply
     config_data = {k: v for k, v in config_data.items() if v is not None}
