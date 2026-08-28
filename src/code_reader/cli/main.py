@@ -55,10 +55,10 @@ def _make_llm():
 
 
 def _make_progress():
-    """返回 summarizer 进度回调。"""
+    """返回 summarizer 进度回调。用 ASCII 标记,避免 Windows GBK 控制台编码错误。"""
     return lambda stage, path, status, detail: click.echo(
         "  {} {}: {}{}".format(
-            "✓" if status == "ok" else "✗",
+            "[OK]" if status == "ok" else "[FAIL]",
             stage,
             path or "(根目录)",
             f" ({detail})" if detail else "",
@@ -74,7 +74,7 @@ def cli() -> None:
 @cli.command("index")
 @click.argument("repo_path")
 def cmd_index(repo_path: str) -> None:
-    """建索引:扫本地 repo → 解析 AST → 三层摘要 → 入库。
+    """建索引:扫本地 repo -> 解析 AST -> 三层摘要 -> 入库。
 
     索引产物落到 <repo_path>/.code-reader/。
     """
@@ -107,7 +107,7 @@ def cmd_index(repo_path: str) -> None:
     click.echo(f"摘要完成: {n_files} 文件, {n_modules} 模块")
     if summarizer.errors:
         click.echo(f"  摘要失败 {len(summarizer.errors)} 个(已跳过)")
-    click.echo("✓ 索引完成")
+    click.echo("[OK] 索引完成")
     click.echo(
         f"提示:索引产物已落到 {source_root}/.code-reader/。建议把 .code-reader/ 加到 .gitignore"
     )
@@ -192,7 +192,7 @@ def cmd_doc(repo_path: str, lang: str, update: bool, force: bool) -> None:
         on_event=None,
     )
     click.echo(answer.text)
-    click.echo(f"✓ 文档生成完成,产物在 {doc_dir}")
+    click.echo(f"[OK] 文档生成完成,产物在 {doc_dir}")
 
 
 if __name__ == "__main__":
