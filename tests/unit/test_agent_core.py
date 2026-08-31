@@ -195,3 +195,75 @@ def test_agent_reset_clears_context(tmp_path):
         (m.get("content") or "") for m in second_turn_messages if isinstance(m.get("content"), str)
     )
     assert "读 a.py" not in all_content, "reset() 应清掉第 1 轮的对话历史"
+
+
+class _UsageLLM:
+    """假 LLM,每次返回固定 usage + 一次性最终答案,记录调用次数。"""
+
+    def __init__(self, usage_list: list[dict]) -> None:
+        self._usage_list = list(usage_list)
+        self._i = 0
+
+    def chat(self, messages, tools):
+        from code_reader.llm_client import LLMResponse
+
+        usage = self._usage_list[self._i]
+        self._i += 1
+        return LLMResponse(text=f"ans-{self._i}", tool_calls=[], usage=usage)
+
+
+def test_agent_accumulates_and_resets_token_usage(tmp_path):
+    """AgentService 应累加 turn/session token,reset() 清零 session 累计。"""
+    llm = _UsageLLM(
+        [
+            {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+            {"prompt_tokens": 200, "completion_tokens": 80, "total_tokens": 280},
+            {"prompt_tokens": 50, "completion_tokens": 20, "total_tokens": 70},
+        ]
+    )
+    service = AgentService(llm=llm, source_root=tmp_path, confirmer=AutoApproveConfirmer())
+
+    # 第 1 轮:turn = session = 150
+    service.run("q1")
+    assert service._turn_usage["total_tokens"] == 150
+    assert service._session_usage["total_tokens"] == 150
+
+    # 第 2 轮:turn = 280,session 累计 = 150 + 280 = 430
+    service.run("q2")
+    assert service._turn_usage["total_tokens"] == 280
+    assert service._session_usage["total_tokens"] == 430
+
+    # reset:session 累计清零
+    service.reset()
+    assert service._session_usage["total_tokens"] == 0
+    assert service._turn_usage["total_tokens"] == 0
+
+    # reset 后第 3 轮:turn = session = 70
+    service.run("q3")
+    assert service._turn_usage["total_tokens"] == 70
+    assert service._session_usage["total_tokens"] == 70
+
+
+def test_agent_usage_none_keeps_counters_zero(tmp_path):
+    """LLM 返回 usage=None(MockLLM 路径)时,计数器保持 0,不报错。"""
+    mock = MockLLM([LLMResponse(text="ans", tool_calls=[], usage=None)])
+    service = AgentService(llm=mock, source_root=tmp_path, confirmer=AutoApproveConfirmer())
+    service.run("q")
+    assert service._turn_usage["total_tokens"] == 0
+    assert service._session_usage["total_tokens"] == 0
+
+
+def test_agent_emits_usage_report_event(tmp_path):
+    """run() 结束应 emit USAGE_REPORT 事件,payload 含 turn/session/cache。"""
+    from code_reader.agent_core.events import USAGE_REPORT
+
+    llm = _UsageLLM([{"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}])
+    service = AgentService(llm=llm, source_root=tmp_path, confirmer=AutoApproveConfirmer())
+    events = []
+    service.run("q", on_event=lambda e: events.append(e))
+    usage_events = [e for e in events if e.type == USAGE_REPORT]
+    assert len(usage_events) == 1
+    p = usage_events[0].payload
+    assert p["turn"]["total"] == 15
+    assert p["session"]["total"] == 15
+    assert p["cache"]["available"] is False

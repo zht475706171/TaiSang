@@ -26,6 +26,11 @@ COMPACTED = "compacted"
 DEBUG_REQUEST = "debug_request"
 DEBUG_RESPONSE = "debug_response"
 DEBUG_TOOL_RESULT = "debug_tool_result"
+# token 用量事件:run() 结束时 emit,UI 渲染此轮 + session 累计 token
+USAGE_REPORT = "usage_report"
+# Web UI 异步确认事件:WebConfirmer 被调用时 emit,前端弹卡片,POST /confirm/{token} 回应。
+# CLI chat 路径不 emit(用 default_confirmer 直接 stdin)。
+CONFIRM_REQUEST = "confirm_request"
 
 
 @dataclass
@@ -49,3 +54,9 @@ class AgentEvent:
     #   DEBUG_REQUEST: {"step": int, "messages": list[dict], "tools": list[dict]}
     #   DEBUG_RESPONSE: {"step": int, "text": str, "tool_calls": list[dict]}
     #   DEBUG_TOOL_RESULT: {"step": int, "name": str, "tool_call_id": str, "observation": str}
+    # USAGE_REPORT(每次 run 结束都 emit,不受 debug 开关影响):
+    #   {"turn": {"prompt": int, "completion": int, "total": int} | None,
+    #    "session": {"prompt": int, "completion": int, "total": int},
+    #    "cache": {"available": bool, "cached_tokens": int | None}}
+    # CONFIRM_REQUEST(仅 Web UI 路径 emit):
+    #   {"token": str, "file_path": str, "old": str, "new": str}

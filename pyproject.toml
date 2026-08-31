@@ -26,6 +26,10 @@ dev = [
     "black>=24.0",
     "pre-commit>=3.7",
 ]
+web = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+]
 
 [project.scripts]
 code-reader = "code_reader.cli.main:cli"

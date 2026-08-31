@@ -31,6 +31,7 @@ from .events import (
     LLM_THINKING,
     TOOL_CALL,
     TOOL_RESULT,
+    USAGE_REPORT,
     AgentEvent,
 )
 from .prompts import SYSTEM_PROMPT
@@ -90,6 +91,10 @@ class AgentService:
         self.ctx.append_system(SYSTEM_PROMPT)
         # session memory post-sampling 计数器:跨 run() 累计工具调用次数。
         self._tool_calls_since_last_extract = 0
+        # token 用量累计:跨 run() 累加,reset() 清零。结构同 LLMResponse.usage。
+        self._session_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        # 此轮 run() 的 token 用量临时累加器(每次 run 开始前重置)。
+        self._turn_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
     def set_debug(self, on: bool) -> None:
         """REPL /debug 命令切换开关。"""
@@ -106,6 +111,8 @@ class AgentService:
         self.ctx.append_system(SYSTEM_PROMPT)
         self.compaction_state = ContentReplacementState()
         self._tool_calls_since_last_extract = 0
+        self._session_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        self._turn_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
     def run(self, query: str, on_event: EventCallback | None = None) -> Answer:
         """执行 Agent 循环,返回 Answer。
@@ -118,6 +125,8 @@ class AgentService:
 
         注意:self.ctx 跨 run() 保留,多轮对话有短期记忆;reset() 清空。
         """
+        # 重置此轮 token 累加器(session 累计不清,跨 run 保留)
+        self._turn_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         self.ctx.append_user(query)
 
         registry = ToolRegistry(
@@ -159,6 +168,7 @@ class AgentService:
             try:
                 resp = self.llm.chat(messages=self.ctx.messages(), tools=registry.schemas())
             except LLMProtocolError as e:
+                self._emit_usage_report(_emit)
                 log.warning("LLM protocol error at step %d: %s", steps, e)
                 return Answer(
                     text=f"(LLM 协议错误: {e})",
@@ -167,6 +177,7 @@ class AgentService:
                     steps_used=steps,
                 )
             except LLMTransientError as e:
+                self._emit_usage_report(_emit)
                 log.warning("LLM transient error at step %d: %s", steps, e)
                 return Answer(
                     text=f"(LLM 调用失败: {e})",
@@ -175,6 +186,7 @@ class AgentService:
                     steps_used=steps,
                 )
             except LLMError as e:
+                self._emit_usage_report(_emit)
                 log.warning("LLM error at step %d: %s", steps, e)
                 return Answer(
                     text=f"(LLM 错误: {e})",
@@ -182,6 +194,8 @@ class AgentService:
                     complete=False,
                     steps_used=steps,
                 )
+            # 累加此轮 + session 累计 token(MockLLM / endpoint 未返回时 usage=None,跳过)
+            self._accumulate_usage(resp.usage)
 
             if not resp.tool_calls:
                 if self.debug:
@@ -193,6 +207,7 @@ class AgentService:
                     )
                 citations = self._extract_citations(resp.text)
                 _emit(AgentEvent(type=FINAL_ANSWER, payload={"text": resp.text}))
+                self._emit_usage_report(_emit)
                 return Answer(
                     text=resp.text,
                     citations=citations,
@@ -271,6 +286,7 @@ class AgentService:
                     )
                 self._tool_calls_since_last_extract = 0
 
+        self._emit_usage_report(_emit)
         return Answer(
             text="(达到最大步数,信息可能不全)",
             citations=[],
@@ -316,6 +332,46 @@ class AgentService:
         """取最近几轮对话作为 session memory extract 输入。读 self.ctx。"""
         msgs = self.ctx.messages()
         return "\n".join(f"[{m['role']}]: {m.get('content', '')[:200]}" for m in msgs[-10:])
+
+    def _accumulate_usage(self, usage: dict | None) -> None:
+        """把单次 LLM 响应的 usage 累加到 turn + session 计数器。
+
+        usage 为 None(MockLLM 或 endpoint 未返回)时跳过,计数器保持 0。
+        """
+        if usage is None:
+            return
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            val = usage.get(key, 0) or 0
+            self._turn_usage[key] += val
+            self._session_usage[key] += val
+
+    def _emit_usage_report(self, _emit: EventCallback) -> None:
+        """run() 结束时 emit USAGE_REPORT 事件。
+
+        turn: 此轮 run() 累加的 usage(可能全 0,若用 MockLLM 或 endpoint 不返回)。
+        session: 跨 run() 累计(含此轮),reset() 清零。
+        cache: endpoint 是否报告 cached_tokens。aitoken521 + glm-5.2 目前不报告,
+            available=False, cached_tokens=None。
+        """
+        turn = {
+            "prompt": self._turn_usage["prompt_tokens"],
+            "completion": self._turn_usage["completion_tokens"],
+            "total": self._turn_usage["total_tokens"],
+        }
+        session = {
+            "prompt": self._session_usage["prompt_tokens"],
+            "completion": self._session_usage["completion_tokens"],
+            "total": self._session_usage["total_tokens"],
+        }
+        # cache 字段:当前 endpoint 不报告,固定 available=False。
+        # 若未来 endpoint 返回 prompt_tokens_details.cached_tokens,可在这里解析。
+        cache = {"available": False, "cached_tokens": None}
+        _emit(
+            AgentEvent(
+                type=USAGE_REPORT,
+                payload={"turn": turn, "session": session, "cache": cache},
+            )
+        )
 
     def _extract_citations(self, text: str) -> list[Citation]:
         """从答案文本抽 [file.py:line] 格式引用。"""

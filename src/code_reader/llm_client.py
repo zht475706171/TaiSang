@@ -20,10 +20,18 @@ from .llm_errors import LLMProtocolError, LLMTransientError
 
 @dataclass
 class LLMResponse:
-    """LLM 一次响应。text 和 tool_calls 至少有一个非空。"""
+    """LLM 一次响应。text 和 tool_calls 至少有一个非空。
+
+    usage: endpoint 返回的 token 用量(OpenAI usage 字段透传),None 表示
+        MockLLM 或 endpoint 未返回。结构:
+        {"prompt_tokens": int, "completion_tokens": int, "total_tokens": int}
+        cache 命中字段(cached_tokens)若 endpoint 报告也原样保留在 dict 里,
+        目前 aitoken521 + glm-5.2 不报告。
+    """
 
     text: str
     tool_calls: list[dict] = field(default_factory=list)
+    usage: dict | None = None
 
 
 class LLMClient:
@@ -73,7 +81,21 @@ class LLMClient:
                         "function": {"name": fn_name, "arguments": fn_args},
                     }
                 )
-        return LLMResponse(text=msg.content or "", tool_calls=tool_calls)
+        # 透传 usage(prompt_tokens/completion_tokens/total_tokens)。
+        # endpoint 不返回时 usage=None(MockLLM 也不返回)。用 getattr 兼容测试
+        # FakeResp(不挂 usage 属性)以及 openai SDK 返回 usage=None 的情况。
+        raw_usage = getattr(resp, "usage", None)
+        usage = None
+        if raw_usage is not None:
+            try:
+                usage = {
+                    "prompt_tokens": getattr(raw_usage, "prompt_tokens", 0) or 0,
+                    "completion_tokens": getattr(raw_usage, "completion_tokens", 0) or 0,
+                    "total_tokens": getattr(raw_usage, "total_tokens", 0) or 0,
+                }
+            except AttributeError:
+                usage = None
+        return LLMResponse(text=msg.content or "", tool_calls=tool_calls, usage=usage)
 
 
 class MockLLM:
