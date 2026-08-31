@@ -24,11 +24,11 @@ _HAS_GIT = shutil.which("git") is not None
 
 
 def test_bash_echo(tmp_path: Path) -> None:
-    """白名单内 `echo hello` → ok=True,stdout 含 hello。echo 是 cmd.exe 内置。"""
+    """白名单内 `echo hello` → ok=True,output 含 hello。echo 是 cmd.exe 内置。"""
     tool = BashTool(source_root=tmp_path, timeout=10)
     result = tool.run({"command": "echo hello"})
     assert result["ok"] is True
-    assert "hello" in result["stdout"]
+    assert "hello" in result["output"]
 
 
 def test_bash_empty_command(tmp_path: Path) -> None:
@@ -56,7 +56,7 @@ def test_bash_not_in_whitelist_denied(tmp_path: Path) -> None:
 
 
 def test_bash_cwd_enforced(tmp_path: Path) -> None:
-    """命令在 source_root 下跑。用 python 打印 getcwd,stdout 含 tmp_path。
+    """命令在 source_root 下跑。用 python 打印 getcwd,output 含 tmp_path。
 
     plan 原稿写 `pwd`,但 Windows cmd.exe 无 pwd,改用 python 等价命令。
     """
@@ -65,7 +65,7 @@ def test_bash_cwd_enforced(tmp_path: Path) -> None:
     assert result["ok"] is True
     # 路径分隔符:Windows 上 getcwd 返回反斜杠,比较时统一成小写并查 tmp_path 字符串
     cwd_str = str(tmp_path)
-    assert cwd_str in result["stdout"] or cwd_str.replace("\\", "/") in result["stdout"].replace(
+    assert cwd_str in result["output"] or cwd_str.replace("\\", "/") in result["output"].replace(
         "\\", "/"
     )
 
@@ -94,4 +94,36 @@ def test_bash_git_status(tmp_path: Path) -> None:
     tool = BashTool(source_root=tmp_path, timeout=15)
     result = tool.run({"command": "git status"})
     assert result["ok"] is True
-    assert result["stdout"]  # 非空
+    assert result["output"]  # 非空
+
+
+def test_bash_output_persisted_when_large(tmp_path: Path) -> None:
+    """合并输出 >30000 字符时落盘,output 含 persisted 包装 + preview,落盘文件存在。"""
+    tool = BashTool(source_root=tmp_path, timeout=15)
+    # python 打印 40000 个 x,远超 BASH_MAX_OUTPUT=30000
+    result = tool.run({"command": 'python -c "print(chr(120)*40000)"'})
+    assert result["ok"] is True
+    output = result["output"]
+    assert "Output too large" in output
+    assert "saved to" in output
+    assert "Preview (first 2 KB)" in output
+    assert "[/persisted-output]" in output
+    # 落盘文件实际存在
+    persist_path = Path(result["persisted_path"])
+    assert persist_path.exists()
+    saved = persist_path.read_text(encoding="utf-8")
+    # 落盘的是完整 40000 字符(末尾可能有换行)
+    assert len(saved) >= 40_000
+
+
+def test_bash_combined_stdout_stderr(tmp_path: Path) -> None:
+    """stdout + stderr 合并到一个 output 字段,不再分两个键。"""
+    tool = BashTool(source_root=tmp_path, timeout=10)
+    # stdout 写 'o\n',stderr 写 'e\n',验证两者都进 output
+    script = "import sys; " "sys.stdout.write('o\\n'); " "sys.stderr.write('e\\n')"
+    result = tool.run({"command": f'python -c "{script}"'})
+    assert "stdout" not in result  # 旧字段已移除
+    assert "stderr" not in result
+    assert "output" in result
+    assert "o" in result["output"]  # stdout 的 o
+    assert "e" in result["output"]  # stderr 的 e

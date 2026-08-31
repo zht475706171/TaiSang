@@ -24,6 +24,9 @@ from ..types import Answer, Citation
 from .context import ContextManager
 from .events import (
     COMPACTED,
+    DEBUG_REQUEST,
+    DEBUG_RESPONSE,
+    DEBUG_TOOL_RESULT,
     FINAL_ANSWER,
     LLM_THINKING,
     TOOL_CALL,
@@ -69,6 +72,7 @@ class AgentService:
         compaction_state: ContentReplacementState | None = None,
         max_steps: int = 50,
         token_budget: int = 32_000,
+        debug: bool = False,
     ) -> None:
         self.llm = llm
         self.source_root = source_root
@@ -79,12 +83,17 @@ class AgentService:
         )
         self.max_steps = max_steps
         self.token_budget = token_budget
+        self.debug = debug  # /debug 模式:emit DEBUG_REQUEST/DEBUG_RESPONSE/DEBUG_TOOL_RESULT
         # ContextManager 提到实例属性:跨 run() 调用保留对话历史(多轮记忆)。
         # 每次 run() 只 append_user(query),不重建 ctx,REPL 多轮对话才能看到上一轮。
         self.ctx = ContextManager(token_budget=self.token_budget)
         self.ctx.append_system(SYSTEM_PROMPT)
         # session memory post-sampling 计数器:跨 run() 累计工具调用次数。
         self._tool_calls_since_last_extract = 0
+
+    def set_debug(self, on: bool) -> None:
+        """REPL /debug 命令切换开关。"""
+        self.debug = on
 
     def reset(self) -> None:
         """清空对话上下文 + 重置压缩状态。
@@ -136,6 +145,17 @@ class AgentService:
                     self._tool_calls_since_last_extract = 0
                     continue
             _emit(AgentEvent(type=LLM_THINKING))
+            if self.debug:
+                _emit(
+                    AgentEvent(
+                        type=DEBUG_REQUEST,
+                        payload={
+                            "step": steps,
+                            "messages": self.ctx.messages(),
+                            "tools": registry.schemas(),
+                        },
+                    )
+                )
             try:
                 resp = self.llm.chat(messages=self.ctx.messages(), tools=registry.schemas())
             except LLMProtocolError as e:
@@ -164,6 +184,13 @@ class AgentService:
                 )
 
             if not resp.tool_calls:
+                if self.debug:
+                    _emit(
+                        AgentEvent(
+                            type=DEBUG_RESPONSE,
+                            payload={"step": steps, "text": resp.text, "tool_calls": []},
+                        )
+                    )
                 citations = self._extract_citations(resp.text)
                 _emit(AgentEvent(type=FINAL_ANSWER, payload={"text": resp.text}))
                 return Answer(
@@ -173,6 +200,13 @@ class AgentService:
                     steps_used=steps,
                 )
 
+            if self.debug:
+                _emit(
+                    AgentEvent(
+                        type=DEBUG_RESPONSE,
+                        payload={"step": steps, "text": resp.text, "tool_calls": resp.tool_calls},
+                    )
+                )
             self.ctx.append_assistant(text=resp.text, tool_calls=resp.tool_calls)
             for tc in resp.tool_calls:
                 name = tc["function"]["name"]
@@ -210,6 +244,18 @@ class AgentService:
                         },
                     )
                 )
+                if self.debug:
+                    _emit(
+                        AgentEvent(
+                            type=DEBUG_TOOL_RESULT,
+                            payload={
+                                "step": steps,
+                                "name": name,
+                                "tool_call_id": tc["id"],
+                                "observation": observation,
+                            },
+                        )
+                    )
                 self.ctx.append_tool_result(observation, name=name, tool_call_id=tc["id"])
                 self._tool_calls_since_last_extract += 1
 

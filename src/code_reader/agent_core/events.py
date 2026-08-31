@@ -22,6 +22,10 @@ FINAL_ANSWER = "final_answer"
 # Task 12 追加:文档写完 + 上下文压缩
 DOC_WRITTEN = "doc_written"
 COMPACTED = "compacted"
+# debug 事件:/debug 模式下,把发给 LLM 的 messages / LLM 返回的响应 / 工具完整结果 dump 出来
+DEBUG_REQUEST = "debug_request"
+DEBUG_RESPONSE = "debug_response"
+DEBUG_TOOL_RESULT = "debug_tool_result"
 
 
 @dataclass
@@ -40,3 +44,8 @@ class AgentEvent:
 
     type: str
     payload: dict[str, Any] = field(default_factory=dict)
+    # NOTE:debug 事件(DEBUG_REQUEST/DEBUG_RESPONSE/DEBUG_TOOL_RESULT)只在 /debug
+    # 模式下 emit,payload 结构:
+    #   DEBUG_REQUEST: {"step": int, "messages": list[dict], "tools": list[dict]}
+    #   DEBUG_RESPONSE: {"step": int, "text": str, "tool_calls": list[dict]}
+    #   DEBUG_TOOL_RESULT: {"step": int, "name": str, "tool_call_id": str, "observation": str}

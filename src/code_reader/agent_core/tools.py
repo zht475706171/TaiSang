@@ -27,14 +27,27 @@ import re
 import signal
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
+from ..storage.paths import PathManager
 from .confirm import AutoDenyConfirmer
 
 log = logging.getLogger(__name__)
 
 # regex search 超时秒数(仅 Linux/Mac 生效,Windows 跳过)
 _REGEX_TIMEOUT = 5.0
+
+# Bash 合并输出内联上限(对齐 Claude Code BashTool)。超长落盘到 .code-reader/observations/。
+BASH_MAX_OUTPUT = 30_000
+# 落盘时给 agent 的预览字节数。
+BASH_PREVIEW_BYTES = 2000
+
+# Glob 硬切上限(对齐 Claude Code GlobTool)。
+MAX_GLOB_RESULTS = 100
+
+# Grep 跳过超长行(对齐 Claude Code --max-columns,防 minified/base64 行 DoS)。
+MAX_LINE_LENGTH = 500
 
 
 def _rel(source_root: Path, path: Path) -> str:
@@ -95,11 +108,23 @@ class ReadFileTool(_BaseTool):
     def schema(self) -> dict:
         return {
             "name": self.name,
-            "description": "读取指定源码文件内容。返回文件文本(可能截断)。",
+            "description": (
+                "读取指定源码文件内容。可用 offset/limit 分页读大文件。" "返回文件文本(可能截断)。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "相对 repo 根的文件路径,如 'a/b.py'"},
+                    "offset": {
+                        "type": "integer",
+                        "description": "起始行号(1-indexed),默认 1",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": (
+                            "读多少行。不传则读全部(受 32KB 字节闸门);" "传了则按行读,不受字节闸门"
+                        ),
+                    },
                 },
                 "required": ["path"],
             },
@@ -113,7 +138,25 @@ class ReadFileTool(_BaseTool):
         if not full.exists() or not full.is_file():
             return {"content": "", "error": f"file not found: {path}"}
         try:
-            data = full.read_bytes()
+            text = full.read_text(encoding="utf-8", errors="replace")
+            lines = text.splitlines()
+            total_lines = len(lines)
+            offset = max(1, int(args.get("offset", 1)))
+            limit_arg = args.get("limit")
+            if limit_arg is not None:
+                limit = int(limit_arg)
+                selected = lines[offset - 1 : offset - 1 + limit]
+                content = "\n".join(selected)
+                return {
+                    "content": content,
+                    "offset": offset,
+                    "limit": len(selected),
+                    "total_lines": total_lines,
+                    "truncated": False,
+                    "error": None,
+                }
+            # 没传 limit,走字节闸门
+            data = text.encode("utf-8", errors="replace")
             truncated = False
             if len(data) > self.max_bytes:
                 data = data[: self.max_bytes]
@@ -121,6 +164,8 @@ class ReadFileTool(_BaseTool):
             return {
                 "content": data.decode("utf-8", errors="replace"),
                 "truncated": truncated,
+                "total_lines": total_lines,
+                "offset": offset,
                 "error": None,
             }
         except Exception as e:
@@ -180,6 +225,8 @@ class GrepTool(_BaseTool):
             except Exception:
                 continue
             for i, line in enumerate(text.splitlines(), start=1):
+                if len(line) > MAX_LINE_LENGTH:
+                    continue  # 跳过超长行(minified/base64),防 DoS
                 if _search_with_timeout(regex, line):
                     matches.append(
                         {
@@ -216,7 +263,7 @@ class GlobTool(_BaseTool):
     def run(self, args: dict) -> dict:
         pattern = args.get("pattern", "")
         if not pattern:
-            return {"matches": [], "error": "empty pattern"}
+            return {"matches": [], "truncated": False, "error": "empty pattern"}
         matched: list[str] = []
         for f in self.source_root.rglob("*"):
             if ".git" in f.parts:
@@ -224,7 +271,14 @@ class GlobTool(_BaseTool):
             rel = _rel(self.source_root, f)
             if fnmatch.fnmatch(rel, pattern):
                 matched.append(rel)
-        return {"matches": sorted(matched), "error": None}
+                if len(matched) >= MAX_GLOB_RESULTS:
+                    return {
+                        "matches": sorted(matched),
+                        "truncated": True,
+                        "note": "Results truncated. Use a more specific pattern.",
+                        "error": None,
+                    }
+        return {"matches": sorted(matched), "truncated": False, "error": None}
 
 
 class EditTool(_BaseTool):
@@ -334,7 +388,8 @@ class BashTool(_BaseTool):
     - 命令前缀白名单(前缀匹配),危险命令直接拒
     - cwd 限定在 source_root,Agent 不能在 repo 外面跑
     - subprocess timeout 兜底
-    - stdout 截断 5000 字符、stderr 截断 2000 字符,防 context 撑爆
+    - stdout+stderr 合并输出,内联上限 30000 字符;超长落盘到
+      .code-reader/observations/ 并返回 <persisted-output> 包装 + 2KB 预览
     """
 
     name = "Bash"
@@ -376,16 +431,45 @@ class BashTool(_BaseTool):
                 text=True,
                 timeout=self.timeout,
             )
-            return {
-                "ok": result.returncode == 0,
-                "stdout": result.stdout[:5000],  # 截断保护
-                "stderr": result.stderr[:2000],
-                "returncode": result.returncode,
-            }
         except subprocess.TimeoutExpired:
             return {"ok": False, "error": f"timeout after {self.timeout}s"}
         except Exception as e:  # noqa: BLE001 — 兜底,转成 observation
             return {"ok": False, "error": str(e)}
+        # stdout + stderr 合并(分别 capture 保留 returncode 关联,截断按合并总长算)
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+        combined = stdout + ("\n" + stderr if stderr else "")
+        output_bytes = len(combined.encode("utf-8"))
+        if output_bytes > BASH_MAX_OUTPUT:
+            # 落盘完整输出,返回 <persisted-output> 包装 + 2KB 预览
+            persist_dir = PathManager.observations_dir(self.source_root)
+            persist_id = f"bash-{uuid.uuid4().hex[:8]}"
+            persist_file = persist_dir / f"{persist_id}.txt"
+            try:
+                persist_file.write_text(combined, encoding="utf-8")
+            except Exception as e:  # noqa: BLE001 — 落盘失败不致命,fallback 内联截断
+                log.warning("bash output persist failed: %s; fallback to inline truncate", e)
+                return {
+                    "ok": result.returncode == 0,
+                    "output": combined[:BASH_MAX_OUTPUT],
+                    "returncode": result.returncode,
+                }
+            preview = combined[:BASH_PREVIEW_BYTES]
+            wrapped = (
+                f"Output too large ({output_bytes:,} bytes). Full output saved to: "
+                f"{persist_file}\n\nPreview (first 2 KB):\n{preview}\n\n[/persisted-output]"
+            )
+            return {
+                "ok": result.returncode == 0,
+                "output": wrapped,
+                "returncode": result.returncode,
+                "persisted_path": str(persist_file),
+            }
+        return {
+            "ok": result.returncode == 0,
+            "output": combined,
+            "returncode": result.returncode,
+        }
 
 
 class ToolRegistry:

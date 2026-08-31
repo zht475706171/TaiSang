@@ -108,3 +108,62 @@ def test_grep_tool_bad_regex_returns_error(tmp_path):
     assert result["matches"] == []
     assert result["error"] is not None
     assert "bad regex" in result["error"]
+
+
+def test_glob_truncates_at_100(tmp_path):
+    """Glob 匹配 >100 文件应硬切到 100,truncated=True,note 含提示。"""
+    for i in range(150):
+        (tmp_path / f"f{i:03d}.py").write_text("x", encoding="utf-8")
+    tool = GlobTool(source_root=tmp_path)
+    result = tool.run({"pattern": "*.py"})
+    assert len(result["matches"]) == 100
+    assert result["truncated"] is True
+    assert "truncated" in result["note"].lower()
+
+
+def test_glob_not_truncated_under_limit(tmp_path):
+    """Glob 匹配 <=100 文件应 truncated=False,无 note 键。"""
+    for i in range(10):
+        (tmp_path / f"f{i}.py").write_text("x", encoding="utf-8")
+    tool = GlobTool(source_root=tmp_path)
+    result = tool.run({"pattern": "*.py"})
+    assert len(result["matches"]) == 10
+    assert result["truncated"] is False
+    assert "note" not in result
+
+
+def test_read_with_limit_bypasses_byte_gate(tmp_path):
+    """传 limit 时按行读,不走 32KB 字节闸门,返回 truncated=False。"""
+    # 构造 >32KB 的文件(多行,确保 total_lines 足够;总字节数 >32KB)
+    (tmp_path / "big.py").write_text(
+        "\n".join("y" * 100 for _ in range(400)) + "\n", encoding="utf-8"
+    )
+    tool = ReadFileTool(source_root=tmp_path)
+    result = tool.run({"path": "big.py", "limit": 5})
+    assert result["error"] is None
+    assert result["truncated"] is False  # 走 limit 分支,不走字节闸门
+    assert result["total_lines"] == 400
+    assert result["limit"] == 5  # 要 5 行拿到 5 行
+    assert result["content"].count("\n") == 4  # 5 行拼回有 4 个换行
+
+
+def test_read_with_offset(tmp_path):
+    """offset=3 limit=2 应返回第 3-4 行。"""
+    (tmp_path / "a.py").write_text("line1\nline2\nline3\nline4\nline5\n", encoding="utf-8")
+    tool = ReadFileTool(source_root=tmp_path)
+    result = tool.run({"path": "a.py", "offset": 3, "limit": 2})
+    assert result["error"] is None
+    assert result["content"] == "line3\nline4"
+    assert result["offset"] == 3
+    assert result["limit"] == 2
+    assert result["total_lines"] == 5  # splitlines 不含末尾空行 -> 5 行
+
+
+def test_grep_skips_long_lines(tmp_path):
+    """grep 应跳过 >500 字符的超长行(minified/base64),不匹配。"""
+    long_line = "a" * 600  # 超 MAX_LINE_LENGTH=500
+    (tmp_path / "min.py").write_text(long_line + "\n", encoding="utf-8")
+    tool = GrepTool(source_root=tmp_path)
+    result = tool.run({"pattern": "a+", "scope": "min.py"})
+    assert result["matches"] == []
+    assert result["error"] is None
