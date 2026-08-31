@@ -1,17 +1,15 @@
-"""测试 Agent 5 工具。"""
+"""测试 Agent 工具。"""
 
 from pathlib import Path
 
 from code_reader.agent_core.tools import (
     GlobTool,
     GrepTool,
-    LookupMapTool,
     ReadFileTool,
     ToolRegistry,
     TraceCallChainTool,
 )
 from code_reader.indexer.linker import CallGraphNode
-from code_reader.types import FileSummary, GlobalSummary, RepoMap
 
 
 def test_read_file_tool(tmp_path):
@@ -95,64 +93,31 @@ def test_trace_call_chain_unknown_symbol():
     assert result["error"] is not None
 
 
-def test_lookup_map_tool_file_layer():
-    rm = RepoMap(
-        global_summary=GlobalSummary(entry_points=[], core_modules=[], dependency_summary=""),
-        module_summaries={},
-        file_summaries={
-            "a.py": FileSummary(file="a.py", summary="a 文件摘要", symbol_ids=[]),
-        },
-    )
-    tool = LookupMapTool(repo_map=rm)
-    result = tool.run({"layer": "file", "query": "a"})
-    assert "a.py" in result["text"]
-
-
-def test_lookup_map_tool_global_layer():
-    rm = RepoMap(
-        global_summary=GlobalSummary(
-            entry_points=["a.py::main"],
-            core_modules=[""],
-            dependency_summary="全局摘要",
-        ),
-        module_summaries={},
-        file_summaries={},
-    )
-    tool = LookupMapTool(repo_map=rm)
-    result = tool.run({"layer": "global", "query": ""})
-    assert "全局摘要" in result["text"]
-    assert "main" in result["text"]
-
-
 def test_tool_registry_lists_schemas():
-    """Task 1 简化后,ToolRegistry 只注册 4 个基础工具。
-
-    LookupMapTool 类仍在(依赖 RepoMap 类型),但 Task 1 后没人产 RepoMap,
-    所以不注册。Task 4 会重新设计工具集。
+    """ToolRegistry 注册 7 个工具:
+    read_file / grep / glob / trace_call_chain / Edit / Write / Bash。
     """
     reg = ToolRegistry(
         source_root=Path("."),
         call_graph={},
-        repo_map=RepoMap(
-            global_summary=GlobalSummary(entry_points=[], core_modules=[], dependency_summary=""),
-            module_summaries={},
-            file_summaries={},
-        ),
     )
     schemas = reg.schemas()
     names = {s["name"] for s in schemas}
-    assert names == {"read_file", "grep", "glob", "trace_call_chain"}
+    assert names == {
+        "read_file",
+        "grep",
+        "glob",
+        "trace_call_chain",
+        "Edit",
+        "Write",
+        "Bash",
+    }
 
 
 def test_tool_registry_dispatches():
     reg = ToolRegistry(
         source_root=Path("."),
         call_graph={},
-        repo_map=RepoMap(
-            global_summary=GlobalSummary(entry_points=[], core_modules=[], dependency_summary=""),
-            module_summaries={},
-            file_summaries={},
-        ),
     )
     result = reg.call("glob", {"pattern": "*.nonexistent"})
     assert isinstance(result, dict)

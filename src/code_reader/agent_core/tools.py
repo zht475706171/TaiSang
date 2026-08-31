@@ -4,18 +4,20 @@
 - schema(): 返回 OpenAI function schema
 - run(args): 执行,返回 dict observation
 
-工具集(Task 1 简化后,ToolRegistry 默认只注册 4 个基础工具):
+工具集(ToolRegistry 注册 7 个工具):
 - read_file(path) — 读文件
 - grep(pattern, scope) — 正则搜
 - glob(pattern) — 文件名匹配
 - trace_call_chain(symbol_id, depth) — 调用链追踪
-
-LookupMapTool 类保留(依赖 RepoMap 类型,types.py 仍保留),但 Task 1 后没人产
-RepoMap,ToolRegistry 不再默认注册它。Task 2/3/4 会重新设计工具集(加 Edit/Write/Bash)。
+- Edit(file_path, old_string, new_string) — 改文件(经用户确认)
+- Write(file_path, content) — 创建/覆盖文件(经用户确认)
+- Bash(command) — 执行白名单 shell 命令(cwd 限定在 source_root)
 
 安全:
-- ReadFileTool/GrepTool 对 path/scope 做 containment 校验,拒绝越界访问
+- ReadFileTool/GrepTool/EditTool/WriteTool 对 path 做 containment 校验,拒绝越界访问
+- EditTool/WriteTool 改文件前调用 confirmer,默认 AutoDenyConfirmer(拒绝所有)
 - GrepTool 的 regex.search 有超时保护(Linux/Mac via signal.SIGALRM,Windows 跳过)
+- BashTool 用命令前缀白名单 + cwd 限定 + subprocess 超时,输出截断保护
 """
 
 from __future__ import annotations
@@ -24,11 +26,12 @@ import fnmatch
 import logging
 import re
 import signal
+import subprocess
 import sys
 from pathlib import Path
 
 from ..indexer.linker import CallGraphNode, resolve_call_chain
-from ..types import RepoMap
+from .confirm import AutoDenyConfirmer
 
 log = logging.getLogger(__name__)
 
@@ -260,81 +263,196 @@ class TraceCallChainTool(_BaseTool):
         return {"chain": chain, "error": None}
 
 
-class LookupMapTool(_BaseTool):
-    name = "lookup_map"
+class EditTool(_BaseTool):
+    name = "Edit"
 
-    def __init__(self, repo_map: RepoMap) -> None:
-        self.repo_map = repo_map
+    def __init__(self, source_root: Path, confirmer) -> None:
+        self.source_root = source_root
+        self.confirmer = confirmer  # callable(file_path, old, new) -> bool
 
     def schema(self) -> dict:
         return {
             "name": self.name,
-            "description": "查代码库地图(分层摘要)。layer: 'global' / 'module' / 'file'。",
+            "description": "用 old_string 替换 new_string 改文件。old_string 必须唯一。",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "layer": {"type": "string", "enum": ["global", "module", "file"]},
-                    "query": {"type": "string", "description": "过滤关键词(可空)"},
+                    "file_path": {"type": "string", "description": "相对 cwd 的路径"},
+                    "old_string": {"type": "string"},
+                    "new_string": {"type": "string"},
                 },
-                "required": ["layer"],
+                "required": ["file_path", "old_string", "new_string"],
             },
         }
 
     def run(self, args: dict) -> dict:
-        layer = args.get("layer", "")
-        query = args.get("query", "").lower()
-        if layer == "global":
-            g = self.repo_map.global_summary
-            text = (
-                f"入口: {', '.join(g.entry_points)}\n"
-                f"核心模块: {', '.join(g.core_modules)}\n"
-                f"摘要: {g.dependency_summary}"
+        path = args.get("file_path", "")
+        full = self.source_root / path
+        if not _is_within(self.source_root, full):
+            return {"ok": False, "error": "path outside cwd"}
+        if not full.exists():
+            return {"ok": False, "error": f"file not found: {path}"}
+        old = args.get("old_string", "")
+        new = args.get("new_string", "")
+        content = full.read_text(encoding="utf-8")
+        if old not in content:
+            return {"ok": False, "error": "old_string not found"}
+        if content.count(old) > 1:
+            return {"ok": False, "error": "old_string not unique"}
+        # 用户确认
+        if not self.confirmer(str(full), old, new):
+            return {"ok": False, "error": "user denied"}
+        new_content = content.replace(old, new, 1)
+        full.write_text(new_content, encoding="utf-8")
+        return {"ok": True, "path": str(full), "bytes_changed": len(new) - len(old)}
+
+
+class WriteTool(_BaseTool):
+    name = "Write"
+
+    def __init__(self, source_root: Path, confirmer) -> None:
+        self.source_root = source_root
+        self.confirmer = confirmer
+
+    def schema(self) -> dict:
+        return {
+            "name": self.name,
+            "description": "创建或覆盖文件。慎用,会覆盖已有内容。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+                "required": ["file_path", "content"],
+            },
+        }
+
+    def run(self, args: dict) -> dict:
+        path = args.get("file_path", "")
+        full = self.source_root / path
+        if not _is_within(self.source_root, full):
+            return {"ok": False, "error": "path outside cwd"}
+        content = args.get("content", "")
+        # 用户确认
+        if not self.confirmer(str(full), "", content):
+            return {"ok": False, "error": "user denied"}
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(content, encoding="utf-8")
+        return {"ok": True, "path": str(full), "bytes": len(content)}
+
+
+# Bash 命令白名单:前缀匹配。命令必须以下列前缀之一开头(或精确等于去空格后的前缀)。
+# 危险命令(rm/dd/mkfs/chmod 777/... )不在列,前缀不匹配即拒。
+_BASH_COMMAND_WHITELIST: list[str] = [
+    "git ",
+    "python ",
+    "python3 ",
+    "pytest",
+    "pip ",
+    "ls",
+    "cat ",
+    "echo ",
+    "grep ",
+    "find ",
+    "ruff",
+    "black",
+    "pwd",
+    "mkdir ",
+    "touch ",
+]
+
+
+class BashTool(_BaseTool):
+    """执行 shell 命令。命令必须在白名单前缀内,cwd 限定 source_root。
+
+    安全:
+    - 命令前缀白名单(前缀匹配),危险命令直接拒
+    - cwd 限定在 source_root,Agent 不能在 repo 外面跑
+    - subprocess timeout 兜底
+    - stdout 截断 5000 字符、stderr 截断 2000 字符,防 context 撑爆
+    """
+
+    name = "Bash"
+
+    def __init__(self, source_root: Path, timeout: int = 30) -> None:
+        self.source_root = source_root
+        self.timeout = timeout
+
+    def schema(self) -> dict:
+        return {
+            "name": self.name,
+            "description": "执行 shell 命令。命令必须在白名单内,且在当前 repo 目录跑。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "shell 命令"},
+                },
+                "required": ["command"],
+            },
+        }
+
+    def run(self, args: dict) -> dict:
+        command = args.get("command", "").strip()
+        if not command:
+            return {"ok": False, "error": "empty command"}
+        # 白名单检查:任一前缀匹配或精确等于去空格前缀
+        if not any(
+            command.startswith(prefix) or command == prefix.strip()
+            for prefix in _BASH_COMMAND_WHITELIST
+        ):
+            return {"ok": False, "error": f"command not in whitelist: {command[:50]}"}
+        # 跑命令
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                cwd=str(self.source_root),
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
             )
-            return {"text": text, "error": None}
-        if layer == "module":
-            lines = []
-            for mp, ms in self.repo_map.module_summaries.items():
-                if not query or query in ms.summary.lower() or query in mp.lower():
-                    lines.append(f"[{mp or '(root)'}] {ms.file_count} 文件: {ms.summary}")
-            return {"text": "\n".join(lines), "error": None}
-        if layer == "file":
-            lines = []
-            for fp, fs in self.repo_map.file_summaries.items():
-                if not query or query in fs.summary.lower() or query in fp.lower():
-                    lines.append(f"[{fp}] {fs.summary}")
-            return {"text": "\n".join(lines), "error": None}
-        return {"text": "", "error": f"unknown layer: {layer}"}
+            return {
+                "ok": result.returncode == 0,
+                "stdout": result.stdout[:5000],  # 截断保护
+                "stderr": result.stderr[:2000],
+                "returncode": result.returncode,
+            }
+        except subprocess.TimeoutExpired:
+            return {"ok": False, "error": f"timeout after {self.timeout}s"}
+        except Exception as e:  # noqa: BLE001 — 兜底,转成 observation
+            return {"ok": False, "error": str(e)}
 
 
 class ToolRegistry:
     """工具注册表 + 调度。
 
-    Task 1 简化后:只注册 4 个基础工具(read_file / grep / glob / trace_call_chain)。
-    repo_map 参数保留(向后兼容旧测试签名),但 LookupMapTool 不再注册——
-    Task 4 会重新设计工具集并加回 LookupMap / Edit / Write / Bash。
+    注册 7 个工具:
+    read_file / grep / glob / trace_call_chain / Edit / Write / Bash。
 
-    旧测试 test_tools.py 的 test_tool_registry_lists_schemas / test_tool_registry_dispatches
-    仍以 5 工具集合断言,需要在 Task 4 同步更新;Task 1 阶段先让 ToolRegistry 接受
-    repo_map 但不注册 LookupMap,等 Task 4 统一重构。
+    confirmer 默认 None 时用 AutoDenyConfirmer(拒绝所有改动),防止忘了传
+    confirmer 误改文件。测试时显式传 AutoApproveConfirmer / AutoDenyConfirmer。
     """
 
     def __init__(
         self,
         source_root: Path,
-        call_graph: dict[str, CallGraphNode],
-        repo_map: RepoMap | None = None,
-        doc_dir: Path | None = None,
-        all_sections: list[str] | None = None,
+        call_graph: dict[str, CallGraphNode] | None = None,
+        confirmer=None,
+        bash_timeout: int = 30,
     ) -> None:
-        # doc_dir / all_sections 参数保留是为了向后兼容(Task 4 会删),Task 1 阶段忽略。
-        _ = doc_dir
-        _ = all_sections
-        _ = repo_map
+        if confirmer is None:
+            confirmer = AutoDenyConfirmer()
+        if call_graph is None:
+            call_graph = {}
         self._tools: dict[str, _BaseTool] = {
             ReadFileTool.name: ReadFileTool(source_root),
             GrepTool.name: GrepTool(source_root),
             GlobTool.name: GlobTool(source_root),
             TraceCallChainTool.name: TraceCallChainTool(call_graph),
+            EditTool.name: EditTool(source_root, confirmer),
+            WriteTool.name: WriteTool(source_root, confirmer),
+            BashTool.name: BashTool(source_root, timeout=bash_timeout),
         }
 
     def schemas(self) -> list[dict]:
