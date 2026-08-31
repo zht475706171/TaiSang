@@ -36,11 +36,26 @@ def test_mock_llm_raises_when_run_out():
 def test_mock_llm_tool_call_response():
     mock = MockLLM(
         [
-            LLMResponse(text="", tool_calls=[{"name": "grep", "args": {"pattern": "foo"}}]),
+            LLMResponse(
+                text="",
+                tool_calls=[
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "grep", "arguments": '{"pattern": "foo"}'},
+                    }
+                ],
+            ),
         ]
     )
     r = mock.chat(messages=[], tools=[])
-    assert r.tool_calls == [{"name": "grep", "args": {"pattern": "foo"}}]
+    assert r.tool_calls == [
+        {
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "grep", "arguments": '{"pattern": "foo"}'},
+        }
+    ]
     assert r.text == ""
 
 
@@ -65,8 +80,12 @@ def test_mock_llm_calls_not_mutated_by_caller():
     assert mock.calls[0]["messages"] == [{"role": "user", "content": "原始问题"}]
 
 
-def test_llm_client_malformed_tool_call_json_raises_protocol_error():
-    """LLMClient.chat 遇到畸形 tool_call arguments JSON,应抛 LLMProtocolError。"""
+def test_llm_client_malformed_tool_call_structure_raises_protocol_error():
+    """LLMClient.chat 遇到畸形 tool_call 结构(缺 function.name/id),应抛 LLMProtocolError。
+
+    注意:畸形 arguments JSON 不在此处抛——LLMClient 只透传 arguments 字符串,
+    由 service.py 解析时降级处理。这里测结构异常(AttrError 路径)。
+    """
     import pytest
 
     from code_reader.config import LLMConfig
@@ -75,13 +94,10 @@ def test_llm_client_malformed_tool_call_json_raises_protocol_error():
     cfg = LLMConfig(base_url="https://api.x.com", api_key="k", model="m")
     client = LLMClient(cfg)
 
-    # 构造假 openai 响应:tool_calls[0].function.arguments 是畸形 JSON
-    class FakeFunction:
-        name = "grep"
-        arguments = "{bad json"
-
+    # 构造假 openai 响应:tool_calls[0] 缺 function 属性 → AttributeError
     class FakeToolCall:
-        function = FakeFunction()
+        # 没有 .function 属性
+        pass
 
     class FakeMessage:
         content = None
@@ -107,6 +123,94 @@ def test_llm_client_malformed_tool_call_json_raises_protocol_error():
 
     with pytest.raises(LLMProtocolError, match="malformed tool_call"):
         client.chat(messages=[{"role": "user", "content": "q"}], tools=[{"name": "grep"}])
+
+
+def test_llm_client_passes_through_standard_tool_call_structure():
+    """LLMClient.chat 应透传 OpenAI 标准 tool_call 结构(arguments 保持 JSON 字符串)。"""
+    from code_reader.config import LLMConfig
+
+    cfg = LLMConfig(base_url="https://api.x.com", api_key="k", model="m")
+    client = LLMClient(cfg)
+
+    class FakeFunction:
+        name = "grep"
+        arguments = '{"pattern": "foo"}'
+
+    class FakeToolCall:
+        id = "call_abc"
+        function = FakeFunction()
+
+    class FakeMessage:
+        content = None
+        tool_calls = [FakeToolCall()]
+
+    class FakeChoice:
+        message = FakeMessage()
+
+    class FakeResp:
+        choices = [FakeChoice()]
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            return FakeResp()
+
+    class FakeChat:
+        completions = FakeCompletions()
+
+    class FakeInner:
+        chat = FakeChat()
+
+    client._client = FakeInner()
+
+    resp = client.chat(messages=[{"role": "user", "content": "q"}], tools=[])
+    assert resp.tool_calls == [
+        {
+            "id": "call_abc",
+            "type": "function",
+            "function": {"name": "grep", "arguments": '{"pattern": "foo"}'},
+        }
+    ]
+
+
+def test_llm_client_empty_arguments_kept_as_empty_string():
+    """LLMClient.chat:OpenAI 返回 arguments 为空时,保留空串(不 json.loads)。"""
+    from code_reader.config import LLMConfig
+
+    cfg = LLMConfig(base_url="https://api.x.com", api_key="k", model="m")
+    client = LLMClient(cfg)
+
+    class FakeFunction:
+        name = "grep"
+        arguments = ""  # 空
+
+    class FakeToolCall:
+        id = "call_x"
+        function = FakeFunction()
+
+    class FakeMessage:
+        content = None
+        tool_calls = [FakeToolCall()]
+
+    class FakeChoice:
+        message = FakeMessage()
+
+    class FakeResp:
+        choices = [FakeChoice()]
+
+    class FakeCompletions:
+        def create(self, **kwargs):
+            return FakeResp()
+
+    class FakeChat:
+        completions = FakeCompletions()
+
+    class FakeInner:
+        chat = FakeChat()
+
+    client._client = FakeInner()
+
+    resp = client.chat(messages=[], tools=[])
+    assert resp.tool_calls[0]["function"]["arguments"] == ""
 
 
 def test_llm_client_openai_exception_wrapped_as_transient():

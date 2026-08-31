@@ -11,7 +11,6 @@ LLMClient 用 openai SDK,兼容任意 OpenAI 兼容 endpoint。
 from __future__ import annotations
 
 import copy
-import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -59,15 +58,21 @@ class LLMClient:
         tool_calls: list[dict] = []
         if msg.tool_calls:
             for tc in msg.tool_calls:
+                # 透传 OpenAI 标准 tool_call 结构(arguments 保持 OpenAI 给的 JSON 字符串,
+                # 不在这里 json.loads;由调用方 service.py 解析,畸形 JSON 在那里降级处理)。
                 try:
-                    name = tc.function.name
-                    args_raw = tc.function.arguments
-                    args = json.loads(args_raw) if args_raw else {}
-                except json.JSONDecodeError as e:
-                    raise LLMProtocolError(f"malformed tool_call arguments JSON: {e}") from e
+                    tc_id = tc.id
+                    fn_name = tc.function.name
+                    fn_args = tc.function.arguments or ""
                 except AttributeError as e:
                     raise LLMProtocolError(f"malformed tool_call structure: {e}") from e
-                tool_calls.append({"name": name, "args": args})
+                tool_calls.append(
+                    {
+                        "id": tc_id,
+                        "type": "function",
+                        "function": {"name": fn_name, "arguments": fn_args},
+                    }
+                )
         return LLMResponse(text=msg.content or "", tool_calls=tool_calls)
 
 

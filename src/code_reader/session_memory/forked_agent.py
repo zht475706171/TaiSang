@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from ..llm_client import LLMClient, LLMResponse, MockLLM
@@ -26,6 +27,9 @@ def run_forked_agent(
 
     简化:只跑一轮,LLM 返回 tool_calls,逐个安全闸检查后执行。
     非 Edit 工具 / file_path 不匹配的 tool_call 一律 deny(跳过不执行)。
+
+    tool_calls 用 OpenAI 标准结构:{"id":..., "type":"function",
+    "function":{"name":..., "arguments": "<JSON 字符串>"}}。
     """
     messages = [
         {"role": "system", "content": "你是会话笔记维护助手。"},
@@ -35,9 +39,14 @@ def run_forked_agent(
     resp = llm.chat(messages=messages, tools=_allowed_tools_schema(memory_path))
     # 安全闸:执行 tool_calls 前检查
     for tc in resp.tool_calls:
-        if tc.get("name") != ALLOWED_TOOL:
+        fn = tc.get("function", {})
+        if fn.get("name") != ALLOWED_TOOL:
             continue  # deny 非 Edit 工具
-        args = tc.get("args", {})
+        args_str = fn.get("arguments", "") or ""
+        try:
+            args = json.loads(args_str) if args_str else {}
+        except json.JSONDecodeError:
+            continue  # 畸形 arguments,deny
         if args.get("file_path") != str(memory_path):
             continue  # deny 越界编辑别的文件
         # 真的执行 Edit

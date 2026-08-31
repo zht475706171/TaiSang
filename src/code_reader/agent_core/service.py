@@ -79,19 +79,37 @@ class AgentService:
         )
         self.max_steps = max_steps
         self.token_budget = token_budget
+        # ContextManager 提到实例属性:跨 run() 调用保留对话历史(多轮记忆)。
+        # 每次 run() 只 append_user(query),不重建 ctx,REPL 多轮对话才能看到上一轮。
+        self.ctx = ContextManager(token_budget=self.token_budget)
+        self.ctx.append_system(SYSTEM_PROMPT)
+        # session memory post-sampling 计数器:跨 run() 累计工具调用次数。
+        self._tool_calls_since_last_extract = 0
+
+    def reset(self) -> None:
+        """清空对话上下文 + 重置压缩状态。
+
+        设计选择:**不重置 session_memory**(它是跨 session 的长期笔记,reset 只清短期
+        对话历史,长期笔记保留以便下次对话继续利用)。compaction_state 一起重置,
+        因为决策冻结表是针对当前 ctx 的 tool_call_id 的,ctx 换了旧决策作废。
+        """
+        self.ctx = ContextManager(token_budget=self.token_budget)
+        self.ctx.append_system(SYSTEM_PROMPT)
+        self.compaction_state = ContentReplacementState()
+        self._tool_calls_since_last_extract = 0
 
     def run(self, query: str, on_event: EventCallback | None = None) -> Answer:
         """执行 Agent 循环,返回 Answer。
 
-        每轮:
+        每次:
         1. enforce_budget(tool_result 持久化预算)
         2. ctx.should_compact() 时调 _try_autocompact(LLM 摘要)
         3. LLM 调工具就执行,append observation
         4. session_memory post-sampling(达到阈值就 extract + 注入主 prompt)
+
+        注意:self.ctx 跨 run() 保留,多轮对话有短期记忆;reset() 清空。
         """
-        ctx = ContextManager(token_budget=self.token_budget)
-        ctx.append_system(SYSTEM_PROMPT)
-        ctx.append_user(query)
+        self.ctx.append_user(query)
 
         registry = ToolRegistry(
             source_root=self.source_root,
@@ -105,20 +123,21 @@ class AgentService:
                 on_event(evt)
 
         steps = 0
-        tool_calls_since_last_extract = 0
         while steps < self.max_steps:
             steps += 1
             # 阶段 5: apply-tool-result-budget
-            new_msgs, _ = enforce_budget(ctx.messages(), self.compaction_state, observations_dir)
-            ctx.replace_messages(new_msgs)
+            new_msgs, _ = enforce_budget(
+                self.ctx.messages(), self.compaction_state, observations_dir
+            )
+            self.ctx.replace_messages(new_msgs)
             # 阶段 7: autocompact
-            if ctx.should_compact():
-                if self._try_autocompact(ctx, transcript_path, _emit):
-                    tool_calls_since_last_extract = 0
+            if self.ctx.should_compact():
+                if self._try_autocompact(transcript_path, _emit):
+                    self._tool_calls_since_last_extract = 0
                     continue
             _emit(AgentEvent(type=LLM_THINKING))
             try:
-                resp = self.llm.chat(messages=ctx.messages(), tools=registry.schemas())
+                resp = self.llm.chat(messages=self.ctx.messages(), tools=registry.schemas())
             except LLMProtocolError as e:
                 log.warning("LLM protocol error at step %d: %s", steps, e)
                 return Answer(
@@ -154,10 +173,23 @@ class AgentService:
                     steps_used=steps,
                 )
 
-            ctx.append_assistant(text=resp.text, tool_calls=resp.tool_calls)
-            for i, tc in enumerate(resp.tool_calls):
-                name = tc.get("name", "<unknown>")
-                args = tc.get("args") or {}
+            self.ctx.append_assistant(text=resp.text, tool_calls=resp.tool_calls)
+            for tc in resp.tool_calls:
+                name = tc["function"]["name"]
+                args_str = tc["function"].get("arguments", "") or ""
+                try:
+                    args = json.loads(args_str) if args_str else {}
+                except json.JSONDecodeError as e:
+                    log.warning("tool %s malformed arguments: %s", name, e)
+                    result = {"error": f"malformed arguments: {e}"}
+                    # 仍然要 append tool_result,否则 LLM API 会因缺 tool result 报错
+                    self.ctx.append_tool_result(
+                        json.dumps(result, ensure_ascii=False),
+                        name=name,
+                        tool_call_id=tc["id"],
+                    )
+                    self._tool_calls_since_last_extract += 1
+                    continue
                 _emit(AgentEvent(type=TOOL_CALL, payload={"name": name, "args": args}))
                 try:
                     result = registry.call(name, args)
@@ -178,20 +210,20 @@ class AgentService:
                         },
                     )
                 )
-                ctx.append_tool_result(observation, name=name, tool_call_id=f"{name}-{i}")
-                tool_calls_since_last_extract += 1
+                self.ctx.append_tool_result(observation, name=name, tool_call_id=tc["id"])
+                self._tool_calls_since_last_extract += 1
 
             # session memory post-sampling
             if self.session_memory and self.session_memory.should_extract(
-                ctx.total_tokens(), tool_calls_since_last_extract
+                self.ctx.total_tokens(), self._tool_calls_since_last_extract
             ):
-                self.session_memory._do_extract(recent_conversation=self._recent_text(ctx))
+                self.session_memory._do_extract(recent_conversation=self._recent_text())
                 summary = self.session_memory.read_for_compaction()
                 if summary:
-                    ctx._messages.insert(
+                    self.ctx._messages.insert(
                         1, {"role": "user", "content": f"[session memory]\n{summary}"}
                     )
-                tool_calls_since_last_extract = 0
+                self._tool_calls_since_last_extract = 0
 
         return Answer(
             text="(达到最大步数,信息可能不全)",
@@ -200,12 +232,11 @@ class AgentService:
             steps_used=steps,
         )
 
-    def _try_autocompact(
-        self, ctx: ContextManager, transcript_path: Path, _emit: EventCallback
-    ) -> bool:
+    def _try_autocompact(self, transcript_path: Path, _emit: EventCallback) -> bool:
         """先试 session memory,失败 fallback 到 autocompact LLM 摘要。
 
         返回 True 表示做了压缩(messages 已替换),调用方应重置 tool_calls 计数并 continue。
+        操作 self.ctx(实例属性,跨 run() 保留)。
         """
         # 先试 session memory(零 LLM 调用)
         if self.session_memory is not None:
@@ -223,21 +254,21 @@ class AgentService:
                         f"portion.\n\nSummary:\n{summary}"
                     ),
                 }
-                ctx.replace_messages([boundary, summary_msg])
+                self.ctx.replace_messages([boundary, summary_msg])
                 _emit(AgentEvent(type=COMPACTED, payload={"via": "session_memory"}))
                 return True
 
         # fallback: LLM 摘要
         from ..compaction.autocompact import autocompact as do_autocompact
 
-        new_msgs = do_autocompact(ctx.messages(), self.llm, transcript_path)
-        ctx.replace_messages(new_msgs)
+        new_msgs = do_autocompact(self.ctx.messages(), self.llm, transcript_path)
+        self.ctx.replace_messages(new_msgs)
         _emit(AgentEvent(type=COMPACTED, payload={"via": "llm"}))
         return True
 
-    def _recent_text(self, ctx: ContextManager) -> str:
-        """取最近几轮对话作为 session memory extract 输入。"""
-        msgs = ctx.messages()
+    def _recent_text(self) -> str:
+        """取最近几轮对话作为 session memory extract 输入。读 self.ctx。"""
+        msgs = self.ctx.messages()
         return "\n".join(f"[{m['role']}]: {m.get('content', '')[:200]}" for m in msgs[-10:])
 
     def _extract_citations(self, text: str) -> list[Citation]:

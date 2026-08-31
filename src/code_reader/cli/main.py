@@ -94,8 +94,8 @@ def chat(repo: str) -> None:
         if query == "/exit":
             break
         if query == "/reset":
-            # TODO: 清 session memory + 重启 agent
-            click.echo("(重置)")
+            agent.reset()
+            click.echo("(上下文已重置,session memory 笔记保留)")
             continue
 
         def _render(evt) -> None:

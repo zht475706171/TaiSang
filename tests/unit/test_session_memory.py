@@ -109,21 +109,30 @@ def test_read_for_compaction_returns_content_after_update(tmp_path):
 
 def test_session_memory_extract_uses_forked_agent(tmp_path):
     """extract 调 LLM,让 LLM 用 Edit 工具更新笔记。"""
+    import json
+
     memory_path = tmp_path / "summary.md"
     memory_path.parent.mkdir(parents=True, exist_ok=True)
     memory_path.write_text("# Session Title\n*desc*\n(old)\n", encoding="utf-8")
-    # mock LLM 返回一个 tool_call:Edit summary.md
+    # mock LLM 返回一个 tool_call:Edit summary.md(OpenAI 标准结构)
     mock = MockLLM(
         [
             LLMResponse(
                 text="更新笔记",
                 tool_calls=[
                     {
-                        "name": "Edit",
-                        "args": {
-                            "file_path": str(memory_path),
-                            "old_string": "(old)",
-                            "new_string": "(new content)",
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "Edit",
+                            "arguments": json.dumps(
+                                {
+                                    "file_path": str(memory_path),
+                                    "old_string": "(old)",
+                                    "new_string": "(new content)",
+                                },
+                                ensure_ascii=False,
+                            ),
                         },
                     }
                 ],
@@ -139,6 +148,8 @@ def test_session_memory_extract_uses_forked_agent(tmp_path):
 
 def test_forked_agent_denies_non_edit_tool(tmp_path):
     """mock LLM 返回非 Edit 工具(Write)→ 被 deny,memory_path 内容不变。"""
+    import json
+
     from code_reader.session_memory.forked_agent import run_forked_agent
 
     memory_path = tmp_path / "summary.md"
@@ -151,10 +162,17 @@ def test_forked_agent_denies_non_edit_tool(tmp_path):
                 text="尝试用 Write",
                 tool_calls=[
                     {
-                        "name": "Write",
-                        "args": {
-                            "file_path": str(memory_path),
-                            "content": "HACKED",
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "Write",
+                            "arguments": json.dumps(
+                                {
+                                    "file_path": str(memory_path),
+                                    "content": "HACKED",
+                                },
+                                ensure_ascii=False,
+                            ),
                         },
                     }
                 ],
@@ -168,6 +186,8 @@ def test_forked_agent_denies_non_edit_tool(tmp_path):
 
 def test_forked_agent_denies_edit_wrong_file(tmp_path):
     """mock LLM 返回 Edit 但 file_path 指向别的文件 → deny,memory_path 不变。"""
+    import json
+
     from code_reader.session_memory.forked_agent import run_forked_agent
 
     memory_path = tmp_path / "summary.md"
@@ -182,11 +202,18 @@ def test_forked_agent_denies_edit_wrong_file(tmp_path):
                 text="尝试编辑别的文件",
                 tool_calls=[
                     {
-                        "name": "Edit",
-                        "args": {
-                            "file_path": str(other_path),
-                            "old_string": "OTHER",
-                            "new_string": "HACKED",
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "Edit",
+                            "arguments": json.dumps(
+                                {
+                                    "file_path": str(other_path),
+                                    "old_string": "OTHER",
+                                    "new_string": "HACKED",
+                                },
+                                ensure_ascii=False,
+                            ),
                         },
                     }
                 ],

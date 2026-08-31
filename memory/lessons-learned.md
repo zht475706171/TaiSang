@@ -299,3 +299,14 @@ extend-exclude = "tests/fixtures"
    - 解法:`py_files` 过滤条件加 `".code-reader" not in f.parts`,防止索引产物被当源码解析
 5. **`RepoIndex.repo_url` 字段名误导** ✅ 已修
    - 解法:改名 `source_root: str`,语义清晰
+
+### 三合一改造 — tool_calls OpenAI 标准 schema + ctx 提实例 + reset(2026-08-31)
+
+1. **tool_calls 简化结构 `{"name":..., "args":{...}}` 不兼容 OpenAI API**
+   - 解法:LLMClient.chat 透传标准结构 `{"id":..., "type":"function", "function":{"name":..., "arguments":"<JSON 字符串>"}}`,arguments 保持字符串不在 client 解析;service.py 用时 `json.loads`,畸形 JSON 降级为 malformed error observation 但仍 append tool_result(否则 OpenAI API 因缺 tool result 报错);tool_call_id 用 `tc["id"]` 不再自拼 `f"{name}-{i}"`
+   - 教训:LLM client 层只透传不解析,解析责任在 service 层(可降级),client 层抛错会直接终止 agent
+2. **ContextManager 在 run() 内部新建导致 REPL 多轮无短期记忆**
+   - 解法:ctx 提到 `AgentService.__init__` 实例属性,跨 run() 保留;reset() 重建 ctx+compaction_state 但**不重置 session_memory**(长期笔记跨 session 保留)
+   - 教训:实例属性 vs 局部变量的边界——跨方法调用需要保留的状态必须放实例属性;reset 要分清"短期对话"和"长期笔记"两层记忆
+3. **`_try_autocompact`/`_recent_text` 参数从 `ctx` 改 `self.ctx`**
+   - 判断:无测试直接调这两个私有方法(grep 确认),直接删参数用 self.ctx 更简洁;若测试需 mock ctx 再考虑保留参数
