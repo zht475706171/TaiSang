@@ -1,8 +1,8 @@
 # Code Reader Agent
 
-> 3 分钟让陌生代码库变成可问答、可追踪调用链、可生成 onboarding 文档。
+> 简化版 Claude Code / Trae —— 一个能读写、修改、调试代码的交互式 coding agent。
 
-**当前状态:v0.1 开发中(Plan 1: Python-only MVP 闭环)**
+**当前状态:v0.1(重构后首版,交互式 REPL)**
 
 ## Quick Start
 
@@ -15,37 +15,45 @@ export CODE_READER_LLM_BASE_URL=https://api.deepseek.com
 export CODE_READER_LLM_API_KEY=sk-xxx
 export CODE_READER_LLM_MODEL=deepseek-chat
 
-# 先 clone 到本地(v1 不支持远程 clone)
-git clone https://github.com/tiangolo/fastapi ~/repos/fastapi
+# cd 到你要操作的 repo
+cd ~/repos/my-project
 
-# 建索引(产物落 ~/repos/fastapi/.code-reader/)
-code-reader index ~/repos/fastapi
-
-# 问问题
-code-reader ask "FastAPI 的路由是怎么注册的" --repo ~/repos/fastapi
+# 进 REPL
+code-reader chat
+# 或指定 repo
+code-reader chat --repo ~/repos/my-project
 ```
 
-## 跟 Claude Code / Cursor 的区别
+REPL 里：
+- 输入自然语言目标,agent 调工具查/改/跑代码
+- `/exit` 退出,`/reset` 清上下文
+- Edit/Write 改文件前会弹 y/n 确认
+- Bash 只跑白名单命令(git/python/pytest/ruff/black/ls/cat 等),限定当前目录
 
-| 维度 | Claude Code + 手写 CLAUDE.md | Code Reader Agent |
-|------|------------------------------|-------------------|
-| 建索引成本 | 手写半个月 | 自动 3 分钟 |
-| 知识形态 | 自然语言笔记 | 结构化 AST + 调用图 |
-| 使用门槛 | 高手才能写好 INDEX | 丢 URL 即可 |
-| 团队复用 | 个人笔记 | 索引建一次,N 人共享 |
-| 可量化 | 体感 | eval set + baseline |
-| 调用链追踪 | O(N) 次 LLM 推理 | O(1) 次图查询 |
+## 工具集
 
-## 开发路线
+| 工具 | 作用 |
+|------|------|
+| Read | 读文件 |
+| Edit | old_string → new_string 改文件(用户确认) |
+| Write | 创建/覆盖文件(用户确认) |
+| Grep | 正则搜 |
+| Glob | 文件名匹配 |
+| Bash | 跑 shell 命令(白名单 + cwd 限定) |
 
-- **Plan 1(v0.1,进行中)**:Python-only MVP 闭环
-- Plan 2:多语言扩展(JS/TS/Java/Go)
-- Plan 3:评测体系(10 题 eval set + baseline)
-- Plan 4:session/trace/增量完善
-- Plan 5:Web 端(FastAPI + frontend-design)
-- Plan 6:开源化(README 完整 + 引流)
+## 上下文管理(长对话三道机制)
 
-详见 `docs/superpowers/specs/2026-08-20-repo-onboarding-agent-design.md`。
+1. **apply-tool-result-budget**:单轮 tool_result 总字节超预算时,最大的几条持久化到磁盘,原 content 替换成 preview 占位符
+2. **autocompact**:对话 token 逼近预算时,旁路 LLM 生成 7 项摘要替换整个 messages
+3. **session memory**:平时异步维护 10 章节笔记,autocompact 触发时零 LLM 调用读笔记注入主 prompt
+
+## 测试
+
+```bash
+pytest tests/ -q       # 140 passed
+ruff check src/ tests/ # 全绿
+black --check src/ tests/ # 全绿
+```
 
 ## License
 
