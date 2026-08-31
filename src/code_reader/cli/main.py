@@ -1,7 +1,8 @@
 """Code Reader Agent CLI 入口。
 
-Task 1 之后:文档生成相关命令(index / doc)已删除,为 coding agent 重构让路。
-Task 6 会在此加回 `chat` 子命令(REPL 交互式 coding agent)。
+提供 `chat` 子命令:进入交互式 REPL coding agent。
+- 读用户 query → AgentService.run → 实时渲染 thinking/tool/result/answer 事件
+- /exit 退出,/reset 清上下文(TODO)
 
 环境变量:
 - CODE_READER_MOCK_LLM=1  使用 MockLLM(测试用,返回固定回答)
@@ -16,8 +17,13 @@ from pathlib import Path
 
 import click
 
+from ..agent_core.confirm import default_confirmer
+from ..agent_core.events import FINAL_ANSWER, LLM_THINKING, TOOL_CALL, TOOL_RESULT
+from ..agent_core.service import AgentService
 from ..config import load_config
 from ..llm_client import LLMClient, LLMResponse, MockLLM
+from ..session_memory.service import SessionMemoryService
+from ..storage.paths import PathManager
 
 
 def _normalize_path(path: str) -> Path:
@@ -48,6 +54,65 @@ def _make_llm():
 @click.group()
 def cli() -> None:
     """Code Reader Agent - 简化版 coding agent。"""
+
+
+@cli.command()
+@click.option("--repo", default=".", help="工作目录(默认当前目录)")
+def chat(repo: str) -> None:
+    """进入交互式 coding agent。"""
+    source_root = _normalize_path(repo)
+    if not source_root.is_dir():
+        click.echo(f"错误:{source_root} 不是目录", err=True)
+        sys.exit(1)
+
+    llm = _make_llm()
+    confirmer = default_confirmer  # 交互式 y/n
+    session_mem = SessionMemoryService(
+        llm=llm,
+        memory_path=PathManager.session_memory_path(source_root, "main"),
+    )
+    session_mem.ensure_file()
+
+    agent = AgentService(
+        llm=llm,
+        source_root=source_root,
+        confirmer=confirmer,
+        session_memory=session_mem,
+    )
+
+    click.echo(f"code-reader agent @ {source_root}")
+    click.echo("输入 /exit 退出,/reset 清上下文")
+
+    while True:
+        try:
+            query = click.prompt(">", type=str).strip()
+        except (EOFError, KeyboardInterrupt):
+            click.echo("\nbye")
+            break
+        if not query:
+            continue
+        if query == "/exit":
+            break
+        if query == "/reset":
+            # TODO: 清 session memory + 重启 agent
+            click.echo("(重置)")
+            continue
+
+        def _render(evt) -> None:
+            if evt.type == LLM_THINKING:
+                click.echo("  [thinking]")
+            elif evt.type == TOOL_CALL:
+                click.echo(f"  [tool] {evt.payload['name']} {evt.payload['args']}")
+            elif evt.type == TOOL_RESULT:
+                p = evt.payload
+                click.echo(f"  [result] {p['name']} ({p['total_bytes']} bytes)")
+            elif evt.type == FINAL_ANSWER:
+                click.echo("")
+                click.echo(evt.payload["text"])
+
+        answer = agent.run(query, on_event=_render)
+        if not answer.complete:
+            click.echo(f"(incomplete: {answer.text})")
 
 
 if __name__ == "__main__":
