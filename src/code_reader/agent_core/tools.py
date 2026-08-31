@@ -4,11 +4,10 @@
 - schema(): 返回 OpenAI function schema
 - run(args): 执行,返回 dict observation
 
-工具集(ToolRegistry 注册 7 个工具):
+工具集(ToolRegistry 注册 6 个工具):
 - read_file(path) — 读文件
 - grep(pattern, scope) — 正则搜
 - glob(pattern) — 文件名匹配
-- trace_call_chain(symbol_id, depth) — 调用链追踪
 - Edit(file_path, old_string, new_string) — 改文件(经用户确认)
 - Write(file_path, content) — 创建/覆盖文件(经用户确认)
 - Bash(command) — 执行白名单 shell 命令(cwd 限定在 source_root)
@@ -30,7 +29,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from ..indexer.linker import CallGraphNode, resolve_call_chain
 from .confirm import AutoDenyConfirmer
 
 log = logging.getLogger(__name__)
@@ -229,40 +227,6 @@ class GlobTool(_BaseTool):
         return {"matches": sorted(matched), "error": None}
 
 
-class TraceCallChainTool(_BaseTool):
-    name = "trace_call_chain"
-
-    def __init__(self, call_graph: dict[str, CallGraphNode]) -> None:
-        self.call_graph = call_graph
-
-    def schema(self) -> dict:
-        return {
-            "name": self.name,
-            "description": "从某符号出发,追踪 N 跳调用链。返回 symbol_id 列表(含起点)。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "symbol_id": {
-                        "type": "string",
-                        "description": "起点符号 id,格式 'file::Class.method' 或 'file::func'",
-                    },
-                    "depth": {"type": "integer", "description": "追踪深度,默认 3", "default": 3},
-                },
-                "required": ["symbol_id"],
-            },
-        }
-
-    def run(self, args: dict) -> dict:
-        sid = args.get("symbol_id", "")
-        depth = int(args.get("depth", 3))
-        if not sid:
-            return {"chain": [], "error": "empty symbol_id"}
-        if sid not in self.call_graph:
-            return {"chain": [], "error": f"symbol not in call graph: {sid}"}
-        chain = resolve_call_chain(self.call_graph, sid, depth=depth)
-        return {"chain": chain, "error": None}
-
-
 class EditTool(_BaseTool):
     name = "Edit"
 
@@ -427,8 +391,8 @@ class BashTool(_BaseTool):
 class ToolRegistry:
     """工具注册表 + 调度。
 
-    注册 7 个工具:
-    read_file / grep / glob / trace_call_chain / Edit / Write / Bash。
+    注册 6 个工具:
+    read_file / grep / glob / Edit / Write / Bash。
 
     confirmer 默认 None 时用 AutoDenyConfirmer(拒绝所有改动),防止忘了传
     confirmer 误改文件。测试时显式传 AutoApproveConfirmer / AutoDenyConfirmer。
@@ -437,19 +401,15 @@ class ToolRegistry:
     def __init__(
         self,
         source_root: Path,
-        call_graph: dict[str, CallGraphNode] | None = None,
         confirmer=None,
         bash_timeout: int = 30,
     ) -> None:
         if confirmer is None:
             confirmer = AutoDenyConfirmer()
-        if call_graph is None:
-            call_graph = {}
         self._tools: dict[str, _BaseTool] = {
             ReadFileTool.name: ReadFileTool(source_root),
             GrepTool.name: GrepTool(source_root),
             GlobTool.name: GlobTool(source_root),
-            TraceCallChainTool.name: TraceCallChainTool(call_graph),
             EditTool.name: EditTool(source_root, confirmer),
             WriteTool.name: WriteTool(source_root, confirmer),
             BashTool.name: BashTool(source_root, timeout=bash_timeout),

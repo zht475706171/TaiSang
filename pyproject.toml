@@ -5,18 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "code-reader"
 version = "0.1.0"
-description = "Code Reader Agent - 3 分钟让陌生代码库变成可问答、可追踪调用链"
+description = "Code Reader Agent - 简化版 Claude Code/Trae 式交互式 coding agent"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "泰哥" }]
 dependencies = [
     "openai>=1.0",
-    "tree-sitter>=0.21",
-    "tree-sitter-python>=0.21",
-    "chromadb>=0.5",
-    "rank-bm25>=0.2",
-    "gitpython>=3.1",
     "click>=8.1",
     "structlog>=24.1",
     "tiktoken>=0.7",

@@ -1,7 +1,7 @@
 """测试路径管理。
 
-本地 repo 索引产物落 <source_root>/.code-reader/。
-~/.code-reader/ 只剩 settings.json。
+~/.code-reader/ 只保留 settings.json。
+本地 repo 的会话/observation 等上下文管理产物落 <source_root>/.code-reader/。
 """
 
 from code_reader.storage.paths import PathManager
@@ -25,25 +25,18 @@ def test_settings_path(tmp_path, monkeypatch):
     assert pm.settings_path == pm.root / "settings.json"
 
 
-def test_index_dir_creates_code_reader_subdir(tmp_path):
-    """index_dir 返回 <source_root>/.code-reader/ 并自动创建。"""
-    d = PathManager.index_dir(tmp_path)
-    assert d == tmp_path / ".code-reader"
+def test_session_memory_dir_under_code_reader(tmp_path):
+    d = PathManager.session_memory_dir(tmp_path, "main")
+    assert d == tmp_path / ".code-reader" / "sessions" / "main" / "session-memory"
     assert d.exists() and d.is_dir()
 
 
-def test_index_db_path_under_code_reader(tmp_path):
-    p = PathManager.index_db_path(tmp_path)
-    assert p == tmp_path / ".code-reader" / "ast.db"
+def test_session_memory_path_under_dir(tmp_path):
+    p = PathManager.session_memory_path(tmp_path, "main")
+    assert p == tmp_path / ".code-reader" / "sessions" / "main" / "session-memory" / "summary.md"
 
 
-def test_repo_map_path_under_code_reader(tmp_path):
-    p = PathManager.repo_map_path(tmp_path)
-    assert p == tmp_path / ".code-reader" / "repo_map.json"
-
-
-def test_chroma_and_errors_paths(tmp_path):
-    assert PathManager.chroma_path(tmp_path) == tmp_path / ".code-reader" / "chroma"
-    assert (
-        PathManager.index_errors_path(tmp_path) == tmp_path / ".code-reader" / "index_errors.json"
-    )
+def test_observations_dir_under_code_reader(tmp_path):
+    d = PathManager.observations_dir(tmp_path)
+    assert d == tmp_path / ".code-reader" / "observations"
+    assert d.exists() and d.is_dir()

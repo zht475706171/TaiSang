@@ -7,9 +7,7 @@ from code_reader.agent_core.tools import (
     GrepTool,
     ReadFileTool,
     ToolRegistry,
-    TraceCallChainTool,
 )
-from code_reader.indexer.linker import CallGraphNode
 
 
 def test_read_file_tool(tmp_path):
@@ -54,52 +52,12 @@ def test_glob_tool(tmp_path):
     assert set(result["matches"]) == {"a.py", "b.py"}
 
 
-def test_trace_call_chain_tool():
-    graph = {
-        "a.py::a": CallGraphNode(
-            "a.py::a",
-            "a",
-            "a.py",
-            (1, 5),
-            resolved_calls=["b.py::b"],
-            unresolved_calls=[],
-        ),
-        "b.py::b": CallGraphNode(
-            "b.py::b",
-            "b",
-            "b.py",
-            (1, 5),
-            resolved_calls=["c.py::c"],
-            unresolved_calls=[],
-        ),
-        "c.py::c": CallGraphNode(
-            "c.py::c",
-            "c",
-            "c.py",
-            (1, 5),
-            resolved_calls=[],
-            unresolved_calls=[],
-        ),
-    }
-    tool = TraceCallChainTool(call_graph=graph)
-    result = tool.run({"symbol_id": "a.py::a", "depth": 2})
-    assert result["chain"] == ["a.py::a", "b.py::b", "c.py::c"]
-
-
-def test_trace_call_chain_unknown_symbol():
-    tool = TraceCallChainTool(call_graph={})
-    result = tool.run({"symbol_id": "unknown", "depth": 3})
-    assert result["chain"] == []
-    assert result["error"] is not None
-
-
 def test_tool_registry_lists_schemas():
-    """ToolRegistry 注册 7 个工具:
-    read_file / grep / glob / trace_call_chain / Edit / Write / Bash。
+    """ToolRegistry 注册 6 个工具:
+    read_file / grep / glob / Edit / Write / Bash。
     """
     reg = ToolRegistry(
         source_root=Path("."),
-        call_graph={},
     )
     schemas = reg.schemas()
     names = {s["name"] for s in schemas}
@@ -107,7 +65,6 @@ def test_tool_registry_lists_schemas():
         "read_file",
         "grep",
         "glob",
-        "trace_call_chain",
         "Edit",
         "Write",
         "Bash",
@@ -117,7 +74,6 @@ def test_tool_registry_lists_schemas():
 def test_tool_registry_dispatches():
     reg = ToolRegistry(
         source_root=Path("."),
-        call_graph={},
     )
     result = reg.call("glob", {"pattern": "*.nonexistent"})
     assert isinstance(result, dict)
