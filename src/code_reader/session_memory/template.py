@@ -1,55 +1,35 @@
 # src/code_reader/session_memory/template.py
-"""session memory 笔记 10 章节模板(改造自 Claude Code 原文,适配文档生成任务)。"""
+"""session memory 笔记 10 章节模板(改造自 Claude Code 原文,适配 coding agent 任务)。"""
 
 DEFAULT_TEMPLATE = """# Session Title
-*当前在为哪个 repo 生成文档*
+*当前在帮用户做什么*
 
-(demo repo)
+# Current Goal
+*用户的目标*
 
-# Current State
-*整体进度:已完成几章 / 总共几章*
+# Completed Steps
+*已经完成的步骤(改了哪些文件 / 跑了什么命令)*
 
-(待填)
+# Pending Steps
+*还没做的事*
 
-# Task specification
-*用户要的"吃透级别"和语言*
+# Files Touched
+*改过的关键文件 + 一句话用途*
 
-(待填)
-
-# Files and Functions
-*已读过的关键文件 + 关键 symbol*
-
-(待填)
-
-# Workflow
-*agent 的工作策略(先挖机制 / 先挖流程)*
-
-(待填)
+# Key Decisions
+*关键决策点(为什么这么改)*
 
 # Errors & Corrections
-*调用图断链、LLM 摘要失败等*
+*踩过的坑、用户纠正过的事*
 
-(待填)
-
-# Codebase and System Documentation
-*repo 的架构理解(从 indexer 来)*
-
-(待填)
+# User Preferences
+*用户偏好(代码风格、命名习惯等)*
 
 # Learnings
-*这个 repo 的特殊性、踩坑点*
-
-(待填)
-
-# Key results
-*已生成的章节清单(标题 + 路径 + 一句话定位)*
-
-(待填)
+*这个 repo 的特殊性*
 
 # Worklog
 *步骤流水(每 3 次工具调用追加一条)*
-
-(待填)
 """
 
 DEFAULT_UPDATE_PROMPT = """你是一个会话笔记维护助手。下面是当前笔记内容,请根据最新的对话更新它。

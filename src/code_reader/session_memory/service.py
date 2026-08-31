@@ -57,8 +57,8 @@ class SessionMemoryService:
         if not self.memory_path.exists():
             return None
         content = self.memory_path.read_text(encoding="utf-8")
-        # 检查是否还是空模板(没有实际内容)
-        if "(待填)" in content and content.count("(待填)") >= 8:
+        # 空模板检测:内容等于默认模板(去掉首尾空白后)就判为空
+        if content.strip() == get_template().strip():
             return None  # 还是空模板,没维护过
         return content
 
