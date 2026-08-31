@@ -1,12 +1,12 @@
-"""端到端:本地多文件 repo → index → 调用图验证。"""
+"""端到端:本地多文件 repo → IndexerService 建索引 → 调用图验证。
+
+Task 1 之后:CLI 的 index/doc 命令已删除,这里直接用 IndexerService 验证
+调用图 + trace_call_chain 工具能正确解析跨文件调用链。
+"""
 
 import os
 import subprocess
 from pathlib import Path
-
-from click.testing import CliRunner
-
-from code_reader.cli.main import cli
 
 
 def _isolate_home(tmp_path, monkeypatch):
@@ -53,15 +53,10 @@ def _make_realistic_repo(tmp_path: Path) -> Path:
 
 
 def test_end_to_end_call_graph_built(tmp_path, monkeypatch):
-    """index 后调用图应能解析 main → helper → do_thing。"""
+    """IndexerService 建索引后调用图应能解析 main → helper → do_thing。"""
     _isolate_home(tmp_path, monkeypatch)
-    monkeypatch.setenv("CODE_READER_MOCK_LLM", "1")
     repo = _make_realistic_repo(tmp_path)
 
-    runner = CliRunner()
-    runner.invoke(cli, ["index", str(repo)])
-
-    # 直接调 IndexerService 验证调用图
     from code_reader.indexer.service import IndexerService
     from code_reader.storage.paths import PathManager
 
@@ -78,11 +73,7 @@ def test_end_to_end_call_graph_built(tmp_path, monkeypatch):
 def test_end_to_end_trace_call_chain_three_hops(tmp_path, monkeypatch):
     """trace_call_chain 工具能追 main → helper → do_thing。"""
     _isolate_home(tmp_path, monkeypatch)
-    monkeypatch.setenv("CODE_READER_MOCK_LLM", "1")
     repo = _make_realistic_repo(tmp_path)
-
-    runner = CliRunner()
-    runner.invoke(cli, ["index", str(repo)])
 
     from code_reader.agent_core.tools import TraceCallChainTool
     from code_reader.indexer.service import IndexerService

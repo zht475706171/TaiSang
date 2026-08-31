@@ -51,13 +51,6 @@ class PathManager:
         return cls.index_dir(source_root) / "index_errors.json"
 
     @classmethod
-    def doc_dir(cls, source_root: Path) -> Path:
-        """文档产物目录:<source_root>/.code-reader/docs/"""
-        d = cls.index_dir(source_root) / "docs"
-        d.mkdir(parents=True, exist_ok=True)
-        return d
-
-    @classmethod
     def session_memory_dir(cls, source_root: Path, session_id: str) -> Path:
         """session memory 目录:.code-reader/sessions/<id>/session-memory/"""
         d = cls.index_dir(source_root) / "sessions" / session_id / "session-memory"

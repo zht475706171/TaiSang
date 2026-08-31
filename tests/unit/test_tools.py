@@ -125,6 +125,11 @@ def test_lookup_map_tool_global_layer():
 
 
 def test_tool_registry_lists_schemas():
+    """Task 1 简化后,ToolRegistry 只注册 4 个基础工具。
+
+    LookupMapTool 类仍在(依赖 RepoMap 类型),但 Task 1 后没人产 RepoMap,
+    所以不注册。Task 4 会重新设计工具集。
+    """
     reg = ToolRegistry(
         source_root=Path("."),
         call_graph={},
@@ -136,7 +141,7 @@ def test_tool_registry_lists_schemas():
     )
     schemas = reg.schemas()
     names = {s["name"] for s in schemas}
-    assert names == {"read_file", "grep", "glob", "trace_call_chain", "lookup_map"}
+    assert names == {"read_file", "grep", "glob", "trace_call_chain"}
 
 
 def test_tool_registry_dispatches():

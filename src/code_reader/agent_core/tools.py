@@ -1,15 +1,17 @@
-"""Agent 5 工具实现。
+"""Agent 工具实现。
 
 每个工具:
 - schema(): 返回 OpenAI function schema
 - run(args): 执行,返回 dict observation
 
-工具集:
+工具集(Task 1 简化后,ToolRegistry 默认只注册 4 个基础工具):
 - read_file(path) — 读文件
 - grep(pattern, scope) — 正则搜
 - glob(pattern) — 文件名匹配
 - trace_call_chain(symbol_id, depth) — 调用链追踪
-- lookup_map(layer, query) — 查 RepoMap
+
+LookupMapTool 类保留(依赖 RepoMap 类型,types.py 仍保留),但 Task 1 后没人产
+RepoMap,ToolRegistry 不再默认注册它。Task 2/3/4 会重新设计工具集(加 Edit/Write/Bash)。
 
 安全:
 - ReadFileTool/GrepTool 对 path/scope 做 containment 校验,拒绝越界访问
@@ -304,138 +306,36 @@ class LookupMapTool(_BaseTool):
         return {"text": "", "error": f"unknown layer: {layer}"}
 
 
-class WriteDocTool(_BaseTool):
-    """把一个章节写到 markdown 文件。
-
-    section_path 相对 doc_dir,落盘前做 containment 校验防 path traversal。
-    文件名(去扩展名)自动作为 # 一级标题,内容追加其后。
-    """
-
-    name = "write_doc"
-
-    def __init__(self, doc_dir: Path) -> None:
-        self.doc_dir = doc_dir
-
-    def schema(self) -> dict:
-        return {
-            "name": self.name,
-            "description": (
-                "把一个章节写到 markdown 文件。section_path 是相对 doc_dir 的路径,"
-                "如 '02_核心机制/01_依赖注入.md'。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "section_path": {"type": "string", "description": "相对 doc_dir 的路径"},
-                    "content": {"type": "string", "description": "章节 markdown 内容"},
-                },
-                "required": ["section_path", "content"],
-            },
-        }
-
-    def run(self, args: dict) -> dict:
-        path = args.get("section_path", "")
-        content = args.get("content", "")
-        if not path:
-            return {"ok": False, "error": "empty section_path"}
-        full = self.doc_dir / path
-        if not _is_within(self.doc_dir, full):
-            return {"ok": False, "error": "path outside doc dir"}
-        full.parent.mkdir(parents=True, exist_ok=True)
-        # 文件名(去扩展名)作为一级标题
-        title = path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
-        full.write_text(f"# {title}\n\n{content}\n", encoding="utf-8")
-        return {"ok": True, "path": str(full)}
-
-
-class ListPendingSectionsTool(_BaseTool):
-    """列出还没写的章节。
-
-    判定规则:
-    - 占位文件不存在 → pending
-    - 内容含 "(待填" → pending
-    - 内容长度 < 50 字符 → pending
-    """
-
-    name = "list_pending_sections"
-
-    def __init__(self, doc_dir: Path, all_sections: list[str]) -> None:
-        self.doc_dir = doc_dir
-        self.all_sections = all_sections
-
-    def schema(self) -> dict:
-        return {
-            "name": self.name,
-            "description": "列出还没写的章节(占位文件不存在或为空的章节)。",
-            "parameters": {"type": "object", "properties": {}},
-        }
-
-    def run(self, args: dict) -> dict:
-        pending: list[str] = []
-        for s in self.all_sections:
-            full = self.doc_dir / s
-            if not full.exists():
-                pending.append(s)
-                continue
-            content = full.read_text(encoding="utf-8", errors="replace")
-            if "(待填" in content or len(content) < 50:
-                pending.append(s)
-        return {"pending": pending, "total": len(self.all_sections)}
-
-
-class FinalizeDocTool(_BaseTool):
-    """文档写完的收尾信号工具。
-
-    AgentService 检测到本工具被调用即结束 run,返回 "文档生成完成"。
-    本工具不实际生成 REPO_GUIDE.md(由 DocGenService 在更上层负责),
-    只返回 ok 信号给 agent loop 当作普通 observation。
-    """
-
-    name = "finalize_doc"
-
-    def __init__(self, doc_dir: Path) -> None:
-        self.doc_dir = doc_dir
-
-    def schema(self) -> dict:
-        return {
-            "name": self.name,
-            "description": "全部章节写完后调用,生成 REPO_GUIDE.md 总览并结束任务。",
-            "parameters": {"type": "object", "properties": {}},
-        }
-
-    def run(self, args: dict) -> dict:
-        return {"ok": True, "message": "finalize signal"}
-
-
 class ToolRegistry:
     """工具注册表 + 调度。
 
-    doc_dir / all_sections 都给齐时,额外注册 WriteDoc / ListPendingSections / FinalizeDoc;
-    否则只注册老 5 个工具(向后兼容 Task 1-11 测试)。
+    Task 1 简化后:只注册 4 个基础工具(read_file / grep / glob / trace_call_chain)。
+    repo_map 参数保留(向后兼容旧测试签名),但 LookupMapTool 不再注册——
+    Task 4 会重新设计工具集并加回 LookupMap / Edit / Write / Bash。
+
+    旧测试 test_tools.py 的 test_tool_registry_lists_schemas / test_tool_registry_dispatches
+    仍以 5 工具集合断言,需要在 Task 4 同步更新;Task 1 阶段先让 ToolRegistry 接受
+    repo_map 但不注册 LookupMap,等 Task 4 统一重构。
     """
 
     def __init__(
         self,
         source_root: Path,
         call_graph: dict[str, CallGraphNode],
-        repo_map: RepoMap,
+        repo_map: RepoMap | None = None,
         doc_dir: Path | None = None,
         all_sections: list[str] | None = None,
     ) -> None:
+        # doc_dir / all_sections 参数保留是为了向后兼容(Task 4 会删),Task 1 阶段忽略。
+        _ = doc_dir
+        _ = all_sections
+        _ = repo_map
         self._tools: dict[str, _BaseTool] = {
             ReadFileTool.name: ReadFileTool(source_root),
             GrepTool.name: GrepTool(source_root),
             GlobTool.name: GlobTool(source_root),
             TraceCallChainTool.name: TraceCallChainTool(call_graph),
-            LookupMapTool.name: LookupMapTool(repo_map),
         }
-        if doc_dir is not None:
-            self._tools[WriteDocTool.name] = WriteDocTool(doc_dir)
-        if doc_dir is not None and all_sections is not None:
-            self._tools[ListPendingSectionsTool.name] = ListPendingSectionsTool(
-                doc_dir, all_sections
-            )
-            self._tools[FinalizeDocTool.name] = FinalizeDocTool(doc_dir)
 
     def schemas(self) -> list[dict]:
         return [t.schema() for t in self._tools.values()]
