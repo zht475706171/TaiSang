@@ -108,8 +108,9 @@ def test_read_for_compaction_returns_content_after_update(tmp_path):
 
 
 def test_session_memory_extract_uses_forked_agent(tmp_path):
-    """extract 调 LLM,让 LLM 用 Edit 工具更新笔记。"""
+    """extract 调 LLM,让 LLM 用 Edit 工具更新笔记(异步,等 worker 完成)。"""
     import json
+    import time
 
     memory_path = tmp_path / "summary.md"
     memory_path.parent.mkdir(parents=True, exist_ok=True)
@@ -140,8 +141,13 @@ def test_session_memory_extract_uses_forked_agent(tmp_path):
         ]
     )
     service = SessionMemoryService(llm=mock, memory_path=memory_path)
-    # 直接调 _do_extract(绕过 should_extract)
+    # 直接调 _do_extract(绕过 should_extract)— 异步启动后台线程
     service._do_extract(recent_conversation="最新对话:写了 00_项目是什么.md")
+    # 等 worker 线程完成(_extracting 清零)
+    deadline = time.time() + 5
+    while service._extracting and time.time() < deadline:
+        time.sleep(0.01)
+    assert not service._extracting, "extract worker did not finish in 5s"
     # 笔记内容更新了
     assert "(new content)" in memory_path.read_text(encoding="utf-8")
 
@@ -232,3 +238,73 @@ def test_constants_match_plan():
     assert MIN_TOKENS_TO_INIT == 10_000
     assert MIN_TOKENS_BETWEEN_UPDATE == 5_000
     assert TOOL_CALLS_BETWEEN_UPDATES == 3
+
+
+# -------------------- 异步 + 错误处理 --------------------
+
+
+def test_extract_is_async_non_blocking(tmp_path):
+    """_do_extract 启动后台线程,立即返回,不阻塞主流程。
+
+    用一个 sleep 2s 的 mock LLM 证明:调 _do_extract 后 0.1s 内拿到控制权。
+    """
+    import time
+
+    memory_path = tmp_path / "summary.md"
+    memory_path.parent.mkdir(parents=True, exist_ok=True)
+    memory_path.write_text("# Session Title\n*desc*\n(old)\n", encoding="utf-8")
+
+    class SlowLLM:
+        def chat(self, messages, tools):
+            time.sleep(2)  # 模拟慢 LLM
+            return LLMResponse(text="", tool_calls=[])
+
+    service = SessionMemoryService(llm=SlowLLM(), memory_path=memory_path)
+    t0 = time.time()
+    service._do_extract(recent_conversation="test")
+    elapsed = time.time() - t0
+    # 异步:0.1s 内返回(不是 2s)
+    assert elapsed < 0.1, f"_do_extract blocked for {elapsed:.2f}s, expected async"
+    # _extracting 标志已置
+    assert service._extracting is True
+
+
+def test_extract_failure_does_not_propagate(tmp_path):
+    """extract worker 抛异常(超时/网络错)不传播到主流程,只 log warning。"""
+    import time
+
+    memory_path = tmp_path / "summary.md"
+    memory_path.parent.mkdir(parents=True, exist_ok=True)
+    memory_path.write_text("# Session Title\n*desc*\n(old)\n", encoding="utf-8")
+
+    class FailingLLM:
+        def chat(self, messages, tools):
+            raise RuntimeError("simulated LLM timeout")
+
+    service = SessionMemoryService(llm=FailingLLM(), memory_path=memory_path)
+    # 调 _do_extract 不抛异常(后台 worker 会失败,但主流程不知)
+    service._do_extract(recent_conversation="test")
+    # 等 worker 完成
+    deadline = time.time() + 5
+    while service._extracting and time.time() < deadline:
+        time.sleep(0.01)
+    assert not service._extracting, "worker did not finish"
+    # 笔记文件没被改(LLM 失败了)
+    assert "(old)" in memory_path.read_text(encoding="utf-8")
+
+
+def test_extract_skipped_when_already_running(tmp_path):
+    """已在提取中(_extracting=True)时,should_extract 返回 False,不重复触发。"""
+    memory_path = tmp_path / "summary.md"
+    memory_path.parent.mkdir(parents=True, exist_ok=True)
+    memory_path.write_text("# Session Title\n*desc*\n(old)\n", encoding="utf-8")
+
+    service = SessionMemoryService(llm=MockLLM([]), memory_path=memory_path)
+    # 模拟上一次还在跑
+    service._extracting = True
+    # should_extract 应返回 False(已在跑)
+    assert service.should_extract(current_tokens=20_000, tool_calls_since_last=10) is False
+    # _do_extract 也应跳过(不启动新线程)
+    service._do_extract(recent_conversation="test")  # 应立即返回不启动 worker
+    # _extracting 仍 True(没被覆盖)
+    assert service._extracting is True

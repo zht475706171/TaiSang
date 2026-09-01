@@ -293,16 +293,14 @@ class AgentService:
                 self.ctx.append_tool_result(observation, name=name, tool_call_id=tc["id"])
                 self._tool_calls_since_last_extract += 1
 
-            # session memory post-sampling
+            # session memory post-sampling:异步触发后台提取(不阻塞主流程)
+            # extract 在后台 daemon 线程跑,更新笔记文件;下次 autocompact 时
+            # read_for_compaction() 读到更新后的笔记。本处不立即注入 summary,
+            # 因为异步 extract 还没跑完,读到的是旧笔记。
             if self.session_memory and self.session_memory.should_extract(
                 self.ctx.total_tokens(), self._tool_calls_since_last_extract
             ):
                 self.session_memory._do_extract(recent_conversation=self._recent_text())
-                summary = self.session_memory.read_for_compaction()
-                if summary:
-                    self.ctx._messages.insert(
-                        1, {"role": "user", "content": f"[session memory]\n{summary}"}
-                    )
                 self._tool_calls_since_last_extract = 0
 
         self._emit_usage_report(_emit)
