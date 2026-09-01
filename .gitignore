@@ -55,6 +55,7 @@ dmypy.json
 .DS_Store
 
 # Project specific
-# code-reader 索引缓存(本地开发时不入库,但 ~/.code-reader/ 在 home 不在 repo)
-# 如有 repo 内的 .code-reader/ 测试产物也忽略
+# taisang 运行时产物(sessions/observations/session-memory,本地不入库)
+.taisang/
+# 旧名兼容(改名前遗留)
 .code-reader/

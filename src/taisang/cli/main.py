@@ -150,12 +150,18 @@ def cli() -> None:
 
 @cli.command()
 @click.option("--repo", default=".", help="工作目录(默认当前目录)")
-def chat(repo: str) -> None:
+@click.option(
+    "--allow-dirs",
+    multiple=True,
+    help="允许 agent 访问的额外目录(可传多个)。--repo 自动加入允许列表。",
+)
+def chat(repo: str, allow_dirs: tuple[str, ...]) -> None:
     """进入交互式 coding agent。"""
     source_root = _normalize_path(repo)
     if not source_root.is_dir():
         click.echo(f"错误:{source_root} 不是目录", err=True)
         sys.exit(1)
+    allow_paths = [source_root] + [_normalize_path(d) for d in allow_dirs]
 
     llm = _make_llm()
     confirmer = default_confirmer  # 交互式 y/n
@@ -170,6 +176,7 @@ def chat(repo: str) -> None:
         source_root=source_root,
         confirmer=confirmer,
         session_memory=session_mem,
+        allow_dirs=allow_paths,
     )
 
     click.echo(f"taisang agent @ {source_root}")
@@ -230,7 +237,12 @@ def chat(repo: str) -> None:
     is_flag=True,
     help="不自动开浏览器(默认会开)",
 )
-def web(repo: str, port: int, host: str, no_browser: bool) -> None:
+@click.option(
+    "--allow-dirs",
+    multiple=True,
+    help="允许 agent 访问的额外目录(可传多个)。--repo 自动加入允许列表。",
+)
+def web(repo: str, port: int, host: str, no_browser: bool, allow_dirs: tuple[str, ...]) -> None:
     """起本地 Web UI 服务(豆包风格),自动开浏览器。
 
     后端复用 AgentService 全部逻辑,前端单 HTML + SSE。
@@ -240,6 +252,7 @@ def web(repo: str, port: int, host: str, no_browser: bool) -> None:
     if not source_root.is_dir():
         click.echo(f"错误:{source_root} 不是目录", err=True)
         sys.exit(1)
+    allow_paths = [source_root] + [_normalize_path(d) for d in allow_dirs]
 
     try:
         from ..web.app import create_app
@@ -253,7 +266,7 @@ def web(repo: str, port: int, host: str, no_browser: bool) -> None:
 
     import uvicorn
 
-    app = create_app(source_root)
+    app = create_app(source_root, allow_dirs=allow_paths)
     url = f"http://{host}:{port}"
     click.echo(f"taisang web UI @ {url}  (repo: {source_root})")
     click.echo("Ctrl+C 退出")

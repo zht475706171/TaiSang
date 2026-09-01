@@ -48,8 +48,9 @@ class _Session:
 class SessionRegistry:
     """会话注册表。单例语义(一个 web 进程一个 registry)。"""
 
-    def __init__(self, source_root: Path) -> None:
+    def __init__(self, source_root: Path, allow_dirs: list[Path] | None = None) -> None:
         self.source_root = source_root.resolve()
+        self.allow_dirs = allow_dirs or []
         self._sessions: dict[str, _Session] = {}
         self._lock = threading.Lock()
 
@@ -78,6 +79,7 @@ class SessionRegistry:
             source_root=self.source_root,
             confirmer=confirmer,
             session_memory=session_mem,
+            allow_dirs=[self.source_root] + self.allow_dirs,
         )
         return _Session(session_id=session_id, agent=agent, broker=broker, confirmer=confirmer)
 

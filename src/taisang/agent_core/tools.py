@@ -10,13 +10,14 @@
 - glob(pattern) — 文件名匹配
 - Edit(file_path, old_string, new_string) — 改文件(经用户确认)
 - Write(file_path, content) — 创建/覆盖文件(经用户确认)
-- Bash(command) — 执行白名单 shell 命令(cwd 限定在 source_root)
+- Bash(command) — 执行 shell 命令(持久 shell,cd 持久化,危险命令黑名单)
 
 安全:
-- ReadFileTool/GrepTool/EditTool/WriteTool 对 path 做 containment 校验,拒绝越界访问
+- 文件工具对 path 做 allow_dirs 多目录校验,拒绝越界访问
+- 文件工具接受绝对路径或相对 cwd 的路径(cwd 随 Bash cd 动态同步)
 - EditTool/WriteTool 改文件前调用 confirmer,默认 AutoDenyConfirmer(拒绝所有)
 - GrepTool 的 regex.search 有超时保护(Linux/Mac via signal.SIGALRM,Windows 跳过)
-- BashTool 用命令前缀白名单 + cwd 限定 + subprocess 超时,输出截断保护
+- BashTool 用持久 shell(claude code 风格),cd 持久化,危险命令黑名单,输出截断保护
 """
 
 from __future__ import annotations
@@ -25,7 +26,6 @@ import fnmatch
 import logging
 import re
 import signal
-import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -50,19 +50,37 @@ MAX_GLOB_RESULTS = 100
 MAX_LINE_LENGTH = 500
 
 
-def _rel(source_root: Path, path: Path) -> str:
-    """返回相对 source_root 的 Unix 风格路径。消除重复的 relative_to + replace。"""
-    return str(path.relative_to(source_root)).replace("\\", "/")
+def _rel(cwd: Path, path: Path) -> str:
+    """返回相对 cwd 的 Unix 风格路径。消除重复的 relative_to + replace。"""
+    return str(path.relative_to(cwd)).replace("\\", "/")
 
 
-def _is_within(source_root: Path, target: Path) -> bool:
-    """校验 target 解析后仍在 source_root 内。防 path traversal。"""
+def _is_allowed(target: Path, allow_dirs: list[Path]) -> bool:
+    """校验 target 解析后在任一允许目录内。防 path traversal,但支持多目录。
+
+    allow_dirs 是用户配置的允许访问顶层目录列表(含初始 cwd + --allow-dirs)。
+    target 必须落在其中一个内才放行。
+    """
     try:
         target_resolved = target.resolve()
-        root_resolved = source_root.resolve()
-        return target_resolved.is_relative_to(root_resolved)
+        for d in allow_dirs:
+            d_resolved = d.resolve()
+            try:
+                target_resolved.relative_to(d_resolved)
+                return True
+            except ValueError:
+                continue
+        return False
     except (OSError, ValueError):
         return False
+
+
+def _resolve_path(path: str, cwd: Path) -> Path:
+    """解析路径:绝对路径直接用,相对路径拼 cwd。"""
+    p = Path(path)
+    if p.is_absolute():
+        return p
+    return cwd / p
 
 
 def _search_with_timeout(regex: re.Pattern, line: str) -> re.Match | None:
@@ -101,8 +119,9 @@ class _BaseTool:
 class ReadFileTool(_BaseTool):
     name = "read_file"
 
-    def __init__(self, source_root: Path, max_bytes: int = 32_000) -> None:
-        self.source_root = source_root
+    def __init__(self, cwd: Path, allow_dirs: list[Path], max_bytes: int = 32_000) -> None:
+        self.cwd = cwd
+        self.allow_dirs = allow_dirs
         self.max_bytes = max_bytes
 
     def schema(self) -> dict:
@@ -114,7 +133,10 @@ class ReadFileTool(_BaseTool):
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "相对 repo 根的文件路径,如 'a/b.py'"},
+                    "path": {
+                        "type": "string",
+                        "description": "文件路径,相对 cwd 或绝对路径,如 'a/b.py' 或 '/abs/path'",
+                    },
                     "offset": {
                         "type": "integer",
                         "description": "起始行号(1-indexed),默认 1",
@@ -132,9 +154,9 @@ class ReadFileTool(_BaseTool):
 
     def run(self, args: dict) -> dict:
         path = args.get("path", "")
-        full = self.source_root / path
-        if not _is_within(self.source_root, full):
-            return {"content": "", "error": f"path outside repo root: {path}"}
+        full = _resolve_path(path, self.cwd)
+        if not _is_allowed(full, self.allow_dirs):
+            return {"content": "", "error": f"path outside allowed dirs: {path}"}
         if not full.exists() or not full.is_file():
             return {"content": "", "error": f"file not found: {path}"}
         try:
@@ -175,8 +197,9 @@ class ReadFileTool(_BaseTool):
 class GrepTool(_BaseTool):
     name = "grep"
 
-    def __init__(self, source_root: Path, max_matches: int = 200) -> None:
-        self.source_root = source_root
+    def __init__(self, cwd: Path, allow_dirs: list[Path], max_matches: int = 200) -> None:
+        self.cwd = cwd
+        self.allow_dirs = allow_dirs
         self.max_matches = max_matches
 
     def schema(self) -> dict:
@@ -189,7 +212,7 @@ class GrepTool(_BaseTool):
                     "pattern": {"type": "string", "description": "正则表达式"},
                     "scope": {
                         "type": "string",
-                        "description": "限定文件路径或 glob,如 'a/*.py';空表示全 repo",
+                        "description": "限定 cwd 下文件路径或 glob,如 'a/*.py';空表示全 cwd",
                     },
                 },
                 "required": ["pattern"],
@@ -206,16 +229,20 @@ class GrepTool(_BaseTool):
 
         files: list[Path] = []
         if scope:
-            files = list(self.source_root.glob(scope))
-            # fallback:如果 glob 无命中且 scope 是 root 内的单文件,按单文件处理
-            if not files:
-                scope_full = self.source_root / scope
-                if _is_within(self.source_root, scope_full) and scope_full.is_file():
-                    files = [scope_full]
+            scope_full = _resolve_path(scope, self.cwd)
+            # scope 是 glob:用 parent.glob(name),支持相对/绝对
+            if any(ch in scope for ch in "*?["):
+                parent = scope_full.parent
+                name = scope_full.name
+                files = list(parent.glob(name))
+            elif scope_full.is_file() and _is_allowed(scope_full, self.allow_dirs):
+                files = [scope_full]
+            else:
+                files = []
         else:
-            files = [
-                f for f in self.source_root.rglob("*") if f.is_file() and ".git" not in f.parts
-            ]
+            if not _is_allowed(self.cwd, self.allow_dirs):
+                return {"matches": [], "truncated": False, "error": "cwd outside allowed dirs"}
+            files = [f for f in self.cwd.rglob("*") if f.is_file() and ".git" not in f.parts]
 
         matches: list[dict] = []
         truncated = False
@@ -230,7 +257,7 @@ class GrepTool(_BaseTool):
                 if _search_with_timeout(regex, line):
                     matches.append(
                         {
-                            "file": _rel(self.source_root, f),
+                            "file": str(f).replace("\\", "/"),
                             "line": i,
                             "text": line[:200],
                         }
@@ -244,8 +271,9 @@ class GrepTool(_BaseTool):
 class GlobTool(_BaseTool):
     name = "glob"
 
-    def __init__(self, source_root: Path) -> None:
-        self.source_root = source_root
+    def __init__(self, cwd: Path, allow_dirs: list[Path]) -> None:
+        self.cwd = cwd
+        self.allow_dirs = allow_dirs
 
     def schema(self) -> dict:
         return {
@@ -254,7 +282,10 @@ class GlobTool(_BaseTool):
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "pattern": {"type": "string", "description": "glob 模式,如 '**/*.py'"},
+                    "pattern": {
+                        "type": "string",
+                        "description": "glob 模式,相对 cwd 或绝对路径,如 '**/*.py'",
+                    },
                 },
                 "required": ["pattern"],
             },
@@ -264,12 +295,22 @@ class GlobTool(_BaseTool):
         pattern = args.get("pattern", "")
         if not pattern:
             return {"matches": [], "truncated": False, "error": "empty pattern"}
+        # pattern 是绝对路径:从该目录 rglob;相对:从 cwd rglob
+        pat_path = Path(pattern)
+        if pat_path.is_absolute():
+            root = pat_path
+            rel_base = pat_path
+        else:
+            root = self.cwd
+            rel_base = self.cwd
+        if not _is_allowed(root, self.allow_dirs):
+            return {"matches": [], "truncated": False, "error": "scope outside allowed dirs"}
         matched: list[str] = []
-        for f in self.source_root.rglob("*"):
+        for f in root.rglob("*"):
             if ".git" in f.parts:
                 continue
-            rel = _rel(self.source_root, f)
-            if fnmatch.fnmatch(rel, pattern):
+            rel = _rel(rel_base, f)
+            if fnmatch.fnmatch(rel, pattern) or fnmatch.fnmatch(str(f).replace("\\", "/"), pattern):
                 matched.append(rel)
                 if len(matched) >= MAX_GLOB_RESULTS:
                     return {
@@ -284,8 +325,9 @@ class GlobTool(_BaseTool):
 class EditTool(_BaseTool):
     name = "Edit"
 
-    def __init__(self, source_root: Path, confirmer) -> None:
-        self.source_root = source_root
+    def __init__(self, cwd: Path, allow_dirs: list[Path], confirmer) -> None:
+        self.cwd = cwd
+        self.allow_dirs = allow_dirs
         self.confirmer = confirmer  # callable(file_path, old, new) -> bool
 
     def schema(self) -> dict:
@@ -295,7 +337,10 @@ class EditTool(_BaseTool):
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "file_path": {"type": "string", "description": "相对 cwd 的路径"},
+                    "file_path": {
+                        "type": "string",
+                        "description": "文件路径,相对 cwd 或绝对路径",
+                    },
                     "old_string": {"type": "string"},
                     "new_string": {"type": "string"},
                 },
@@ -305,9 +350,9 @@ class EditTool(_BaseTool):
 
     def run(self, args: dict) -> dict:
         path = args.get("file_path", "")
-        full = self.source_root / path
-        if not _is_within(self.source_root, full):
-            return {"ok": False, "error": "path outside cwd"}
+        full = _resolve_path(path, self.cwd)
+        if not _is_allowed(full, self.allow_dirs):
+            return {"ok": False, "error": "path outside allowed dirs"}
         if not full.exists():
             return {"ok": False, "error": f"file not found: {path}"}
         old = args.get("old_string", "")
@@ -328,8 +373,9 @@ class EditTool(_BaseTool):
 class WriteTool(_BaseTool):
     name = "Write"
 
-    def __init__(self, source_root: Path, confirmer) -> None:
-        self.source_root = source_root
+    def __init__(self, cwd: Path, allow_dirs: list[Path], confirmer) -> None:
+        self.cwd = cwd
+        self.allow_dirs = allow_dirs
         self.confirmer = confirmer
 
     def schema(self) -> dict:
@@ -339,7 +385,10 @@ class WriteTool(_BaseTool):
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "file_path": {"type": "string"},
+                    "file_path": {
+                        "type": "string",
+                        "description": "文件路径,相对 cwd 或绝对路径",
+                    },
                     "content": {"type": "string"},
                 },
                 "required": ["file_path", "content"],
@@ -348,9 +397,9 @@ class WriteTool(_BaseTool):
 
     def run(self, args: dict) -> dict:
         path = args.get("file_path", "")
-        full = self.source_root / path
-        if not _is_within(self.source_root, full):
-            return {"ok": False, "error": "path outside cwd"}
+        full = _resolve_path(path, self.cwd)
+        if not _is_allowed(full, self.allow_dirs):
+            return {"ok": False, "error": "path outside allowed dirs"}
         content = args.get("content", "")
         # 用户确认
         if not self.confirmer(str(full), "", content):
@@ -360,48 +409,71 @@ class WriteTool(_BaseTool):
         return {"ok": True, "path": str(full), "bytes": len(content)}
 
 
-# Bash 命令白名单:前缀匹配。命令必须以下列前缀之一开头(或精确等于去空格后的前缀)。
-# 危险命令(rm/dd/mkfs/chmod 777/... )不在列,前缀不匹配即拒。
-_BASH_COMMAND_WHITELIST: list[str] = [
-    "git ",
-    "python ",
-    "python3 ",
-    "pytest",
-    "pip ",
-    "ls",
-    "cat ",
-    "echo ",
-    "grep ",
-    "find ",
-    "ruff",
-    "black",
-    "pwd",
-    "mkdir ",
-    "touch ",
+# Bash 危险命令黑名单:出现这些模式直接拒。允许 cd / git / python / ls 等常用命令。
+# 黑名单而非白名单:Claude Code 风格,允许动态切目录 + 任意非危险命令。
+_BASH_DANGEROUS_PATTERNS: list[str] = [
+    "rm -rf /",
+    "rm -rf ~",
+    "rm -rf *",
+    "mkfs",
+    "dd if=",
+    ":(){",  # fork bomb
+    "chmod -R 777 /",
+    "shutdown",
+    "reboot",
+    "halt",
+    "kill -9 1",
+    "git push --force",  # 强推 main 危险
+    "git push -f origin main",
+    "> /dev/sda",
+    "curl.*|.*sh",  # 远程脚本执行
+    "wget.*|.*sh",
 ]
 
 
+def _is_dangerous(command: str) -> bool:
+    """检查命令是否匹配危险模式。"""
+    import re as _re
+
+    cmd_lower = command.lower()
+    for pat in _BASH_DANGEROUS_PATTERNS:
+        if _re.search(pat, cmd_lower):
+            return True
+    return False
+
+
 class BashTool(_BaseTool):
-    """执行 shell 命令。命令必须在白名单前缀内,cwd 限定 source_root。
+    """执行 shell 命令,用持久 shell(claude code 风格)。
 
     安全:
-    - 命令前缀白名单(前缀匹配),危险命令直接拒
-    - cwd 限定在 source_root,Agent 不能在 repo 外面跑
-    - subprocess timeout 兜底
+    - 危险命令黑名单(rm -rf / / mkfs / fork bomb / 强推 main 等)
+    - cd 持久化:持久 shell 内 cd 改 cwd,后续命令沿用(类 Claude Code)
+    - 超时兜底(PipeShell 内部实现)
     - stdout+stderr 合并输出,内联上限 30000 字符;超长落盘到
       .taisang/observations/ 并返回 <persisted-output> 包装 + 2KB 预览
+
+    路径:不再限定 source_root。cd 可切到 allow_dirs 内任意目录。
+    allow_dirs 外的目录由调用方(PipeShell)不阻,这里靠黑名单 + 用户监督。
     """
 
     name = "Bash"
 
-    def __init__(self, source_root: Path, timeout: int = 30) -> None:
-        self.source_root = source_root
+    def __init__(self, shell, observations_dir: Path, timeout: int = 30) -> None:
+        """
+        shell: PersistentShell 实例(由 AgentService 持有,跨 Bash 调用复用)。
+        observations_dir: 超长输出落盘目录。
+        """
+        self.shell = shell
+        self.observations_dir = observations_dir
         self.timeout = timeout
 
     def schema(self) -> dict:
         return {
             "name": self.name,
-            "description": "执行 shell 命令。命令必须在白名单内,且在当前 repo 目录跑。",
+            "description": (
+                "执行 shell 命令。用持久 shell,cd 改的 cwd 跨调用保留。"
+                "危险命令(rm -rf / / mkfs / 强推 main)会被拒。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -415,34 +487,24 @@ class BashTool(_BaseTool):
         command = args.get("command", "").strip()
         if not command:
             return {"ok": False, "error": "empty command"}
-        # 白名单检查:任一前缀匹配或精确等于去空格前缀
-        if not any(
-            command.startswith(prefix) or command == prefix.strip()
-            for prefix in _BASH_COMMAND_WHITELIST
-        ):
-            return {"ok": False, "error": f"command not in whitelist: {command[:50]}"}
-        # 跑命令
+        # 危险命令黑名单检查
+        if _is_dangerous(command):
+            return {"ok": False, "error": f"dangerous command blocked: {command[:80]}"}
+        # 跑命令(持久 shell)
         try:
-            result = subprocess.run(
-                command,
-                shell=True,
-                cwd=str(self.source_root),
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-            )
-        except subprocess.TimeoutExpired:
-            return {"ok": False, "error": f"timeout after {self.timeout}s"}
+            result = self.shell.run(command, timeout=self.timeout)
         except Exception as e:  # noqa: BLE001 — 兜底,转成 observation
             return {"ok": False, "error": str(e)}
-        # stdout + stderr 合并(分别 capture 保留 returncode 关联,截断按合并总长算)
-        stdout = result.stdout or ""
-        stderr = result.stderr or ""
-        combined = stdout + ("\n" + stderr if stderr else "")
+        combined = result.get("output", "")
+        ok = result.get("ok", False)
+        returncode = result.get("returncode")
+        # 超时特殊标记
+        if result.get("timeout"):
+            return {"ok": False, "error": f"timeout after {self.timeout}s", "output": combined}
         output_bytes = len(combined.encode("utf-8"))
         if output_bytes > BASH_MAX_OUTPUT:
             # 落盘完整输出,返回 <persisted-output> 包装 + 2KB 预览
-            persist_dir = PathManager.observations_dir(self.source_root)
+            persist_dir = self.observations_dir
             persist_id = f"bash-{uuid.uuid4().hex[:8]}"
             persist_file = persist_dir / f"{persist_id}.txt"
             try:
@@ -450,9 +512,9 @@ class BashTool(_BaseTool):
             except Exception as e:  # noqa: BLE001 — 落盘失败不致命,fallback 内联截断
                 log.warning("bash output persist failed: %s; fallback to inline truncate", e)
                 return {
-                    "ok": result.returncode == 0,
+                    "ok": ok,
                     "output": combined[:BASH_MAX_OUTPUT],
-                    "returncode": result.returncode,
+                    "returncode": returncode,
                 }
             preview = combined[:BASH_PREVIEW_BYTES]
             wrapped = (
@@ -460,15 +522,15 @@ class BashTool(_BaseTool):
                 f"{persist_file}\n\nPreview (first 2 KB):\n{preview}\n\n[/persisted-output]"
             )
             return {
-                "ok": result.returncode == 0,
+                "ok": ok,
                 "output": wrapped,
-                "returncode": result.returncode,
+                "returncode": returncode,
                 "persisted_path": str(persist_file),
             }
         return {
-            "ok": result.returncode == 0,
+            "ok": ok,
             "output": combined,
-            "returncode": result.returncode,
+            "returncode": returncode,
         }
 
 
@@ -478,26 +540,59 @@ class ToolRegistry:
     注册 6 个工具:
     read_file / grep / glob / Edit / Write / Bash。
 
+    动态 cwd:Bash cd 改的是 shell 内部 cwd,文件工具(Read/Grep/Glob/Edit/Write)
+    需要跟随。每次 call() 前从 shell.cwd() 同步到文件工具的 cwd 属性,保证文件
+    工具解析相对路径时用 shell 当前 cwd。
+
     confirmer 默认 None 时用 AutoDenyConfirmer(拒绝所有改动),防止忘了传
     confirmer 误改文件。测试时显式传 AutoApproveConfirmer / AutoDenyConfirmer。
     """
 
     def __init__(
         self,
-        source_root: Path,
+        cwd: Path,
+        allow_dirs: list[Path],
+        shell=None,
         confirmer=None,
         bash_timeout: int = 30,
+        observations_dir: Path | None = None,
     ) -> None:
         if confirmer is None:
             confirmer = AutoDenyConfirmer()
+        if observations_dir is None:
+            observations_dir = PathManager.observations_dir(cwd)
+        self._shell = shell
+        self._allow_dirs = allow_dirs
+        self._cwd = cwd
+        self._bash_timeout = bash_timeout
+        # 文件工具:用 cwd + allow_dirs
+        self._read = ReadFileTool(cwd, allow_dirs)
+        self._grep = GrepTool(cwd, allow_dirs)
+        self._glob = GlobTool(cwd, allow_dirs)
+        self._edit = EditTool(cwd, allow_dirs, confirmer)
+        self._write = WriteTool(cwd, allow_dirs, confirmer)
+        self._bash: BashTool | None = None
+        if shell is not None:
+            self._bash = BashTool(shell, observations_dir, timeout=bash_timeout)
         self._tools: dict[str, _BaseTool] = {
-            ReadFileTool.name: ReadFileTool(source_root),
-            GrepTool.name: GrepTool(source_root),
-            GlobTool.name: GlobTool(source_root),
-            EditTool.name: EditTool(source_root, confirmer),
-            WriteTool.name: WriteTool(source_root, confirmer),
-            BashTool.name: BashTool(source_root, timeout=bash_timeout),
+            ReadFileTool.name: self._read,
+            GrepTool.name: self._grep,
+            GlobTool.name: self._glob,
+            EditTool.name: self._edit,
+            WriteTool.name: self._write,
         }
+        if self._bash is not None:
+            self._tools[BashTool.name] = self._bash
+
+    def _sync_cwd(self) -> None:
+        """从 shell 拿当前 cwd,同步到所有文件工具。Bash cd 后文件工具跟随。"""
+        if self._shell is not None:
+            self._cwd = self._shell.cwd()
+        self._read.cwd = self._cwd
+        self._grep.cwd = self._cwd
+        self._glob.cwd = self._cwd
+        self._edit.cwd = self._cwd
+        self._write.cwd = self._cwd
 
     def schemas(self) -> list[dict]:
         return [t.schema() for t in self._tools.values()]
@@ -506,6 +601,8 @@ class ToolRegistry:
         tool = self._tools.get(name)
         if not tool:
             return {"error": f"unknown tool: {name}"}
+        # 每次调用前同步 cwd(Bash cd 后文件工具跟随)
+        self._sync_cwd()
         try:
             return tool.run(args)
         except Exception as e:

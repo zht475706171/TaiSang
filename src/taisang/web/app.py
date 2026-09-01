@@ -53,10 +53,10 @@ class ConfirmReq(BaseModel):
     approve: bool
 
 
-def create_app(source_root: Path) -> FastAPI:
-    """构造 FastAPI app。source_root 是 agent 工作目录。"""
+def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastAPI:
+    """构造 FastAPI app。source_root 是 agent 工作目录,allow_dirs 是允许访问的额外目录。"""
     app = FastAPI(title="taisang web")
-    registry = SessionRegistry(source_root)
+    registry = SessionRegistry(source_root, allow_dirs=allow_dirs or [])
     # app.state 挂载,方便测试 + lifespan 访问
     app.state.registry = registry
 

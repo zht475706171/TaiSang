@@ -74,6 +74,7 @@ class AgentService:
         max_steps: int = 50,
         token_budget: int = 32_000,
         debug: bool = False,
+        allow_dirs: list[Path] | None = None,
     ) -> None:
         self.llm = llm
         self.source_root = source_root
@@ -85,6 +86,13 @@ class AgentService:
         self.max_steps = max_steps
         self.token_budget = token_budget
         self.debug = debug  # /debug 模式:emit DEBUG_REQUEST/DEBUG_RESPONSE/DEBUG_TOOL_RESULT
+        # 允许访问的目录列表:初始 cwd + 用户传入的 --allow-dirs。文件工具做 containment 校验用。
+        self.allow_dirs = allow_dirs if allow_dirs else [source_root]
+        # 持久 shell(claude code 风格):跨 Bash 调用复用,cd 持久化。
+        # shell 跟 AgentService 实例生命周期绑定:实例创建时起,reset 不重启,实例销毁时关。
+        from .shell import PipeShell
+
+        self.shell = PipeShell(cwd=source_root)
         # ContextManager 提到实例属性:跨 run() 调用保留对话历史(多轮记忆)。
         # 每次 run() 只 append_user(query),不重建 ctx,REPL 多轮对话才能看到上一轮。
         self.ctx = ContextManager(token_budget=self.token_budget)
@@ -130,7 +138,9 @@ class AgentService:
         self.ctx.append_user(query)
 
         registry = ToolRegistry(
-            source_root=self.source_root,
+            cwd=self.source_root,
+            allow_dirs=self.allow_dirs,
+            shell=self.shell,
             confirmer=self.confirmer,
         )
         observations_dir = PathManager.observations_dir(self.source_root)
