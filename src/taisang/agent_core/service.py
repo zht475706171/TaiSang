@@ -224,6 +224,10 @@ class AgentService:
                             payload={"step": steps, "text": resp.text, "tool_calls": []},
                         )
                     )
+                # session memory post-sampling(idle_break 分支):
+                # LLM 给最终答案(无 tool_call)是自然对话断点,此时触发 extract。
+                # 对齐 Claude Code shouldExtractMemory 的 hasToolCallsInLastTurn=False 分支。
+                self._maybe_trigger_session_memory(last_turn_has_tool_calls=False)
                 citations = self._extract_citations(resp.text)
                 _emit(AgentEvent(type=FINAL_ANSWER, payload={"text": resp.text}))
                 self._emit_usage_report(_emit)
@@ -293,15 +297,10 @@ class AgentService:
                 self.ctx.append_tool_result(observation, name=name, tool_call_id=tc["id"])
                 self._tool_calls_since_last_extract += 1
 
-            # session memory post-sampling:异步触发后台提取(不阻塞主流程)
-            # extract 在后台 daemon 线程跑,更新笔记文件;下次 autocompact 时
-            # read_for_compaction() 读到更新后的笔记。本处不立即注入 summary,
-            # 因为异步 extract 还没跑完,读到的是旧笔记。
-            if self.session_memory and self.session_memory.should_extract(
-                self.ctx.total_tokens(), self._tool_calls_since_last_extract
-            ):
-                self.session_memory._do_extract(recent_conversation=self._recent_text())
-                self._tool_calls_since_last_extract = 0
+            # session memory post-sampling(update 分支):
+            # 工具执行完,此时本轮 resp 一定有 tool_calls(无 tool_calls 已在上面的 return 分支)。
+            # 传 last_turn_has_tool_calls=True,走 update 触发分支(tokens + tool_calls 双满足)。
+            self._maybe_trigger_session_memory(last_turn_has_tool_calls=True)
 
         self._emit_usage_report(_emit)
         return Answer(
@@ -345,10 +344,44 @@ class AgentService:
         _emit(AgentEvent(type=COMPACTED, payload={"via": "llm"}))
         return True
 
+    def _maybe_trigger_session_memory(self, last_turn_has_tool_calls: bool) -> None:
+        """session memory post-sampling:检查阈值,达标就异步触发后台 extract。
+
+        两个触发点:
+        - idle_break:LLM 给最终答案(无 tool_call)→ last_turn_has_tool_calls=False
+        - update:工具执行完(本轮有 tool_call)→ last_turn_has_tool_calls=True
+
+        触发后重置 _tool_calls_since_last_extract 计数器。
+        """
+        if not self.session_memory:
+            return
+        if self.session_memory.should_extract(
+            self.ctx.total_tokens(),
+            self._tool_calls_since_last_extract,
+            last_turn_has_tool_calls=last_turn_has_tool_calls,
+        ):
+            self.session_memory._do_extract(recent_conversation=self._recent_text())
+            self._tool_calls_since_last_extract = 0
+
     def _recent_text(self) -> str:
-        """取最近几轮对话作为 session memory extract 输入。读 self.ctx。"""
+        """取最近几轮对话作为 session memory extract 输入。读 self.ctx。
+
+        不截断(对齐 Claude Code:forkContextMessages 传完整消息,不截 200 字)。
+        取最近 20 条消息,每条原样拼接 role + content(content 是字符串就直接用,
+        是 list 就 JSON 序列化以保留 tool_calls 结构)。
+        """
         msgs = self.ctx.messages()
-        return "\n".join(f"[{m['role']}]: {m.get('content', '')[:200]}" for m in msgs[-10:])
+        recent = msgs[-20:]
+        lines: list[str] = []
+        for m in recent:
+            role = m.get("role", "?")
+            content = m.get("content", "")
+            if isinstance(content, list):
+                content = json.dumps(content, ensure_ascii=False)
+            elif not isinstance(content, str):
+                content = str(content)
+            lines.append(f"[{role}]: {content}")
+        return "\n".join(lines)
 
     def _accumulate_usage(self, usage: dict | None) -> None:
         """把单次 LLM 响应的 usage 累加到 turn + session 计数器。

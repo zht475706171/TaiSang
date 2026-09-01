@@ -45,6 +45,10 @@ extend-exclude = ["tests/fixtures"]
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]
 
+[tool.ruff.lint.per-file-ignores]
+# template.py 存放 prompt 长文本(中文字符串),行长难拆,放行 E501
+"src/taisang/session_memory/template.py" = ["E501"]
+
 [tool.black]
 line-length = 100
 target-version = ["py311"]

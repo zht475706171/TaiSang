@@ -108,14 +108,17 @@ def test_read_for_compaction_returns_content_after_update(tmp_path):
 
 
 def test_session_memory_extract_uses_forked_agent(tmp_path):
-    """extract 调 LLM,让 LLM 用 Edit 工具更新笔记(异步,等 worker 完成)。"""
+    """extract 调 LLM,让 LLM 用 Edit 工具更新笔记(异步,等 worker 完成)。
+
+    多轮 loop:第 1 轮 LLM 给 Edit tool_call,第 2 轮 LLM 停(空 tool_calls)。
+    """
     import json
     import time
 
     memory_path = tmp_path / "summary.md"
     memory_path.parent.mkdir(parents=True, exist_ok=True)
     memory_path.write_text("# Session Title\n*desc*\n(old)\n", encoding="utf-8")
-    # mock LLM 返回一个 tool_call:Edit summary.md(OpenAI 标准结构)
+    # mock LLM:resp1 给 Edit tool_call,resp2 空停
     mock = MockLLM(
         [
             LLMResponse(
@@ -137,7 +140,8 @@ def test_session_memory_extract_uses_forked_agent(tmp_path):
                         },
                     }
                 ],
-            )
+            ),
+            LLMResponse(text="done", tool_calls=[]),
         ]
     )
     service = SessionMemoryService(llm=mock, memory_path=memory_path)
@@ -153,7 +157,10 @@ def test_session_memory_extract_uses_forked_agent(tmp_path):
 
 
 def test_forked_agent_denies_non_edit_tool(tmp_path):
-    """mock LLM 返回非 Edit 工具(Write)→ 被 deny,memory_path 内容不变。"""
+    """mock LLM 返回非 Edit 工具(Write)→ 被 deny,memory_path 内容不变。
+
+    多轮:resp1 给 Write(deny),resp2 停。
+    """
     import json
 
     from taisang.session_memory.forked_agent import run_forked_agent
@@ -182,7 +189,8 @@ def test_forked_agent_denies_non_edit_tool(tmp_path):
                         },
                     }
                 ],
-            )
+            ),
+            LLMResponse(text="done", tool_calls=[]),
         ]
     )
     run_forked_agent(mock, memory_path, "test prompt")
@@ -223,7 +231,8 @@ def test_forked_agent_denies_edit_wrong_file(tmp_path):
                         },
                     }
                 ],
-            )
+            ),
+            LLMResponse(text="done", tool_calls=[]),
         ]
     )
     run_forked_agent(mock, memory_path, "test prompt")
@@ -308,3 +317,177 @@ def test_extract_skipped_when_already_running(tmp_path):
     service._do_extract(recent_conversation="test")  # 应立即返回不启动 worker
     # _extracting 仍 True(没被覆盖)
     assert service._extracting is True
+
+
+# -------------------- 多轮 loop + idle_break + 不截断 --------------------
+
+
+def test_forked_agent_multi_turn_loop(tmp_path):
+    """多轮 loop:第 1 轮 Edit一处,第 2 轮 Edit 另一处,第 3 轮停。证明 loop 能跑多轮。"""
+    import json
+
+    from taisang.session_memory.forked_agent import run_forked_agent
+
+    memory_path = tmp_path / "summary.md"
+    memory_path.parent.mkdir(parents=True, exist_ok=True)
+    memory_path.write_text("# Session Title\n*desc*\n(old1) (old2)\n", encoding="utf-8")
+    mock = MockLLM(
+        [
+            # 第 1 轮:Edit old1 → new1
+            LLMResponse(
+                text="第 1 轮",
+                tool_calls=[
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {
+                            "name": "Edit",
+                            "arguments": json.dumps(
+                                {
+                                    "file_path": str(memory_path),
+                                    "old_string": "(old1)",
+                                    "new_string": "(new1)",
+                                },
+                                ensure_ascii=False,
+                            ),
+                        },
+                    }
+                ],
+            ),
+            # 第 2 轮:Edit old2 → new2
+            LLMResponse(
+                text="第 2 轮",
+                tool_calls=[
+                    {
+                        "id": "c2",
+                        "type": "function",
+                        "function": {
+                            "name": "Edit",
+                            "arguments": json.dumps(
+                                {
+                                    "file_path": str(memory_path),
+                                    "old_string": "(old2)",
+                                    "new_string": "(new2)",
+                                },
+                                ensure_ascii=False,
+                            ),
+                        },
+                    }
+                ],
+            ),
+            # 第 3 轮:停
+            LLMResponse(text="done", tool_calls=[]),
+        ]
+    )
+    run_forked_agent(mock, memory_path, "test prompt")
+    content = memory_path.read_text(encoding="utf-8")
+    assert "(new1)" in content
+    assert "(new2)" in content
+
+
+def test_forked_agent_max_turns_cap(tmp_path):
+    """LLM 一直返回 tool_call 不停 → 达 max_turns 强制终止(不无限循环)。"""
+    import json
+
+    from taisang.session_memory.forked_agent import run_forked_agent
+
+    memory_path = tmp_path / "summary.md"
+    memory_path.parent.mkdir(parents=True, exist_ok=True)
+    # 笔记里永远找得到 old_string(可重复替换)
+    memory_path.write_text("# Session Title\n*desc*\nX\n", encoding="utf-8")
+    # 造 12 个带 Edit tool_call 的 response(max_turns=10,第 11、12 个不该被调)
+    responses = []
+    for i in range(12):
+        responses.append(
+            LLMResponse(
+                text=f"轮 {i}",
+                tool_calls=[
+                    {
+                        "id": f"c{i}",
+                        "type": "function",
+                        "function": {
+                            "name": "Edit",
+                            "arguments": json.dumps(
+                                {
+                                    "file_path": str(memory_path),
+                                    "old_string": "X",
+                                    "new_string": "X",  # 替换前后一样,内容不变
+                                },
+                                ensure_ascii=False,
+                            ),
+                        },
+                    }
+                ],
+            )
+        )
+    mock = MockLLM(responses)
+    # max_turns=3 缩小测试规模(够证明 cap 生效,不用等 10 轮)
+    run_forked_agent(mock, memory_path, "test prompt", max_turns=3)
+    # 只应消耗 3 个 response(第 4 个没被调)
+    assert len(mock.calls) == 3, f"expected 3 LLM calls (max_turns=3), got {len(mock.calls)}"
+
+
+def test_should_extract_idle_break_branch(tmp_path):
+    """笔记存在 + delta tokens 够 + last_turn 无 tool_call → 触发 idle_break。
+
+    即使 tool_calls 不够也触发(自然对话断点分支)。
+    """
+    memory_path = tmp_path / "summary.md"
+    service = SessionMemoryService(llm=MockLLM([]), memory_path=memory_path)
+    service.ensure_file()
+    service._last_extracted_tokens = 0
+    # tool_calls=0(不够 3),但 last_turn_has_tool_calls=False
+    assert (
+        service.should_extract(
+            current_tokens=6_000,
+            tool_calls_since_last=0,
+            last_turn_has_tool_calls=False,
+        )
+        is True
+    )
+    # 对比:同条件但 last_turn_has_tool_calls=True → 不触发(因为 tool_calls 不够)
+    assert (
+        service.should_extract(
+            current_tokens=6_000,
+            tool_calls_since_last=0,
+            last_turn_has_tool_calls=True,
+        )
+        is False
+    )
+
+
+def test_should_extract_idle_break_needs_token_threshold(tmp_path):
+    """idle_break 分支也要满足 delta tokens >= 5000,delta 不够不触发。"""
+    memory_path = tmp_path / "summary.md"
+    service = SessionMemoryService(llm=MockLLM([]), memory_path=memory_path)
+    service.ensure_file()
+    service._last_extracted_tokens = 3_000
+    # delta=1000 < 5000,即使 last_turn 无 tool_call 也不触发
+    assert (
+        service.should_extract(
+            current_tokens=4_000,
+            tool_calls_since_last=0,
+            last_turn_has_tool_calls=False,
+        )
+        is False
+    )
+
+
+def test_recent_text_does_not_truncate(tmp_path):
+    """_recent_text 不截断:长内容(>200 字)完整保留。"""
+    from taisang.agent_core.confirm import AutoApproveConfirmer
+    from taisang.agent_core.service import AgentService
+
+    mock = MockLLM([])
+    service = AgentService(
+        llm=mock,
+        source_root=tmp_path,
+        confirmer=AutoApproveConfirmer(),
+    )
+    # 造一条 500 字的 user 消息
+    long_content = "A" * 500
+    service.ctx.append_user(long_content)
+    text = service._recent_text()
+    # 500 字完整保留(不是截到 200)
+    assert long_content in text
+    assert len(long_content) == 500

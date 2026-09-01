@@ -1,57 +1,175 @@
 # src/taisang/session_memory/forked_agent.py
 """分支 agent:只能 Edit memory_path,其他工具 deny。
 
-完全照搬 Claude Code 原文 createMemoryFileCanUseTool 的安全闸设计:
+照搬 Claude Code `createMemoryFileCanUseTool` 的安全闸设计:
 - LLM 只能调 Edit 工具(其他工具直接 deny)
 - Edit 的 file_path 必须等于 memory_path(防越界编辑其他文件)
-- _apply_edit 直接落盘,不经过 LLM 二次循环
+- 多轮 loop:LLM 调 Edit → 回喂 tool_result → 继续,直到 LLM 不再调工具或达 max_turns
+- 终止靠 prompt 约束("并行 Edit 然后停止")+ max_turns 硬上限(防失控)
 """
 
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 from ..llm_client import LLMClient, LLMResponse, MockLLM
 
+log = logging.getLogger("session_memory")
+
 ALLOWED_TOOL = "Edit"
+MAX_TURNS = 10  # 多轮 loop 硬上限,防 LLM 一直调工具不停
 
 
 def run_forked_agent(
     llm: LLMClient | MockLLM,
     memory_path: Path,
     update_prompt: str,
-    max_turns: int = 1,
+    max_turns: int = MAX_TURNS,
 ) -> LLMResponse:
-    """跑分支 agent,只能调 Edit 改 memory_path。
+    """跑分支 agent,多轮 loop 调 Edit 改 memory_path。
 
-    简化:只跑一轮,LLM 返回 tool_calls,逐个安全闸检查后执行。
-    非 Edit 工具 / file_path 不匹配的 tool_call 一律 deny(跳过不执行)。
+    机制(对齐 Claude Code runForkedAgent + query loop):
+    - 循环 max_turns 次:
+      - 发 messages 给 LLM
+      - LLM 没返回 tool_calls → 终止(它说停了)
+      - 逐个安全闸检查 tool_calls:
+        - 非 Edit 工具 → deny(跳过,不执行,回喂 deny tool_result)
+        - file_path 不匹配 → deny
+        - 畸形 arguments → deny
+        - 通过 → 执行 _apply_edit,回喂 ok/fail tool_result
+      - 把 assistant tool_calls + 所有 tool_result append 到 messages,进下一轮
+    - 达 max_turns 强制终止
 
     tool_calls 用 OpenAI 标准结构:{"id":..., "type":"function",
     "function":{"name":..., "arguments": "<JSON 字符串>"}}。
     """
-    messages = [
+    messages: list[dict] = [
         {"role": "system", "content": "你是会话笔记维护助手。"},
         {"role": "user", "content": update_prompt},
     ]
-    # 简化:只跑一轮,LLM 返回 tool_calls
-    resp = llm.chat(messages=messages, tools=_allowed_tools_schema(memory_path))
-    # 安全闸:执行 tool_calls 前检查
-    for tc in resp.tool_calls:
-        fn = tc.get("function", {})
-        if fn.get("name") != ALLOWED_TOOL:
-            continue  # deny 非 Edit 工具
-        args_str = fn.get("arguments", "") or ""
-        try:
-            args = json.loads(args_str) if args_str else {}
-        except json.JSONDecodeError:
-            continue  # 畸形 arguments,deny
-        if args.get("file_path") != str(memory_path):
-            continue  # deny 越界编辑别的文件
-        # 真的执行 Edit
-        _apply_edit(memory_path, args.get("old_string", ""), args.get("new_string", ""))
-    return resp
+    tools = _allowed_tools_schema(memory_path)
+
+    total_applied = 0
+    total_denied = 0
+    last_resp: LLMResponse | None = None
+
+    for turn in range(1, max_turns + 1):
+        resp = llm.chat(messages=messages, tools=tools)
+        last_resp = resp
+
+        if not resp.tool_calls:
+            log.info(
+                "session memory forked agent: turn %d/%d done (LLM stopped, no more tool_calls), "
+                "total applied=%d denied=%d memory=%s",
+                turn,
+                max_turns,
+                total_applied,
+                total_denied,
+                memory_path.name,
+            )
+            return resp
+
+        # 本轮 tool_calls 安全闸 + 执行
+        turn_applied = 0
+        turn_denied = 0
+        tool_results: list[dict] = []
+        for tc in resp.tool_calls:
+            fn = tc.get("function", {})
+            tc_id = tc.get("id") or fn.get("name", "tool")
+            name = fn.get("name", "")
+            args_str = fn.get("arguments", "") or ""
+
+            # 安全闸 1: 只允许 Edit
+            if name != ALLOWED_TOOL:
+                turn_denied += 1
+                log.warning(
+                    "session memory forked agent: deny non-Edit tool %r (only Edit allowed)",
+                    name,
+                )
+                tool_results.append(_tool_result_msg(tc_id, name, {"error": "only Edit allowed"}))
+                continue
+
+            # 安全闸 2: arguments 必须是合法 JSON
+            try:
+                args = json.loads(args_str) if args_str else {}
+            except json.JSONDecodeError as e:
+                turn_denied += 1
+                log.warning(
+                    "session memory forked agent: deny malformed arguments: %s",
+                    e,
+                )
+                tool_results.append(
+                    _tool_result_msg(tc_id, name, {"error": f"malformed arguments: {e}"})
+                )
+                continue
+
+            # 安全闸 3: file_path 必须等于 memory_path
+            if args.get("file_path") != str(memory_path):
+                turn_denied += 1
+                log.warning(
+                    "session memory forked agent: deny Edit on wrong file: %r != %s",
+                    args.get("file_path"),
+                    memory_path,
+                )
+                tool_results.append(_tool_result_msg(tc_id, name, {"error": "file_path mismatch"}))
+                continue
+
+            # 执行 Edit
+            ok = _apply_edit(memory_path, args.get("old_string", ""), args.get("new_string", ""))
+            if ok:
+                turn_applied += 1
+                tool_results.append(_tool_result_msg(tc_id, name, {"ok": True}))
+            else:
+                turn_denied += 1
+                tool_results.append(
+                    _tool_result_msg(tc_id, name, {"error": "old_string not found in file"})
+                )
+
+        # append assistant + 所有 tool_result 到 messages,进下一轮
+        messages.append(
+            {
+                "role": "assistant",
+                "content": resp.text or "",
+                "tool_calls": resp.tool_calls,
+            }
+        )
+        for tr in tool_results:
+            messages.append(tr)
+
+        total_applied += turn_applied
+        total_denied += turn_denied
+        log.info(
+            "session memory forked agent: turn %d/%d, applied=%d denied=%d "
+            "(cumulative applied=%d denied=%d)",
+            turn,
+            max_turns,
+            turn_applied,
+            turn_denied,
+            total_applied,
+            total_denied,
+        )
+
+    log.warning(
+        "session memory forked agent: reached max_turns=%d (forced stop), "
+        "total applied=%d denied=%d memory=%s",
+        max_turns,
+        total_applied,
+        total_denied,
+        memory_path.name,
+    )
+    return last_resp  # type: ignore[return-value]
+
+
+def _tool_result_msg(tool_call_id: str, name: str, payload: dict) -> dict:
+    """构造 OpenAI 风格 tool result message。"""
+    return {
+        "role": "tool",
+        "name": name,
+        "content": json.dumps(payload, ensure_ascii=False),
+        "tool_call_id": tool_call_id,
+    }
 
 
 def _allowed_tools_schema(memory_path: Path) -> list[dict]:
@@ -73,9 +191,18 @@ def _allowed_tools_schema(memory_path: Path) -> list[dict]:
     ]
 
 
-def _apply_edit(file_path: Path, old: str, new: str) -> None:
-    """直接落盘 Edit:在 file_path 内容里把第一个 old 替换成 new。"""
+def _apply_edit(file_path: Path, old: str, new: str) -> bool:
+    """直接落盘 Edit:在 file_path 内容里把第一个 old 替换成 new。
+
+    返回 True 表示成功;False 表示 old_string 找不到(静默失败,已 log warning)。
+    """
     content = file_path.read_text(encoding="utf-8")
     if old not in content:
-        return  # old 找不到,不动
+        log.warning(
+            "session memory forked agent: Edit old_string not found in %s "
+            "(LLM 给的 old_string 跟实际文件对不上,笔记没更新这处)",
+            file_path.name,
+        )
+        return False
     file_path.write_text(content.replace(old, new, 1), encoding="utf-8")
+    return True
