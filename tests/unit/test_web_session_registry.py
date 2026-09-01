@@ -2,13 +2,13 @@
 
 import pytest
 
-from code_reader.web.session_registry import SessionRegistry
+from taisang.web.session_registry import SessionRegistry
 
 
 @pytest.fixture
 def mock_env(monkeypatch):
-    """CODE_READER_MOCK_LLM=1,避免单测依赖真 LLM key。"""
-    monkeypatch.setenv("CODE_READER_MOCK_LLM", "1")
+    """TAISANG_MOCK_LLM=1,避免单测依赖真 LLM key。"""
+    monkeypatch.setenv("TAISANG_MOCK_LLM", "1")
     yield
 
 
@@ -28,7 +28,7 @@ def test_list_all_includes_created_and_disk_sessions(tmp_path, mock_env):
     reg = SessionRegistry(tmp_path)
     sid1 = reg.create("会话1")
     # 磁盘造一个不在内存的旧会话目录
-    (tmp_path / ".code-reader" / "sessions" / "oldsession").mkdir(parents=True)
+    (tmp_path / ".taisang" / "sessions" / "oldsession").mkdir(parents=True)
     lst = reg.list_all()
     ids = {item["id"] for item in lst}
     assert sid1 in ids
@@ -41,7 +41,7 @@ def test_list_all_includes_created_and_disk_sessions(tmp_path, mock_env):
 def test_get_or_load_lazy_rebuilds_from_disk(tmp_path, mock_env):
     """磁盘有目录但内存没有时,get_or_load lazy 重建。"""
     reg = SessionRegistry(tmp_path)
-    (tmp_path / ".code-reader" / "sessions" / "zold").mkdir(parents=True)
+    (tmp_path / ".taisang" / "sessions" / "zold").mkdir(parents=True)
     sess = reg.get_or_load("zold")
     assert sess is not None
     assert sess.session_id == "zold"
@@ -59,7 +59,7 @@ def test_delete_removes_memory_and_disk(tmp_path, mock_env):
     sid = reg.create("会话")
     assert reg.delete(sid) is True
     assert reg.get_or_load(sid) is None
-    assert not (tmp_path / ".code-reader" / "sessions" / sid).exists()
+    assert not (tmp_path / ".taisang" / "sessions" / sid).exists()
     assert sid not in {it["id"] for it in reg.list_all()}
 
 
@@ -106,3 +106,81 @@ def test_per_session_isolation(tmp_path, mock_env):
     contents = [m.get("content", "") for m in s2.agent.ctx.messages()]
     assert "hello-1" not in contents
     assert len(s2.agent.ctx.messages()) == 1  # 只剩 system
+
+
+def test_create_with_empty_title_stays_empty(tmp_path, mock_env):
+    """create() 不传 title 时,title 保持空(不 fallback 到 id)。"""
+    reg = SessionRegistry(tmp_path)
+    sid = reg.create()
+    sess = reg.get_or_load(sid)
+    assert sess.title == ""
+
+
+def test_set_title_from_query_sets_when_empty(tmp_path, mock_env):
+    """title 为空时,set_title_from_query 取 query 前 40 字作 title。"""
+    reg = SessionRegistry(tmp_path)
+    sid = reg.create()
+    assert reg.set_title_from_query(sid, "这个 repo 的入口在哪里") is True
+    sess = reg.get_or_load(sid)
+    assert sess.title == "这个 repo 的入口在哪里"
+
+
+def test_set_title_from_query_truncates_long_query(tmp_path, mock_env):
+    """query 超 40 字时,截断 + 加省略号。"""
+    reg = SessionRegistry(tmp_path)
+    sid = reg.create()
+    # 故意造 50+ 字 query,确保触发截断
+    long_q = (
+        "请帮我分析一下这个项目的整体架构设计以及各个模块之间的依赖关系"
+        "和调用流程还有核心机制的实现细节"
+    )
+    assert len(long_q) > 40, "测试前置:query 必须超过 40 字"
+    assert reg.set_title_from_query(sid, long_q) is True
+    sess = reg.get_or_load(sid)
+    # title 应被截到 40 字 + 省略号
+    assert len(sess.title) <= 42
+    assert sess.title[-1] in ("…", ".")
+
+
+def test_set_title_from_query_does_not_overwrite_existing(tmp_path, mock_env):
+    """已有非空 title 时,set_title_from_query 不覆盖,返回 False。"""
+    reg = SessionRegistry(tmp_path)
+    sid = reg.create(title="手动标题")
+    assert reg.set_title_from_query(sid, "新消息") is False
+    sess = reg.get_or_load(sid)
+    assert sess.title == "手动标题"
+
+
+def test_set_title_from_query_takes_first_line(tmp_path, mock_env):
+    """多行 query 只取第一行作 title。"""
+    reg = SessionRegistry(tmp_path)
+    sid = reg.create()
+    q = "第一行是问题\n第二行是补充说明\n第三行"
+    reg.set_title_from_query(sid, q)
+    sess = reg.get_or_load(sid)
+    assert "\n" not in sess.title
+    assert sess.title == "第一行是问题"
+
+
+def test_set_title_from_query_unknown_session_returns_false(tmp_path, mock_env):
+    reg = SessionRegistry(tmp_path)
+    assert reg.set_title_from_query("nonexistent", "q") is False
+
+
+def test_list_all_returns_relative_time_and_updated_at(tmp_path, mock_env):
+    """list_all 应返回 relative_time + updated_at 字段,按 updated_at 倒序。"""
+    reg = SessionRegistry(tmp_path)
+    sid1 = reg.create("old")
+    # 手动把 sid1 的 updated_at 调到 2 小时前
+    reg.get_or_load(sid1).updated_at = __import__("time").time() - 7200
+    sid2 = reg.create("new")
+    lst = reg.list_all()
+    assert len(lst) == 2
+    # new 应排在前(updated_at 更大)
+    assert lst[0]["id"] == sid2
+    assert lst[1]["id"] == sid1
+    # 字段齐全
+    assert "relative_time" in lst[0]
+    assert "updated_at" in lst[0]
+    # old 的相对时间应包含 "h ago"
+    assert "h ago" in lst[1]["relative_time"]

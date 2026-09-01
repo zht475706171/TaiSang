@@ -6,12 +6,12 @@ SSE 流的编码逻辑在 test_web_sse.py 已覆盖;这里只验证路由连通 
 import pytest
 from fastapi.testclient import TestClient
 
-from code_reader.web.app import create_app
+from taisang.web.app import create_app
 
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("CODE_READER_MOCK_LLM", "1")
+    monkeypatch.setenv("TAISANG_MOCK_LLM", "1")
     app = create_app(tmp_path)
     return TestClient(app)
 

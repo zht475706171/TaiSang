@@ -1,11 +1,11 @@
 """autocompact 三道压缩流水线最后一道:7 项通用对话摘要 测试。"""
 
-from code_reader.compaction.autocompact import (
+from taisang.compaction.autocompact import (
     _extract_summary,
     _messages_to_text,
     autocompact,
 )
-from code_reader.llm_client import LLMResponse, MockLLM
+from taisang.llm_client import LLMResponse, MockLLM
 
 
 def test_autocompact_generates_summary_and_replaces_messages(tmp_path):

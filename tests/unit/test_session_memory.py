@@ -8,8 +8,8 @@
 - _do_extract 调分支 agent + forked_agent 安全闸(只允许 Edit memory_path)
 """
 
-from code_reader.llm_client import LLMResponse, MockLLM
-from code_reader.session_memory.service import (
+from taisang.llm_client import LLMResponse, MockLLM
+from taisang.session_memory.service import (
     MIN_TOKENS_BETWEEN_UPDATE,
     MIN_TOKENS_TO_INIT,
     TOOL_CALLS_BETWEEN_UPDATES,
@@ -150,7 +150,7 @@ def test_forked_agent_denies_non_edit_tool(tmp_path):
     """mock LLM 返回非 Edit 工具(Write)→ 被 deny,memory_path 内容不变。"""
     import json
 
-    from code_reader.session_memory.forked_agent import run_forked_agent
+    from taisang.session_memory.forked_agent import run_forked_agent
 
     memory_path = tmp_path / "summary.md"
     memory_path.parent.mkdir(parents=True, exist_ok=True)
@@ -188,7 +188,7 @@ def test_forked_agent_denies_edit_wrong_file(tmp_path):
     """mock LLM 返回 Edit 但 file_path 指向别的文件 → deny,memory_path 不变。"""
     import json
 
-    from code_reader.session_memory.forked_agent import run_forked_agent
+    from taisang.session_memory.forked_agent import run_forked_agent
 
     memory_path = tmp_path / "summary.md"
     other_path = tmp_path / "other.md"

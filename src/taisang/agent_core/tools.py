@@ -38,7 +38,7 @@ log = logging.getLogger(__name__)
 # regex search 超时秒数(仅 Linux/Mac 生效,Windows 跳过)
 _REGEX_TIMEOUT = 5.0
 
-# Bash 合并输出内联上限(对齐 Claude Code BashTool)。超长落盘到 .code-reader/observations/。
+# Bash 合并输出内联上限(对齐 Claude Code BashTool)。超长落盘到 .taisang/observations/。
 BASH_MAX_OUTPUT = 30_000
 # 落盘时给 agent 的预览字节数。
 BASH_PREVIEW_BYTES = 2000
@@ -389,7 +389,7 @@ class BashTool(_BaseTool):
     - cwd 限定在 source_root,Agent 不能在 repo 外面跑
     - subprocess timeout 兜底
     - stdout+stderr 合并输出,内联上限 30000 字符;超长落盘到
-      .code-reader/observations/ 并返回 <persisted-output> 包装 + 2KB 预览
+      .taisang/observations/ 并返回 <persisted-output> 包装 + 2KB 预览
     """
 
     name = "Bash"

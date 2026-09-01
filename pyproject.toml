@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "code-reader"
+name = "taisang"
 version = "0.1.0"
-description = "Code Reader Agent - 简化版 Claude Code/Trae 式交互式 coding agent"
+description = "TaiSang - 简化版 Claude Code/Trae 式交互式 coding agent"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -32,7 +32,7 @@ web = [
 ]
 
 [project.scripts]
-code-reader = "code_reader.cli.main:cli"
+taisang = "taisang.cli.main:cli"
 
 [tool.setuptools.packages.find]
 where = ["src"]

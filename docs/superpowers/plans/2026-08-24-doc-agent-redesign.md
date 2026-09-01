@@ -24,7 +24,7 @@
 ## 文件结构
 
 ```
-src/code_reader/
+src/taisang/
 ├── cli/
 │   └── main.py                      # 改:砍 ask/shell,加 doc 命令
 ├── indexer/                          # 保留不动
@@ -111,7 +111,7 @@ tests/
 
 **依赖:** 无
 **Files:**
-- Modify: `src/code_reader/cli/main.py`
+- Modify: `src/taisang/cli/main.py`
 - Modify: `tests/unit/test_cli.py`
 - Modify: `tests/integration/test_end_to_end.py`
 
@@ -122,7 +122,7 @@ tests/
 def test_doc_command_exists(tmp_path, monkeypatch):
     """doc 命令存在,accept repo 参数,未索引时给出提示。"""
     from click.testing import CliRunner
-    from code_reader.cli.main import cli
+    from taisang.cli.main import cli
     monkeypatch.setenv("CODE_READER_MOCK_LLM", "1")
     runner = CliRunner()
     repo = tmp_path / "demo"
@@ -141,7 +141,7 @@ Expected: FAIL with "No such command 'doc'"
 - [ ] **Step 3: 改 CLI——砍 ask/shell,加 doc 骨架**
 
 ```python
-# src/code_reader/cli/main.py(替换文件内容,从 32 行开始的部分)
+# src/taisang/cli/main.py(替换文件内容,从 32 行开始的部分)
 # 保留:_normalize_path, _make_llm, _render_event(改名 _render_event_keep), _make_progress
 # 删除:cmd_ask, cmd_shell
 # 新增:cmd_doc(骨架,只占位,Task 11 填完整逻辑)
@@ -185,7 +185,7 @@ Expected: PASS(ask/shell 相关测试已删,其他保留)
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/code_reader/cli/main.py tests/unit/test_cli.py tests/integration/test_end_to_end.py
+git add src/taisang/cli/main.py tests/unit/test_cli.py tests/integration/test_end_to_end.py
 git commit -m "feat: 砍 ask/shell,加 doc 命令骨架"
 ```
 
@@ -195,8 +195,8 @@ git commit -m "feat: 砍 ask/shell,加 doc 命令骨架"
 
 **依赖:** 无(可与 Task 1 并行)
 **Files:**
-- Modify: `src/code_reader/indexer/linker.py`
-- Modify: `src/code_reader/types.py`
+- Modify: `src/taisang/indexer/linker.py`
+- Modify: `src/taisang/types.py`
 - Modify: `tests/unit/test_linker.py`
 
 - [ ] **Step 1: 写失败测试——import 解析能跨文件连**
@@ -205,8 +205,8 @@ git commit -m "feat: 砍 ask/shell,加 doc 命令骨架"
 # tests/unit/test_linker.py 追加
 def test_linker_resolves_via_import():
     """a.py 的 helper 调用,通过 import 解析到 b.py::helper。"""
-    from code_reader.indexer.linker import build_call_graph
-    from code_reader.types import Symbol, SymbolKind
+    from taisang.indexer.linker import build_call_graph
+    from taisang.types import Symbol, SymbolKind
     symbols = [
         Symbol(id="a.py::main", kind=SymbolKind.FUNCTION, name="main", file="a.py",
                line_range=(1, 3), calls=["helper"], imports=["b"]),
@@ -223,8 +223,8 @@ def test_linker_resolves_via_import():
 # tests/unit/test_linker.py 追加
 def test_linker_same_module_priority():
     """a.py 调 foo,同模块的 a.py::foo 优先于其他模块的 foo。"""
-    from code_reader.indexer.linker import build_call_graph
-    from code_reader.types import Symbol, SymbolKind
+    from taisang.indexer.linker import build_call_graph
+    from taisang.types import Symbol, SymbolKind
     symbols = [
         Symbol(id="a.py::caller", kind=SymbolKind.FUNCTION, name="caller", file="a.py",
                line_range=(1, 3), calls=["foo"], imports=[]),
@@ -243,8 +243,8 @@ def test_linker_same_module_priority():
 # tests/unit/test_linker.py 追加
 def test_render_chain_renders_human_readable(tmp_path):
     """render_chain 把 [symbol_id, ...] 展开成 'name (file:line) → ...' 格式。"""
-    from code_reader.indexer.linker import build_call_graph, render_chain
-    from code_reader.types import Symbol, SymbolKind
+    from taisang.indexer.linker import build_call_graph, render_chain
+    from taisang.types import Symbol, SymbolKind
     symbols = [
         Symbol(id="a.py::main", kind=SymbolKind.FUNCTION, name="main", file="a.py",
                line_range=(10, 20), calls=["helper"], imports=[]),
@@ -266,7 +266,7 @@ Expected: FAIL(3 个测试都失败)
 - [ ] **Step 5: 实现新匹配策略**
 
 ```python
-# src/code_reader/indexer/linker.py(在 build_call_graph 函数里改匹配逻辑)
+# src/taisang/indexer/linker.py(在 build_call_graph 函数里改匹配逻辑)
 # 新匹配优先级:
 # 1. method 内调 self.foo → 同 class 的 method(保留原有逻辑)
 # 2. caller 和某候选 symbol 在同模块(caller.file == candidate.file)→ 优先
@@ -332,7 +332,7 @@ def build_call_graph(symbols: list[Symbol]) -> dict[str, CallGraphNode]:
 - [ ] **Step 6: 实现 render_chain**
 
 ```python
-# src/code_reader/indexer/linker.py 追加
+# src/taisang/indexer/linker.py 追加
 def render_chain(graph: dict[str, CallGraphNode], chain: list[str]) -> str:
     """把 symbol_id 列表展开成人话叙事:'name (file:start-end) → name2 (file2:...)'."""
     parts: list[str] = []
@@ -354,7 +354,7 @@ Expected: PASS(含原有测试 + 3 个新测试)
 - [ ] **Step 8: Commit**
 
 ```bash
-git add src/code_reader/indexer/linker.py tests/unit/test_linker.py
+git add src/taisang/indexer/linker.py tests/unit/test_linker.py
 git commit -m "feat(linker): import 解析 + 同模块优先 + render_chain"
 ```
 
@@ -364,7 +364,7 @@ git commit -m "feat(linker): import 解析 + 同模块优先 + render_chain"
 
 **依赖:** 无
 **Files:**
-- Modify: `src/code_reader/summarizer/service.py`
+- Modify: `src/taisang/summarizer/service.py`
 - Modify: `tests/unit/test_summarizer.py`
 
 - [ ] **Step 1: 写失败测试——文件摘要不被切到 200 字**
@@ -373,9 +373,9 @@ git commit -m "feat(linker): import 解析 + 同模块优先 + render_chain"
 # tests/unit/test_summarizer.py 追加
 def test_file_summary_not_truncated_to_200(tmp_path):
     """LLM 返回 600 字摘要,终值不应被切到 200 字。"""
-    from code_reader.summarizer.service import SummarizerService
-    from code_reader.types import RepoIndex, Symbol
-    from code_reader.llm_client import MockLLM, LLMResponse
+    from taisang.summarizer.service import SummarizerService
+    from taisang.types import RepoIndex, Symbol
+    from taisang.llm_client import MockLLM, LLMResponse
 
     long_summary = "x" * 600  # 600 字
     mock = MockLLM([LLMResponse(text=long_summary, tool_calls=[])])
@@ -400,7 +400,7 @@ Expected: FAIL(summary 被切到 200 字)
 - [ ] **Step 3: 改 FILE_BUDGET / MODULE_BUDGET / GLOBAL_BUDGET**
 
 ```python
-# src/code_reader/summarizer/service.py 第 26-28 行
+# src/taisang/summarizer/service.py 第 26-28 行
 FILE_BUDGET = 800   # 字数(原 200,放宽到 800)
 MODULE_BUDGET = 1500  # 字数(原 600,放宽)
 GLOBAL_BUDGET = 3000  # 字数(原 2000,放宽)
@@ -414,7 +414,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/code_reader/summarizer/service.py tests/unit/test_summarizer.py
+git add src/taisang/summarizer/service.py tests/unit/test_summarizer.py
 git commit -m "feat(summarizer): 平铺摘要字数放宽到 500-800"
 ```
 
@@ -424,13 +424,13 @@ git commit -m "feat(summarizer): 平铺摘要字数放宽到 500-800"
 
 **依赖:** Task 2(linker 改进)
 **Files:**
-- Create: `src/code_reader/outliner/__init__.py`
-- Create: `src/code_reader/outliner/entry_points.py`
-- Create: `src/code_reader/outliner/mechanism_candidates.py`
-- Create: `src/code_reader/outliner/flow_candidates.py`
-- Create: `src/code_reader/outliner/module_candidates.py`
-- Create: `src/code_reader/outliner/service.py`
-- Modify: `src/code_reader/types.py`
+- Create: `src/taisang/outliner/__init__.py`
+- Create: `src/taisang/outliner/entry_points.py`
+- Create: `src/taisang/outliner/mechanism_candidates.py`
+- Create: `src/taisang/outliner/flow_candidates.py`
+- Create: `src/taisang/outliner/module_candidates.py`
+- Create: `src/taisang/outliner/service.py`
+- Modify: `src/taisang/types.py`
 - Create: `tests/unit/test_outliner_entry_points.py`
 - Create: `tests/unit/test_outliner_mechanism_candidates.py`
 - Create: `tests/unit/test_outliner_flow_candidates.py`
@@ -439,7 +439,7 @@ git commit -m "feat(summarizer): 平铺摘要字数放宽到 500-800"
 - [ ] **Step 1: 加新数据类型**
 
 ```python
-# src/code_reader/types.py 追加
+# src/taisang/types.py 追加
 class EntryPoint(BaseModel):
     """挖掘出的入口。"""
     symbol_id: str
@@ -486,8 +486,8 @@ class Outline(BaseModel):
 
 ```python
 # tests/unit/test_outliner_entry_points.py
-from code_reader.outliner.entry_points import find_entry_points
-from code_reader.types import RepoIndex, Symbol, SymbolKind
+from taisang.outliner.entry_points import find_entry_points
+from taisang.types import RepoIndex, Symbol, SymbolKind
 
 def test_find_entry_points_finds_main():
     symbols = [
@@ -512,7 +512,7 @@ Expected: FAIL(模块不存在)
 - [ ] **Step 4: 实现 entry_points**
 
 ```python
-# src/code_reader/outliner/entry_points.py
+# src/taisang/outliner/entry_points.py
 from __future__ import annotations
 from ..types import EntryPoint, RepoIndex, SymbolKind
 
@@ -547,7 +547,7 @@ def find_entry_points(idx: RepoIndex) -> list[EntryPoint]:
 ```
 
 ```python
-# src/code_reader/outliner/__init__.py
+# src/taisang/outliner/__init__.py
 """outliner:重点挖掘。"""
 ```
 
@@ -560,8 +560,8 @@ Expected: PASS
 
 ```python
 # tests/unit/test_outliner_mechanism_candidates.py
-from code_reader.outliner.mechanism_candidates import find_mechanism_candidates
-from code_reader.types import RepoIndex, Symbol, SymbolKind
+from taisang.outliner.mechanism_candidates import find_mechanism_candidates
+from taisang.types import RepoIndex, Symbol, SymbolKind
 
 def test_mechanism_candidates_score_by_in_degree():
     """被引用最多的符号分数最高。"""
@@ -591,7 +591,7 @@ Expected: FAIL
 - [ ] **Step 8: 实现 mechanism_candidates**
 
 ```python
-# src/code_reader/outliner/mechanism_candidates.py
+# src/taisang/outliner/mechanism_candidates.py
 from __future__ import annotations
 from ..indexer.linker import build_call_graph
 from ..types import MechanismCandidate, RepoIndex
@@ -640,8 +640,8 @@ Expected: PASS
 
 ```python
 # tests/unit/test_outliner_flow_candidates.py
-from code_reader.outliner.flow_candidates import find_flow_candidates
-from code_reader.types import RepoIndex, Symbol, SymbolKind
+from taisang.outliner.flow_candidates import find_flow_candidates
+from taisang.types import RepoIndex, Symbol, SymbolKind
 
 def test_flow_candidates_from_entry():
     symbols = [
@@ -669,7 +669,7 @@ Expected: FAIL
 - [ ] **Step 12: 实现 flow_candidates**
 
 ```python
-# src/code_reader/outliner/flow_candidates.py
+# src/taisang/outliner/flow_candidates.py
 from __future__ import annotations
 from collections import deque
 from ..indexer.linker import build_call_graph, render_chain
@@ -727,8 +727,8 @@ Expected: PASS
 
 ```python
 # tests/unit/test_outliner_module_candidates.py
-from code_reader.outliner.module_candidates import find_module_candidates
-from code_reader.types import RepoIndex, Symbol, SymbolKind
+from taisang.outliner.module_candidates import find_module_candidates
+from taisang.types import RepoIndex, Symbol, SymbolKind
 
 def test_module_candidates_group_by_dir():
     symbols = [
@@ -758,7 +758,7 @@ Expected: FAIL
 - [ ] **Step 16: 实现 module_candidates**
 
 ```python
-# src/code_reader/outliner/module_candidates.py
+# src/taisang/outliner/module_candidates.py
 from __future__ import annotations
 from collections import defaultdict
 from pathlib import PurePosixPath
@@ -803,7 +803,7 @@ Expected: PASS
 - [ ] **Step 18: 实现 OutlinerService 编排**
 
 ```python
-# src/code_reader/outliner/service.py
+# src/taisang/outliner/service.py
 from __future__ import annotations
 from ..llm_client import LLMClient, MockLLM
 from ..types import Outline, RepoIndex
@@ -837,7 +837,7 @@ class OutlinerService:
 - [ ] **Step 19: Commit**
 
 ```bash
-git add src/code_reader/outliner/ src/code_reader/types.py tests/unit/test_outliner_*.py
+git add src/taisang/outliner/ src/taisang/types.py tests/unit/test_outliner_*.py
 git commit -m "feat(outliner): 入口/机制/流程/模块候选挖掘"
 ```
 
@@ -847,16 +847,16 @@ git commit -m "feat(outliner): 入口/机制/流程/模块候选挖掘"
 
 **依赖:** Task 4
 **Files:**
-- Create: `src/code_reader/outliner/selector.py`
+- Create: `src/taisang/outliner/selector.py`
 - Create: `tests/unit/test_outliner_selector.py`
 
 - [ ] **Step 1: 写失败测试——LLM 从候选里选机制**
 
 ```python
 # tests/unit/test_outliner_selector.py
-from code_reader.outliner.selector import select_mechanisms
-from code_reader.types import MechanismCandidate, RepoIndex, Symbol, SymbolKind
-from code_reader.llm_client import MockLLM, LLMResponse
+from taisang.outliner.selector import select_mechanisms
+from taisang.types import MechanismCandidate, RepoIndex, Symbol, SymbolKind
+from taisang.llm_client import MockLLM, LLMResponse
 
 def test_select_mechanisms_llm_picks_5():
     """LLM 返回 JSON 含 5 个 symbol_id,selector 选出对应候选。"""
@@ -883,7 +883,7 @@ Expected: FAIL
 - [ ] **Step 3: 实现 selector**
 
 ```python
-# src/code_reader/outliner/selector.py
+# src/taisang/outliner/selector.py
 from __future__ import annotations
 import json
 from ..llm_client import LLMClient, MockLLM
@@ -948,7 +948,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/code_reader/outliner/selector.py tests/unit/test_outliner_selector.py
+git add src/taisang/outliner/selector.py tests/unit/test_outliner_selector.py
 git commit -m "feat(outliner): LLM 从候选里选 5-10 个机制"
 ```
 
@@ -958,27 +958,27 @@ git commit -m "feat(outliner): LLM 从候选里选 5-10 个机制"
 
 **依赖:** Task 2(render_chain)、Task 4(Outline)
 **Files:**
-- Create: `src/code_reader/deepwriter/__init__.py`
-- Create: `src/code_reader/deepwriter/prompts.py`
-- Create: `src/code_reader/deepwriter/code_extractor.py`
-- Create: `src/code_reader/deepwriter/service.py`
-- Modify: `src/code_reader/storage/paths.py`
+- Create: `src/taisang/deepwriter/__init__.py`
+- Create: `src/taisang/deepwriter/prompts.py`
+- Create: `src/taisang/deepwriter/code_extractor.py`
+- Create: `src/taisang/deepwriter/service.py`
+- Modify: `src/taisang/storage/paths.py`
 - Create: `tests/unit/test_deepwriter.py`
 
 - [ ] **Step 1: 加 storage 路径——doc 产物目录**
 
 ```python
-# src/code_reader/storage/paths.py 追加方法
+# src/taisang/storage/paths.py 追加方法
     @classmethod
     def doc_dir(cls, source_root: Path) -> Path:
-        """文档产物目录:<source_root>/.code-reader/docs/"""
+        """文档产物目录:<source_root>/.taisang/docs/"""
         d = cls.index_dir(source_root) / "docs"
         d.mkdir(parents=True, exist_ok=True)
         return d
 
     @classmethod
     def session_memory_dir(cls, source_root: Path, session_id: str) -> Path:
-        """session memory 目录:.code-reader/sessions/<id>/session-memory/"""
+        """session memory 目录:.taisang/sessions/<id>/session-memory/"""
         d = cls.index_dir(source_root) / "sessions" / session_id / "session-memory"
         d.mkdir(parents=True, exist_ok=True)
         return d
@@ -989,7 +989,7 @@ git commit -m "feat(outliner): LLM 从候选里选 5-10 个机制"
 
     @classmethod
     def observations_dir(cls, source_root: Path) -> Path:
-        """大 observation 持久化目录:.code-reader/observations/"""
+        """大 observation 持久化目录:.taisang/observations/"""
         d = cls.index_dir(source_root) / "observations"
         d.mkdir(parents=True, exist_ok=True)
         return d
@@ -1000,7 +1000,7 @@ git commit -m "feat(outliner): LLM 从候选里选 5-10 个机制"
 ```python
 # tests/unit/test_deepwriter.py
 from pathlib import Path
-from code_reader.deepwriter.code_extractor import extract_code_snippet
+from taisang.deepwriter.code_extractor import extract_code_snippet
 
 def test_extract_code_snippet_returns_signature_and_body(tmp_path):
     f = tmp_path / "a.py"
@@ -1028,7 +1028,7 @@ Expected: FAIL
 - [ ] **Step 4: 实现 code_extractor**
 
 ```python
-# src/code_reader/deepwriter/code_extractor.py
+# src/taisang/deepwriter/code_extractor.py
 from __future__ import annotations
 from pathlib import Path
 
@@ -1053,7 +1053,7 @@ def extract_code_snippet(
 ```
 
 ```python
-# src/code_reader/deepwriter/__init__.py
+# src/taisang/deepwriter/__init__.py
 """deepwriter:重点深挖。"""
 ```
 
@@ -1065,7 +1065,7 @@ Expected: PASS
 - [ ] **Step 6: 实现 prompts**
 
 ```python
-# src/code_reader/deepwriter/prompts.py
+# src/taisang/deepwriter/prompts.py
 MECHANISM_SYSTEM = """你正在为一个完全没见过这个项目的开发者写讲解文档。
 
 写一篇 1500-3000 字的讲解,包含:
@@ -1124,7 +1124,7 @@ MODULE_USER = """【模块路径】: {module_path}
 - [ ] **Step 7: 实现 DeepWriterService**
 
 ```python
-# src/code_reader/deepwriter/service.py
+# src/taisang/deepwriter/service.py
 from __future__ import annotations
 from pathlib import Path
 from ..indexer.linker import render_chain
@@ -1193,7 +1193,7 @@ class DeepWriterService:
 ```
 
 ```python
-# src/code_reader/deepwriter/service.py 顶部加 helper
+# src/taisang/deepwriter/service.py 顶部加 helper
 def _module_of(file: str) -> str:
     parts = file.split("/")
     return parts[0] if len(parts) > 1 else ""
@@ -1204,9 +1204,9 @@ def _module_of(file: str) -> str:
 ```python
 # tests/unit/test_deepwriter.py 追加
 def test_deepwriter_write_mechanism(tmp_path):
-    from code_reader.deepwriter.service import DeepWriterService
-    from code_reader.types import MechanismCandidate, RepoIndex, Symbol, SymbolKind
-    from code_reader.llm_client import MockLLM, LLMResponse
+    from taisang.deepwriter.service import DeepWriterService
+    from taisang.types import MechanismCandidate, RepoIndex, Symbol, SymbolKind
+    from taisang.llm_client import MockLLM, LLMResponse
 
     f = tmp_path / "a.py"
     f.write_text("def foo():\n    return 42\n", encoding="utf-8")
@@ -1233,7 +1233,7 @@ Expected: PASS
 - [ ] **Step 10: Commit**
 
 ```bash
-git add src/code_reader/deepwriter/ src/code_reader/storage/paths.py tests/unit/test_deepwriter.py
+git add src/taisang/deepwriter/ src/taisang/storage/paths.py tests/unit/test_deepwriter.py
 git commit -m "feat(deepwriter): 重点深挖机制/流程/模块"
 ```
 
@@ -1243,17 +1243,17 @@ git commit -m "feat(deepwriter): 重点深挖机制/流程/模块"
 
 **依赖:** Task 4(Outline)、Task 6(DeepWriter)
 **Files:**
-- Create: `src/code_reader/docgen/__init__.py`
-- Create: `src/code_reader/docgen/tree.py`
-- Create: `src/code_reader/docgen/render.py`
-- Create: `src/code_reader/docgen/service.py`
-- Modify: `src/code_reader/types.py`
+- Create: `src/taisang/docgen/__init__.py`
+- Create: `src/taisang/docgen/tree.py`
+- Create: `src/taisang/docgen/render.py`
+- Create: `src/taisang/docgen/service.py`
+- Modify: `src/taisang/types.py`
 - Create: `tests/unit/test_docgen.py`
 
 - [ ] **Step 1: 加 DocTree 数据类型**
 
 ```python
-# src/code_reader/types.py 追加
+# src/taisang/types.py 追加
 class DocSection(BaseModel):
     """一个章节。"""
     path: str               # 落盘相对路径,如 "02_核心机制/01_依赖注入.md"
@@ -1272,8 +1272,8 @@ class DocTree(BaseModel):
 
 ```python
 # tests/unit/test_docgen.py
-from code_reader.docgen.tree import build_doc_tree_structure
-from code_reader.types import (
+from taisang.docgen.tree import build_doc_tree_structure
+from taisang.types import (
     DocSection, FlowCandidate, MechanismCandidate, ModuleCandidate, Outline,
     EntryPoint,
 )
@@ -1312,7 +1312,7 @@ Expected: FAIL
 - [ ] **Step 4: 实现 tree.py**
 
 ```python
-# src/code_reader/docgen/tree.py
+# src/taisang/docgen/tree.py
 from __future__ import annotations
 from ..types import DocSection, Outline
 
@@ -1354,7 +1354,7 @@ def _slugify(name: str) -> str:
 ```
 
 ```python
-# src/code_reader/docgen/__init__.py
+# src/taisang/docgen/__init__.py
 """docgen:文档树落地。"""
 ```
 
@@ -1366,7 +1366,7 @@ Expected: PASS
 - [ ] **Step 6: 实现 render.py——markdown 渲染**
 
 ```python
-# src/code_reader/docgen/render.py
+# src/taisang/docgen/render.py
 from __future__ import annotations
 from pathlib import Path
 from ..types import DocSection, DocTree, Outline
@@ -1393,7 +1393,7 @@ def render_section(section: DocSection, content: str) -> str:
 - [ ] **Step 7: 实现 DocGenService**
 
 ```python
-# src/code_reader/docgen/service.py
+# src/taisang/docgen/service.py
 from __future__ import annotations
 from pathlib import Path
 from ..deepwriter.service import DeepWriterService
@@ -1478,13 +1478,13 @@ class DocGenService:
 ```python
 # tests/unit/test_docgen.py 追加
 def test_docgen_service_writes_files(tmp_path, monkeypatch):
-    from code_reader.docgen.service import DocGenService
-    from code_reader.types import (
+    from taisang.docgen.service import DocGenService
+    from taisang.types import (
         EntryPoint, FlowCandidate, MechanismCandidate, ModuleCandidate,
         Outline, RepoIndex, Symbol, SymbolKind,
     )
-    from code_reader.llm_client import MockLLM, LLMResponse
-    from code_reader.storage.paths import PathManager
+    from taisang.llm_client import MockLLM, LLMResponse
+    from taisang.storage.paths import PathManager
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
@@ -1523,7 +1523,7 @@ Expected: PASS
 - [ ] **Step 10: Commit**
 
 ```bash
-git add src/code_reader/docgen/ src/code_reader/types.py tests/unit/test_docgen.py
+git add src/taisang/docgen/ src/taisang/types.py tests/unit/test_docgen.py
 git commit -m "feat(docgen): 文档树自适应深度 + 落盘"
 ```
 
@@ -1533,15 +1533,15 @@ git commit -m "feat(docgen): 文档树自适应深度 + 落盘"
 
 **依赖:** 无
 **Files:**
-- Create: `src/code_reader/compaction/__init__.py`
-- Create: `src/code_reader/compaction/tool_result_budget.py`
-- Modify: `src/code_reader/storage/paths.py`(Task 6 已加 observations_dir)
+- Create: `src/taisang/compaction/__init__.py`
+- Create: `src/taisang/compaction/tool_result_budget.py`
+- Modify: `src/taisang/storage/paths.py`(Task 6 已加 observations_dir)
 - Create: `tests/unit/test_compaction_tool_result_budget.py`
 
 - [ ] **Step 1: 加 ContentReplacementState 类型(参考 Claude Code 原文)**
 
 ```python
-# src/code_reader/compaction/tool_result_budget.py 顶部
+# src/taisang/compaction/tool_result_budget.py 顶部
 from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1568,7 +1568,7 @@ CLEARED_PLACEHOLDER = "[persisted-output]\n完整输出已写入 {path} ({size} 
 
 ```python
 # tests/unit/test_compaction_tool_result_budget.py
-from code_reader.compaction.tool_result_budget import (
+from taisang.compaction.tool_result_budget import (
     ContentReplacementState, enforce_budget,
 )
 
@@ -1617,7 +1617,7 @@ Expected: FAIL
 - [ ] **Step 4: 实现 enforce_budget**
 
 ```python
-# src/code_reader/compaction/tool_result_budget.py 追加
+# src/taisang/compaction/tool_result_budget.py 追加
 import os
 
 def enforce_budget(
@@ -1701,7 +1701,7 @@ def enforce_budget(
 ```
 
 ```python
-# src/code_reader/compaction/__init__.py
+# src/taisang/compaction/__init__.py
 """compaction:上下文管理三道流水线。"""
 ```
 
@@ -1713,7 +1713,7 @@ Expected: PASS
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/code_reader/compaction/__init__.py src/code_reader/compaction/tool_result_budget.py tests/unit/test_compaction_tool_result_budget.py
+git add src/taisang/compaction/__init__.py src/taisang/compaction/tool_result_budget.py tests/unit/test_compaction_tool_result_budget.py
 git commit -m "feat(compaction): apply-tool-result-budget 阶段 5"
 ```
 
@@ -1723,14 +1723,14 @@ git commit -m "feat(compaction): apply-tool-result-budget 阶段 5"
 
 **依赖:** Task 8
 **Files:**
-- Create: `src/code_reader/compaction/microcompact.py`
+- Create: `src/taisang/compaction/microcompact.py`
 - Create: `tests/unit/test_compaction_microcompact.py`
 
 - [ ] **Step 1: 写失败测试——写完章节后清旧 observation**
 
 ```python
 # tests/unit/test_compaction_microcompact.py
-from code_reader.compaction.microcompact import clear_observations_before_section
+from taisang.compaction.microcompact import clear_observations_before_section
 
 def test_clear_observations_replaces_with_placeholder():
     """章节边界 microcompact:把 write_doc 之前的 tool_result 替换为占位符。"""
@@ -1770,7 +1770,7 @@ Expected: FAIL
 - [ ] **Step 3: 实现 microcompact**
 
 ```python
-# src/code_reader/compaction/microcompact.py
+# src/taisang/compaction/microcompact.py
 from __future__ import annotations
 
 # 占位符(36 字节,固定)
@@ -1818,7 +1818,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/code_reader/compaction/microcompact.py tests/unit/test_compaction_microcompact.py
+git add src/taisang/compaction/microcompact.py tests/unit/test_compaction_microcompact.py
 git commit -m "feat(compaction): 章节边界 microcompact 阶段 6"
 ```
 
@@ -1828,14 +1828,14 @@ git commit -m "feat(compaction): 章节边界 microcompact 阶段 6"
 
 **依赖:** 无(可与 Task 8/9 并行)
 **Files:**
-- Create: `src/code_reader/compaction/prompts.py`
-- Create: `src/code_reader/compaction/autocompact.py`
+- Create: `src/taisang/compaction/prompts.py`
+- Create: `src/taisang/compaction/autocompact.py`
 - Create: `tests/unit/test_compaction_autocompact.py`
 
 - [ ] **Step 1: 实现 prompts(9 章节模板,改造自 Claude Code)**
 
 ```python
-# src/code_reader/compaction/prompts.py
+# src/taisang/compaction/prompts.py
 """autocompact 9 章节 prompt 模板(改造自 Claude Code 原版,适配文档生成任务)。"""
 
 NO_TOOLS_PREAMBLE = """关键约束:只用纯文本回复。不要调用任何工具。
@@ -1870,8 +1870,8 @@ NO_TOOLS_TRAILER = """提醒:不要调用任何工具。只用纯文本回复—
 
 ```python
 # tests/unit/test_compaction_autocompact.py
-from code_reader.compaction.autocompact import autocompact
-from code_reader.llm_client import MockLLM, LLMResponse
+from taisang.compaction.autocompact import autocompact
+from taisang.llm_client import MockLLM, LLMResponse
 
 def test_autocompact_generates_summary_and_replaces_messages(tmp_path):
     """autocompact:调 LLM 生成 9 章节摘要,替换 state.messages。"""
@@ -1919,7 +1919,7 @@ Expected: FAIL
 - [ ] **Step 4: 实现 autocompact**
 
 ```python
-# src/code_reader/compaction/autocompact.py
+# src/taisang/compaction/autocompact.py
 from __future__ import annotations
 import re
 from pathlib import Path
@@ -2009,7 +2009,7 @@ Expected: PASS
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/code_reader/compaction/prompts.py src/code_reader/compaction/autocompact.py tests/unit/test_compaction_autocompact.py
+git add src/taisang/compaction/prompts.py src/taisang/compaction/autocompact.py tests/unit/test_compaction_autocompact.py
 git commit -m "feat(compaction): autocompact 9 章节摘要 阶段 7"
 ```
 
@@ -2019,17 +2019,17 @@ git commit -m "feat(compaction): autocompact 9 章节摘要 阶段 7"
 
 **依赖:** Task 6(session_memory_dir 已加)、Task 10(autocompact)
 **Files:**
-- Create: `src/code_reader/session_memory/__init__.py`
-- Create: `src/code_reader/session_memory/template.py`
-- Create: `src/code_reader/session_memory/forked_agent.py`
-- Create: `src/code_reader/session_memory/extractor.py`
-- Create: `src/code_reader/session_memory/service.py`
+- Create: `src/taisang/session_memory/__init__.py`
+- Create: `src/taisang/session_memory/template.py`
+- Create: `src/taisang/session_memory/forked_agent.py`
+- Create: `src/taisang/session_memory/extractor.py`
+- Create: `src/taisang/session_memory/service.py`
 - Create: `tests/unit/test_session_memory.py`
 
 - [ ] **Step 1: 实现 10 章节模板(改造自 Claude Code 原文)**
 
 ```python
-# src/code_reader/session_memory/template.py
+# src/taisang/session_memory/template.py
 """session memory 笔记 10 章节模板(改造自 Claude Code 原文,适配文档生成任务)。"""
 
 DEFAULT_TEMPLATE = """# Session Title
@@ -2116,8 +2116,8 @@ def get_update_prompt(current_notes: str, recent_conversation: str, memory_path:
 ```python
 # tests/unit/test_session_memory.py
 from pathlib import Path
-from code_reader.session_memory.service import SessionMemoryService
-from code_reader.llm_client import MockLLM, LLMResponse
+from taisang.session_memory.service import SessionMemoryService
+from taisang.llm_client import MockLLM, LLMResponse
 
 def test_session_memory_initializes_template(tmp_path):
     """首次调用 ensure_file 时,写默认模板。"""
@@ -2139,12 +2139,12 @@ Expected: FAIL
 - [ ] **Step 4: 实现 SessionMemoryService(初始化部分)**
 
 ```python
-# src/code_reader/session_memory/__init__.py
+# src/taisang/session_memory/__init__.py
 """session_memory:分支 agent 异步维护笔记。"""
 ```
 
 ```python
-# src/code_reader/session_memory/service.py
+# src/taisang/session_memory/service.py
 from __future__ import annotations
 import threading
 from pathlib import Path
@@ -2232,7 +2232,7 @@ Expected: FAIL
 - [ ] **Step 8: 实现 forked_agent + extract**
 
 ```python
-# src/code_reader/session_memory/forked_agent.py
+# src/taisang/session_memory/forked_agent.py
 """分支 agent:只能 Edit summary.md,其他工具 deny。
 完全照搬 Claude Code 原文 createMemoryFileCanUseTool。"""
 from __future__ import annotations
@@ -2288,7 +2288,7 @@ def _apply_edit(file_path: Path, old: str, new: str) -> None:
 ```
 
 ```python
-# src/code_reader/session_memory/service.py 追加方法
+# src/taisang/session_memory/service.py 追加方法
     def _do_extract(self, recent_conversation: str) -> None:
         """调分支 agent 更新笔记。"""
         with self._lock:  # sequential 串行化
@@ -2311,7 +2311,7 @@ Expected: PASS
 - [ ] **Step 10: Commit**
 
 ```bash
-git add src/code_reader/session_memory/ tests/unit/test_session_memory.py
+git add src/taisang/session_memory/ tests/unit/test_session_memory.py
 git commit -m "feat(session_memory): 分支 agent 异步维护笔记 选项 B"
 ```
 
@@ -2321,18 +2321,18 @@ git commit -m "feat(session_memory): 分支 agent 异步维护笔记 选项 B"
 
 **依赖:** Task 4(outliner)、Task 7(docgen)、Task 8/9/10(compaction)、Task 11(session_memory)
 **Files:**
-- Modify: `src/code_reader/agent_core/prompts.py`
-- Modify: `src/code_reader/agent_core/tools.py`
-- Modify: `src/code_reader/agent_core/service.py`
-- Modify: `src/code_reader/agent_core/context.py`
-- Modify: `src/code_reader/agent_core/events.py`
-- Modify: `src/code_reader/types.py`
+- Modify: `src/taisang/agent_core/prompts.py`
+- Modify: `src/taisang/agent_core/tools.py`
+- Modify: `src/taisang/agent_core/service.py`
+- Modify: `src/taisang/agent_core/context.py`
+- Modify: `src/taisang/agent_core/events.py`
+- Modify: `src/taisang/types.py`
 - Modify: `tests/unit/test_agent_core.py`
 
 - [ ] **Step 1: 加 write_doc / list_pending_sections / finalize_doc 工具**
 
 ```python
-# src/code_reader/agent_core/tools.py 追加
+# src/taisang/agent_core/tools.py 追加
 class WriteDocTool(_BaseTool):
     name = "write_doc"
 
@@ -2411,7 +2411,7 @@ class FinalizeDocTool(_BaseTool):
 - [ ] **Step 2: 加 DOC_WRITTEN 事件**
 
 ```python
-# src/code_reader/agent_core/events.py 追加
+# src/taisang/agent_core/events.py 追加
 DOC_WRITTEN = "doc_written"
 COMPACTED = "compacted"
 ```
@@ -2419,7 +2419,7 @@ COMPACTED = "compacted"
 - [ ] **Step 3: 改写 agent system prompt(任务级 + 软约束)**
 
 ```python
-# src/code_reader/agent_core/prompts.py(替换内容)
+# src/taisang/agent_core/prompts.py(替换内容)
 SYSTEM_PROMPT = """你的任务是为一个 repo 生成一份让人能读完吃透项目的 markdown 文档树。
 
 工作流程:
@@ -2456,7 +2456,7 @@ SYSTEM_PROMPT = """你的任务是为一个 repo 生成一份让人能读完吃�
 - [ ] **Step 4: 改 ContextManager 接入 compaction**
 
 ```python
-# src/code_reader/agent_core/context.py 重写
+# src/taisang/agent_core/context.py 重写
 from __future__ import annotations
 import tiktoken
 
@@ -2513,7 +2513,7 @@ class ContextManager:
 - [ ] **Step 5: 改 AgentService——接入三道流水线 + session memory**
 
 ```python
-# src/code_reader/agent_core/service.py 重写关键部分
+# src/taisang/agent_core/service.py 重写关键部分
 class AgentService:
     def __init__(
         self,
@@ -2647,7 +2647,7 @@ def _emit(on_event, evt):
 - [ ] **Step 6: 改 ToolRegistry 接入新工具**
 
 ```python
-# src/code_reader/agent_core/tools.py 改 ToolRegistry
+# src/taisang/agent_core/tools.py 改 ToolRegistry
 class ToolRegistry:
     def __init__(
         self,
@@ -2677,15 +2677,15 @@ class ToolRegistry:
 # tests/unit/test_agent_core.py 追加
 def test_agent_generates_doc_tree(tmp_path, monkeypatch):
     """agent 跑完整循环,生成文档树。"""
-    from code_reader.agent_core.service import AgentService
-    from code_reader.indexer.service import IndexerService
-    from code_reader.summarizer.service import SummarizerService
-    from code_reader.outliner.service import OutlinerService
-    from code_reader.docgen.tree import build_doc_tree_structure
-    from code_reader.session_memory.service import SessionMemoryService
-    from code_reader.storage.paths import PathManager
-    from code_reader.llm_client import MockLLM, LLMResponse
-    from code_reader.types import RepoMap, GlobalSummary
+    from taisang.agent_core.service import AgentService
+    from taisang.indexer.service import IndexerService
+    from taisang.summarizer.service import SummarizerService
+    from taisang.outliner.service import OutlinerService
+    from taisang.docgen.tree import build_doc_tree_structure
+    from taisang.session_memory.service import SessionMemoryService
+    from taisang.storage.paths import PathManager
+    from taisang.llm_client import MockLLM, LLMResponse
+    from taisang.types import RepoMap, GlobalSummary
 
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
@@ -2738,7 +2738,7 @@ Expected: PASS(可能需要几轮调 mock)
 - [ ] **Step 9: Commit**
 
 ```bash
-git add src/code_reader/agent_core/ src/code_reader/types.py tests/unit/test_agent_core.py
+git add src/taisang/agent_core/ src/taisang/types.py tests/unit/test_agent_core.py
 git commit -m "feat(agent_core): 任务级 prompt + 软约束 + 压缩流水线接入"
 ```
 
@@ -2748,7 +2748,7 @@ git commit -m "feat(agent_core): 任务级 prompt + 软约束 + 压缩流水线�
 
 **依赖:** Task 1、Task 4、Task 7、Task 12
 **Files:**
-- Modify: `src/code_reader/cli/main.py`
+- Modify: `src/taisang/cli/main.py`
 - Create: `tests/integration/test_doc_pipeline.py`
 
 - [ ] **Step 1: 写失败测试——端到端 doc 生成**
@@ -2759,7 +2759,7 @@ import os
 import subprocess
 from pathlib import Path
 from click.testing import CliRunner
-from code_reader.cli.main import cli
+from taisang.cli.main import cli
 
 def _make_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "demo"
@@ -2802,7 +2802,7 @@ def test_doc_pipeline_end_to_end(tmp_path, monkeypatch):
     r = runner.invoke(cli, ["doc", str(repo)])
     assert r.exit_code == 0, r.output
     # 产物存在
-    doc_dir = repo / ".code-reader" / "docs"
+    doc_dir = repo / ".taisang" / "docs"
     assert (doc_dir / "REPO_GUIDE.md").exists()
     assert (doc_dir / "00_项目是什么.md").exists()
     assert (doc_dir / "01_架构总览.md").exists()
@@ -2816,7 +2816,7 @@ Expected: FAIL(还只是骨架)
 - [ ] **Step 3: 实现 cmd_doc 完整逻辑**
 
 ```python
-# src/code_reader/cli/main.py 替换 cmd_doc
+# src/taisang/cli/main.py 替换 cmd_doc
 @cli.command("doc")
 @click.argument("repo_path")
 @click.option("--lang", default="auto", help="产物语言:zh/en/auto")
@@ -2902,7 +2902,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/code_reader/cli/main.py tests/integration/test_doc_pipeline.py
+git add src/taisang/cli/main.py tests/integration/test_doc_pipeline.py
 git commit -m "feat(cli): doc 命令完整实现 + 端到端"
 ```
 
@@ -2912,8 +2912,8 @@ git commit -m "feat(cli): doc 命令完整实现 + 端到端"
 
 **依赖:** Task 13
 **Files:**
-- Modify: `src/code_reader/cli/main.py`
-- Modify: `src/code_reader/indexer/service.py`
+- Modify: `src/taisang/cli/main.py`
+- Modify: `src/taisang/indexer/service.py`
 - Create: `tests/integration/test_doc_update.py`
 
 - [ ] **Step 1: 写失败测试——增量更新只重生成变动相关章节**
@@ -2924,7 +2924,7 @@ import os
 import subprocess
 from pathlib import Path
 from click.testing import CliRunner
-from code_reader.cli.main import cli
+from taisang.cli.main import cli
 
 def test_doc_update_only_regenerates_changed(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -2945,7 +2945,7 @@ def test_doc_update_only_regenerates_changed(tmp_path, monkeypatch):
     # 第一次全量
     r1 = runner.invoke(cli, ["doc", str(repo)])
     assert r1.exit_code == 0
-    doc_dir = repo / ".code-reader" / "docs"
+    doc_dir = repo / ".taisang" / "docs"
     guide1 = (doc_dir / "REPO_GUIDE.md").read_text(encoding="utf-8")
 
     # 改 a.py
@@ -2966,7 +2966,7 @@ Expected: FAIL(--update 还没实现)
 - [ ] **Step 3: 实现 --update**
 
 ```python
-# src/code_reader/cli/main.py 改 cmd_doc 加 update 分支
+# src/taisang/cli/main.py 改 cmd_doc 加 update 分支
     if update and not force:
         # 增量:indexer.update + 只重生成变动文件相关的章节
         idx = indexer.update(source_root)
@@ -2986,7 +2986,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/code_reader/cli/main.py tests/integration/test_doc_update.py
+git add src/taisang/cli/main.py tests/integration/test_doc_update.py
 git commit -m "feat(cli): --update 增量更新选项"
 ```
 
@@ -3137,10 +3137,10 @@ def main():
         sys.exit(1)
     print(f"跑 doc agent 为 {FASTAPI_PATH} 生成文档...")
     subprocess.run([
-        sys.executable, "-m", "code_reader",
+        sys.executable, "-m", "taisang",
         "doc", str(FASTAPI_PATH),
     ], check=True)
-    doc_dir = FASTAPI_PATH / ".code-reader" / "docs"
+    doc_dir = FASTAPI_PATH / ".taisang" / "docs"
     print(f"文档产物:{doc_dir}")
     print("请找 3 个没读过 fastapi 的开发者按 eval/rubric.md 评测")
 

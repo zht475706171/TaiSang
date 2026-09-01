@@ -1,6 +1,6 @@
 """测试上下文管理:token 估算 + compaction。"""
 
-from code_reader.agent_core.context import ContextManager
+from taisang.agent_core.context import ContextManager
 
 
 def test_estimate_tokens_approximate():

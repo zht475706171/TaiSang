@@ -3,7 +3,7 @@
 import queue
 import threading
 
-from code_reader.web.sse import EventBroker, format_sse
+from taisang.web.sse import EventBroker, format_sse
 
 
 def test_format_sse_basic():

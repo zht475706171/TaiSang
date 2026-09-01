@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from code_reader.agent_core.tools import (
+from taisang.agent_core.tools import (
     GlobTool,
     GrepTool,
     ReadFileTool,

@@ -1,4 +1,4 @@
-"""Code Reader Agent CLI 入口。
+"""TaiSang CLI 入口。
 
 提供 `chat` 子命令:进入交互式 REPL coding agent。
 - 读用户 query → AgentService.run → 实时渲染 thinking/tool/result/answer 事件
@@ -9,8 +9,8 @@
 - 事件经 SSE 推,前端原生 JS + EventSource
 
 环境变量:
-- CODE_READER_MOCK_LLM=1  使用 MockLLM(测试用,返回固定回答)
-- CODE_READER_LLM_*  LLM 配置
+- TAISANG_MOCK_LLM=1  使用 MockLLM(测试用,返回固定回答)
+- TAISANG_LLM_*  LLM 配置
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ def _normalize_path(path: str) -> Path:
 
 def _make_llm():
     """根据环境决定用真 LLM 还是 MockLLM。"""
-    if os.environ.get("CODE_READER_MOCK_LLM") == "1":
+    if os.environ.get("TAISANG_MOCK_LLM") == "1":
         return MockLLM(
             [
                 LLMResponse(text="(mock) 这个 repo 定义了 main 函数 [a.py:1]", tool_calls=[]),
@@ -56,8 +56,8 @@ def _make_llm():
     cfg = load_config()
     if not cfg.api_key:
         click.echo(
-            "错误:未配置 LLM API key。请设置 CODE_READER_LLM_API_KEY 环境变量,"
-            "或写 ~/.code-reader/settings.json。测试可用 CODE_READER_MOCK_LLM=1。",
+            "错误:未配置 LLM API key。请设置 TAISANG_LLM_API_KEY 环境变量,"
+            "或写 ~/.taisang/settings.json。测试可用 TAISANG_MOCK_LLM=1。",
             err=True,
         )
         sys.exit(2)
@@ -145,7 +145,7 @@ def _render_usage_report(payload: dict) -> None:
 
 @click.group()
 def cli() -> None:
-    """Code Reader Agent - 简化版 coding agent。"""
+    """TaiSang - 简化版 coding agent。"""
 
 
 @cli.command()
@@ -172,7 +172,7 @@ def chat(repo: str) -> None:
         session_memory=session_mem,
     )
 
-    click.echo(f"code-reader agent @ {source_root}")
+    click.echo(f"taisang agent @ {source_root}")
     click.echo("输入 /exit 退出,/reset 清上下文,/debug 切换调试输出")
 
     debug_on = False
@@ -255,7 +255,7 @@ def web(repo: str, port: int, host: str, no_browser: bool) -> None:
 
     app = create_app(source_root)
     url = f"http://{host}:{port}"
-    click.echo(f"code-reader web UI @ {url}  (repo: {source_root})")
+    click.echo(f"taisang web UI @ {url}  (repo: {source_root})")
     click.echo("Ctrl+C 退出")
     if not no_browser:
         import threading

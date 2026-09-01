@@ -2,10 +2,10 @@
 
 import json
 
-from code_reader.agent_core.confirm import AutoApproveConfirmer
-from code_reader.agent_core.service import AgentService
-from code_reader.llm_client import LLMResponse, MockLLM
-from code_reader.types import Answer
+from taisang.agent_core.confirm import AutoApproveConfirmer
+from taisang.agent_core.service import AgentService
+from taisang.llm_client import LLMResponse, MockLLM
+from taisang.types import Answer
 
 
 def _tc(call_id: str, name: str, args: dict) -> dict:
@@ -119,7 +119,7 @@ def test_agent_observation_truncation(tmp_path):
 
 def test_agent_llm_protocol_error_terminates(tmp_path):
     """LLM 抛 LLMProtocolError,Agent 应终止并返回 complete=False Answer。"""
-    from code_reader.llm_errors import LLMProtocolError
+    from taisang.llm_errors import LLMProtocolError
 
     class BoomLLM:
         def chat(self, messages, tools):
@@ -205,7 +205,7 @@ class _UsageLLM:
         self._i = 0
 
     def chat(self, messages, tools):
-        from code_reader.llm_client import LLMResponse
+        from taisang.llm_client import LLMResponse
 
         usage = self._usage_list[self._i]
         self._i += 1
@@ -255,7 +255,7 @@ def test_agent_usage_none_keeps_counters_zero(tmp_path):
 
 def test_agent_emits_usage_report_event(tmp_path):
     """run() 结束应 emit USAGE_REPORT 事件,payload 含 turn/session/cache。"""
-    from code_reader.agent_core.events import USAGE_REPORT
+    from taisang.agent_core.events import USAGE_REPORT
 
     llm = _UsageLLM([{"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}])
     service = AgentService(llm=llm, source_root=tmp_path, confirmer=AutoApproveConfirmer())

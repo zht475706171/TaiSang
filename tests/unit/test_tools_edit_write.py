@@ -1,7 +1,7 @@
 """Task 2:EditTool / WriteTool 测试。"""
 
-from code_reader.agent_core.confirm import AutoApproveConfirmer, AutoDenyConfirmer
-from code_reader.agent_core.tools import EditTool, WriteTool
+from taisang.agent_core.confirm import AutoApproveConfirmer, AutoDenyConfirmer
+from taisang.agent_core.tools import EditTool, WriteTool
 
 # -------------------- EditTool --------------------
 

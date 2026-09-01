@@ -1,6 +1,6 @@
 """测试 LLM client + MockLLM(自研轻量 mock)。"""
 
-from code_reader.llm_client import LLMClient, LLMResponse, MockLLM
+from taisang.llm_client import LLMClient, LLMResponse, MockLLM
 
 
 def test_mock_llm_returns_prescribed_responses_in_order():
@@ -61,7 +61,7 @@ def test_mock_llm_tool_call_response():
 
 def test_real_llm_client_constructs_with_config():
     """只测 client 能用 config 构造,不真发请求。"""
-    from code_reader.config import LLMConfig
+    from taisang.config import LLMConfig
 
     cfg = LLMConfig(base_url="https://api.x.com", api_key="k", model="m")
     client = LLMClient(cfg)
@@ -88,8 +88,8 @@ def test_llm_client_malformed_tool_call_structure_raises_protocol_error():
     """
     import pytest
 
-    from code_reader.config import LLMConfig
-    from code_reader.llm_errors import LLMProtocolError
+    from taisang.config import LLMConfig
+    from taisang.llm_errors import LLMProtocolError
 
     cfg = LLMConfig(base_url="https://api.x.com", api_key="k", model="m")
     client = LLMClient(cfg)
@@ -127,7 +127,7 @@ def test_llm_client_malformed_tool_call_structure_raises_protocol_error():
 
 def test_llm_client_passes_through_standard_tool_call_structure():
     """LLMClient.chat 应透传 OpenAI 标准 tool_call 结构(arguments 保持 JSON 字符串)。"""
-    from code_reader.config import LLMConfig
+    from taisang.config import LLMConfig
 
     cfg = LLMConfig(base_url="https://api.x.com", api_key="k", model="m")
     client = LLMClient(cfg)
@@ -174,7 +174,7 @@ def test_llm_client_passes_through_standard_tool_call_structure():
 
 def test_llm_client_empty_arguments_kept_as_empty_string():
     """LLMClient.chat:OpenAI 返回 arguments 为空时,保留空串(不 json.loads)。"""
-    from code_reader.config import LLMConfig
+    from taisang.config import LLMConfig
 
     cfg = LLMConfig(base_url="https://api.x.com", api_key="k", model="m")
     client = LLMClient(cfg)
@@ -217,8 +217,8 @@ def test_llm_client_openai_exception_wrapped_as_transient():
     """openai SDK 调用抛任何异常,LLMClient.chat 应包装成 LLMTransientError。"""
     import pytest
 
-    from code_reader.config import LLMConfig
-    from code_reader.llm_errors import LLMTransientError
+    from taisang.config import LLMConfig
+    from taisang.llm_errors import LLMTransientError
 
     cfg = LLMConfig(base_url="https://api.x.com", api_key="k", model="m")
     client = LLMClient(cfg)

@@ -1,10 +1,10 @@
 """测试路径管理。
 
-~/.code-reader/ 只保留 settings.json。
-本地 repo 的会话/observation 等上下文管理产物落 <source_root>/.code-reader/。
+~/.taisang/ 只保留 settings.json。
+本地 repo 的会话/observation 等上下文管理产物落 <source_root>/.taisang/。
 """
 
-from code_reader.storage.paths import PathManager
+from taisang.storage.paths import PathManager
 
 
 def _isolate_home(tmp_path, monkeypatch):
@@ -16,7 +16,7 @@ def _isolate_home(tmp_path, monkeypatch):
 def test_root_default(tmp_path, monkeypatch):
     _isolate_home(tmp_path, monkeypatch)
     pm = PathManager()
-    assert pm.root == tmp_path / ".code-reader"
+    assert pm.root == tmp_path / ".taisang"
 
 
 def test_settings_path(tmp_path, monkeypatch):
@@ -25,18 +25,18 @@ def test_settings_path(tmp_path, monkeypatch):
     assert pm.settings_path == pm.root / "settings.json"
 
 
-def test_session_memory_dir_under_code_reader(tmp_path):
+def test_session_memory_dir_under_taisang(tmp_path):
     d = PathManager.session_memory_dir(tmp_path, "main")
-    assert d == tmp_path / ".code-reader" / "sessions" / "main" / "session-memory"
+    assert d == tmp_path / ".taisang" / "sessions" / "main" / "session-memory"
     assert d.exists() and d.is_dir()
 
 
 def test_session_memory_path_under_dir(tmp_path):
     p = PathManager.session_memory_path(tmp_path, "main")
-    assert p == tmp_path / ".code-reader" / "sessions" / "main" / "session-memory" / "summary.md"
+    assert p == tmp_path / ".taisang" / "sessions" / "main" / "session-memory" / "summary.md"
 
 
-def test_observations_dir_under_code_reader(tmp_path):
+def test_observations_dir_under_taisang(tmp_path):
     d = PathManager.observations_dir(tmp_path)
-    assert d == tmp_path / ".code-reader" / "observations"
+    assert d == tmp_path / ".taisang" / "observations"
     assert d.exists() and d.is_dir()

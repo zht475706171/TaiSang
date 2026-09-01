@@ -43,7 +43,7 @@
 项目本身**不绑死任何模型厂商**，支持用户自带任意 **OpenAI 兼容 endpoint**：
 - 用户配置 `base_url` + `api_key` + `model_name`，agent_core 用这个调
 - 兼容 OpenAI / DeepSeek / 通义千问 / Moonshot / 本地 Ollama / 自部署 vLLM 等
-- 配置项在 `~/.code-reader/settings.json` 或环境变量 `CODE_READER_LLM_*`
+- 配置项在 `~/.taisang/settings.json` 或环境变量 `CODE_READER_LLM_*`
 - 推荐组合：索引摘要用便宜模型（如 DeepSeek-V3），Agent 循环用强模型（如 Claude / GPT-4），用户可分别配置
 
 ### 三层架构
@@ -193,17 +193,17 @@ while not done and budget_remaining:
   - 引用准确率（引用的文件行号对得上 ground truth 的比例）
   - 调用链完整率（多跳题追到的真实链长度 / 应有链长度）
 - **输出**：一份 ablation 表格，行是三类问题，列是四种方法，格子里是分数——**面试杀手锏**
-- **自动化**：`code-reader eval run --suite v1 --repo fastapi` 一条命令跑完，产出 HTML 报告
+- **自动化**：`taisang eval run --suite v1 --repo fastapi` 一条命令跑完，产出 HTML 报告
 
 ### 2.6 cli + web —— 入口
 
 **CLI 命令**：
-- `code-reader index <repo_url>` —— 建索引
-- `code-reader ask "<question>"` —— 问问题
-- `code-reader doc` —— 生成 onboarding 文档
-- `code-reader eval <suite>` —— 跑评测
-- `code-reader traces list/clean/export` —— trace 管理
-- `code-reader ask --resume <session_id>` / `--continue` —— 恢复上次对话
+- `taisang index <repo_url>` —— 建索引
+- `taisang ask "<question>"` —— 问问题
+- `taisang doc` —— 生成 onboarding 文档
+- `taisang eval <suite>` —— 跑评测
+- `taisang traces list/clean/export` —— trace 管理
+- `taisang ask --resume <session_id>` / `--continue` —— 恢复上次对话
 
 **Web 端**：FastAPI 后端 + 前端页面（开发时使用 `frontend-design` skill 设计），输入 repo URL + 问题，在线问答。MVP 只支持公开 repo + 用户自带 LLM API key（省 token 钱，与 CLI 共享同一套 LLM 配置）。
 
@@ -269,7 +269,7 @@ user_question
 ### 3.3 三类落盘文件（职责分离）
 
 ```
-~/.code-reader/
+~/.taisang/
 ├── indices/<repo_hash>/         # 索引产物
 │   ├── ast.db                    # AST/符号/调用图 (SQLite)
 │   ├── repo_map.json             # 三层摘要
@@ -289,14 +289,14 @@ user_question
 
 **trace 文件策略**：
 - 默认开（评测/self-improvement/bug 复现都需要）
-- `code-reader ask --no-trace` 给隐私敏感用户关闭选项
+- `taisang ask --no-trace` 给隐私敏感用户关闭选项
 - 自动清理：traces 默认保留 7 天 + 总量上限 100MB，超了自动删最旧的
-- `code-reader traces list/clean/export` 命令管理
+- `taisang traces list/clean/export` 命令管理
 
 **session resume**：
 - CLI 启动时检测未结束 session
-- `code-reader ask --resume <session_id>` 恢复：加载 messages + repo_ref → 继续对话
-- `code-reader ask --continue`：恢复最近一次 session
+- `taisang ask --resume <session_id>` 恢复：加载 messages + repo_ref → 继续对话
+- `taisang ask --continue`：恢复最近一次 session
 - session 过期：30 天未更新归档，90 天清理
 
 > **概念区分**：trace = 过去发生的事的录像（完整可复现）；memory = 从多次问答沉淀的知识（未来要用的，v1.5）；session state = 当前会话的轻量状态（可恢复对话）。三者职责不同，不混在一个文件里。
@@ -306,7 +306,7 @@ user_question
 - **结构化日志**：structlog，每个组件一条 pipeline id 贯穿
 - **指标**：索引耗时、索引文件数、Agent 步数、token 消耗、cache 命中率、工具调用次数
 - **trace 文件**：每次问答落一份 JSONL，方便调试和评测
-- **`code-reader debug`** 命令：导出最近 N 次问答的 trace，用户提 issue 时附上
+- **`taisang debug`** 命令：导出最近 N 次问答的 trace，用户提 issue 时附上
 
 ### 3.5 缓存与增量
 
@@ -385,7 +385,7 @@ user_question
 
 **输出**：ablation 表格——行是三类问题，列是四种方法（本 Agent / Claude 裸 / Claude 塞 repo / RAG），格子里是分数。**面试杀手锏**。
 
-**自动化**：`code-reader eval run --suite v1 --repo fastapi` 一条命令跑完，产出 HTML 报告。
+**自动化**：`taisang eval run --suite v1 --repo fastapi` 一条命令跑完，产出 HTML 报告。
 
 ### 4.4 手测 / 狗食
 
@@ -478,7 +478,7 @@ MIT
 
 | 形态 | 渠道 | 目标用户 |
 |------|------|---------|
-| pip 包 | PyPI | Python 开发者，`pip install code-reader` |
+| pip 包 | PyPI | Python 开发者，`pip install taisang` |
 | 源码 clone | GitHub | 想看源码/自己改的开发者 |
 | Web 端 | 自部署 / 免费托管（Vercel/Render） | 不想装 Python 的社区用户 |
 | Docker | Docker Hub | 想自部署 Web 端的团队 |
@@ -535,10 +535,10 @@ MIT
 - [x] **TS 评测 repo** → **nest**（NestJS，中大型 TS 项目）
 - [x] **LLM mock 工具** → 自研轻量 `MockLLM` 类（约 50 行，按调用顺序返回预设响应），不引外部库
 - [x] **Web 端技术栈** → **FastAPI 后端 + 前端页面用 `frontend-design` skill 设计**
-- [x] **pip 包名** → `code-reader`（项目改名 code-reader-agent 后定）
+- [x] **pip 包名** → `taisang`（项目改名 taisang-agent 后定）
 
 ## 8. 关键架构决策汇总（2026-08-21 新增）
 
 1. **LLM 接入不绑死厂商**：支持任意 OpenAI 兼容 endpoint（base_url + api_key + model_name），用户自带。推荐组合：摘要用便宜模型、Agent 循环用强模型，可分别配置。
 2. **Web 前端开发流程**：实现阶段调用 `superpowers:frontend-design` skill 设计前端页面（非凭空手写）。
-3. **改名**：项目原名 Repo Onboarding Agent → Code Reader Agent。pip 包名 `code-reader`，CLI 命令 `code-reader`，配置目录 `~/.code-reader/`。
+3. **改名**：项目原名 Repo Onboarding Agent → Code Reader Agent。pip 包名 `taisang`，CLI 命令 `taisang`，配置目录 `~/.taisang/`。

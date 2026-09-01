@@ -8,13 +8,13 @@
 | 维度 | 决策 |
 |------|------|
 | 工具集 | Read / Edit / Write / Grep / Glob / Bash |
-| 交互 | REPL(进 `code-reader` 进交互式对话) |
+| 交互 | REPL(进 `taisang` 进交互式对话) |
 | 上下文机制 | apply-tool-result-budget + autocompact + session memory |
 | microcompact | 删(doc 专用,通用 agent 用不上) |
 | 文档功能 | 全砍(outliner / deepwriter / docgen / summarizer / eval) |
 | Bash 限制 | 命令白名单 + 限定 cwd |
 | Edit/Write 限制 | 用户确认(每次改文件前交互式 prompt) |
-| 工作目录 | 用当前目录(cd 到 repo 再跑 `code-reader`) |
+| 工作目录 | 用当前目录(cd 到 repo 再跑 `taisang`) |
 
 ---
 
@@ -23,7 +23,7 @@
 ### 要删
 
 ```
-src/code_reader/
+src/taisang/
 ├── outliner/                    # 整个删
 ├── deepwriter/                  # 整个删
 ├── docgen/                      # 整个删
@@ -48,7 +48,7 @@ eval/                            # 整个删
 ### 要改
 
 ```
-src/code_reader/
+src/taisang/
 ├── cli/main.py                  # 砍 doc/index 命令,加 REPL
 ├── agent_core/
 │   ├── prompts.py               # 改:通用 coding agent system prompt
@@ -70,7 +70,7 @@ src/code_reader/
 ### 要加
 
 ```
-src/code_reader/agent_core/
+src/taisang/agent_core/
 ├── tools.py 里新增:
 │   ├── EditTool          # old_string → new_string 改文件,用户确认
 │   ├── WriteTool         # 创建/覆盖文件,用户确认
@@ -86,11 +86,11 @@ src/code_reader/agent_core/
 
 **依赖:** 无
 **Files:**
-- Delete: `src/code_reader/outliner/` 整个目录
-- Delete: `src/code_reader/deepwriter/` 整个目录
-- Delete: `src/code_reader/docgen/` 整个目录
-- Delete: `src/code_reader/summarizer/` 整个目录
-- Delete: `src/code_reader/compaction/microcompact.py`
+- Delete: `src/taisang/outliner/` 整个目录
+- Delete: `src/taisang/deepwriter/` 整个目录
+- Delete: `src/taisang/docgen/` 整个目录
+- Delete: `src/taisang/summarizer/` 整个目录
+- Delete: `src/taisang/compaction/microcompact.py`
 - Delete: `eval/` 整个目录
 - Delete: `tests/unit/test_outliner_*.py` (4 个)
 - Delete: `tests/unit/test_deepwriter.py`
@@ -99,9 +99,9 @@ src/code_reader/agent_core/
 - Delete: `tests/unit/test_compaction_microcompact.py`
 - Delete: `tests/integration/test_doc_pipeline.py`
 - Delete: `tests/integration/test_doc_update.py`
-- Modify: `src/code_reader/types.py` —— 删 DocTree/DocSection/EntryPoint/MechanismCandidate/FlowCandidate/ModuleCandidate/Outline
-- Modify: `src/code_reader/storage/paths.py` —— 删 doc_dir / observations_dir 调整(observations 仍要,给 apply-tool-result-budget)
-- Modify: `src/code_reader/cli/main.py` —— 删 cmd_doc / cmd_index / _make_progress / doc 相关 import
+- Modify: `src/taisang/types.py` —— 删 DocTree/DocSection/EntryPoint/MechanismCandidate/FlowCandidate/ModuleCandidate/Outline
+- Modify: `src/taisang/storage/paths.py` —— 删 doc_dir / observations_dir 调整(observations 仍要,给 apply-tool-result-budget)
+- Modify: `src/taisang/cli/main.py` —— 删 cmd_doc / cmd_index / _make_progress / doc 相关 import
 - Modify: `tests/integration/test_end_to_end.py` —— 删 doc 相关,留 indexer/linker
 - Modify: `tests/unit/test_cli.py` —— 删 doc 测试
 - Modify: `tests/unit/test_agent_core.py` —— 删 doc 工具测试
@@ -120,8 +120,8 @@ src/code_reader/agent_core/
 
 **依赖:** Task 1
 **Files:**
-- Modify: `src/code_reader/agent_core/tools.py`
-- Create: `src/code_reader/agent_core/confirm.py`
+- Modify: `src/taisang/agent_core/tools.py`
+- Create: `src/taisang/agent_core/confirm.py`
 - Modify: `tests/unit/test_agent_core.py`(或新建 `tests/unit/test_tools_edit_write.py`)
 
 **EditTool 设计:**
@@ -249,7 +249,7 @@ class AutoDenyConfirmer:
 
 **依赖:** Task 2
 **Files:**
-- Modify: `src/code_reader/agent_core/tools.py`
+- Modify: `src/taisang/agent_core/tools.py`
 - Create: `tests/unit/test_tools_bash.py`
 
 **BashTool 设计:**
@@ -332,9 +332,9 @@ class BashTool(_BaseTool):
 
 **依赖:** Task 1, Task 2, Task 3
 **Files:**
-- Modify: `src/code_reader/agent_core/prompts.py`
-- Modify: `src/code_reader/agent_core/service.py`
-- Modify: `src/code_reader/agent_core/tools.py`(ToolRegistry)
+- Modify: `src/taisang/agent_core/prompts.py`
+- Modify: `src/taisang/agent_core/service.py`
+- Modify: `src/taisang/agent_core/tools.py`(ToolRegistry)
 
 **新 SYSTEM_PROMPT:**
 ```python
@@ -446,8 +446,8 @@ class AgentService:
 
 **依赖:** Task 4
 **Files:**
-- Modify: `src/code_reader/compaction/prompts.py`
-- Modify: `src/code_reader/session_memory/template.py`
+- Modify: `src/taisang/compaction/prompts.py`
+- Modify: `src/taisang/session_memory/template.py`
 - Modify: `tests/unit/test_compaction_autocompact.py`
 - Modify: `tests/unit/test_session_memory.py`
 
@@ -512,8 +512,8 @@ DEFAULT_TEMPLATE = """# Session Title
 
 **依赖:** Task 4, Task 5
 **Files:**
-- Modify: `src/code_reader/cli/main.py`
-- Modify: `src/code_reader/__main__.py`
+- Modify: `src/taisang/cli/main.py`
+- Modify: `src/taisang/__main__.py`
 - Modify: `tests/unit/test_cli.py`
 
 **REPL 设计:**
@@ -541,7 +541,7 @@ def chat(repo: str):
         session_memory=session_mem,
     )
     
-    click.echo(f"code-reader agent @ {source_root}")
+    click.echo(f"taisang agent @ {source_root}")
     click.echo("输入 /exit 退出,/reset 清上下文")
     
     while True:
@@ -577,20 +577,20 @@ def chat(repo: str):
 
 **入口:**
 ```python
-# src/code_reader/cli/main.py
+# src/taisang/cli/main.py
 @click.group()
 def cli():
     """Code Reader Agent - 简化版 coding agent。"""
 
-# 直接 `code-reader` 进 REPL(无子命令时进 chat)
-# 或者 `code-reader chat` 进 REPL
+# 直接 `taisang` 进 REPL(无子命令时进 chat)
+# 或者 `taisang chat` 进 REPL
 ```
 
 **Steps:**
 1. 改 cli/main.py(删 cmd_doc/cmd_index,加 chat REPL)
 2. 改 __main__.py(不变,仍调 cli)
 3. 改 test_cli.py(测 chat 命令能进)
-4. 手测:python -m code_reader chat --repo D:/Project/rpa-mcp,输入"读 README.md" 看响应
+4. 手测:python -m taisang chat --repo D:/Project/rpa-mcp,输入"读 README.md" 看响应
 5. Commit: `feat(cli): REPL 交互式 coding agent`
 
 ---
@@ -599,7 +599,7 @@ def cli():
 
 **依赖:** Task 6
 **Files:**
-- Modify: `src/code_reader/types.py`
+- Modify: `src/taisang/types.py`
 - Modify: 各测试文件
 - Run: `ruff check` / `black --check` / `pytest`
 
@@ -621,7 +621,7 @@ def cli():
 
 **手测清单:**
 1. `cd D:/Project/rpa-mcp`
-2. `python -m code_reader chat`
+2. `python -m taisang chat`
 3. 问:"这个项目是干啥的?"
 4. 问:"读 README.md 给我总结"
 5. 问:"grep 一下 'def main' 找入口"

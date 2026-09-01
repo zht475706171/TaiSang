@@ -12,23 +12,23 @@ from __future__ import annotations
 
 from click.testing import CliRunner
 
-from code_reader.cli.main import cli
+from taisang.cli.main import cli
 
 
 def test_cli_chat_with_mock_llm(monkeypatch, tmp_path):
     """mock LLM 下,启动后立即 /exit 应正常退出。"""
-    monkeypatch.setenv("CODE_READER_MOCK_LLM", "1")
-    monkeypatch.delenv("CODE_READER_LLM_API_KEY", raising=False)
+    monkeypatch.setenv("TAISANG_MOCK_LLM", "1")
+    monkeypatch.delenv("TAISANG_LLM_API_KEY", raising=False)
     runner = CliRunner()
     result = runner.invoke(cli, ["chat", "--repo", str(tmp_path)], input="/exit\n")
     assert result.exit_code == 0
-    assert "code-reader agent" in result.output
+    assert "taisang agent" in result.output
 
 
 def test_cli_chat_invalid_repo(monkeypatch, tmp_path):
     """repo 路径不存在应 sys.exit(1) + stderr 报错。"""
-    monkeypatch.setenv("CODE_READER_MOCK_LLM", "1")
-    monkeypatch.delenv("CODE_READER_LLM_API_KEY", raising=False)
+    monkeypatch.setenv("TAISANG_MOCK_LLM", "1")
+    monkeypatch.delenv("TAISANG_LLM_API_KEY", raising=False)
     runner = CliRunner()
     bad = tmp_path / "nonexistent"
     result = runner.invoke(cli, ["chat", "--repo", str(bad)], input="")
@@ -47,8 +47,8 @@ def test_cli_chat_help(monkeypatch):
 
 def test_cli_chat_mock_query_then_exit(monkeypatch, tmp_path):
     """mock LLM:输入 query 拿到 mock 回答,再 /exit 退出。"""
-    monkeypatch.setenv("CODE_READER_MOCK_LLM", "1")
-    monkeypatch.delenv("CODE_READER_LLM_API_KEY", raising=False)
+    monkeypatch.setenv("TAISANG_MOCK_LLM", "1")
+    monkeypatch.delenv("TAISANG_LLM_API_KEY", raising=False)
     runner = CliRunner()
     result = runner.invoke(cli, ["chat", "--repo", str(tmp_path)], input="你好\n/exit\n")
     assert result.exit_code == 0

@@ -290,13 +290,13 @@ extend-exclude = "tests/fixtures"
 ### Task 2/3/9 遗留 — ✅ 已修(2026-08-21,本地 repo 改造)
 
 1. **Fetcher `git clone` 过度设计** ✅ 已修
-   - 解法:砍 `fetch` + `_url_hash`,退化成 `current_commit(path)` 静态方法薄壳。用户先 `git clone` 到本地再 `code-reader index <path>`
+   - 解法:砍 `fetch` + `_url_hash`,退化成 `current_commit(path)` 静态方法薄壳。用户先 `git clone` 到本地再 `taisang index <path>`
 2. **PathManager 集中落盘不可读** ✅ 已修
-   - 解法:砍 `cache_dir`/`indices_dir`/`_repo_hash`,新增 `index_dir(source_root)` 等 classmethod,落 `<repo>/.code-reader/`。删 repo 时索引自动清,team 共享连 repo 一起 copy
+   - 解法:砍 `cache_dir`/`indices_dir`/`_repo_hash`,新增 `index_dir(source_root)` 等 classmethod,落 `<repo>/.taisang/`。删 repo 时索引自动清,team 共享连 repo 一起 copy
 3. **`Fetcher._current_commit` 未捕获 OSError** ✅ 已修
    - 解法:`current_commit` 加 `try/except (TimeoutExpired, OSError, FileNotFoundError)`,Windows git 未装时返回 "unknown" 不崩
-4. **IndexerService 扫源码未排除 `.code-reader/`** ✅ 已修
-   - 解法:`py_files` 过滤条件加 `".code-reader" not in f.parts`,防止索引产物被当源码解析
+4. **IndexerService 扫源码未排除 `.taisang/`** ✅ 已修
+   - 解法:`py_files` 过滤条件加 `".taisang" not in f.parts`,防止索引产物被当源码解析
 5. **`RepoIndex.repo_url` 字段名误导** ✅ 已修
    - 解法:改名 `source_root: str`,语义清晰
 

@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from code_reader.compaction.tool_result_budget import (
+from taisang.compaction.tool_result_budget import (
     ContentReplacementState,
     enforce_budget,
 )

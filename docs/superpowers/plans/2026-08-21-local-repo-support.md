@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把 `code-reader` 从"只支持远程 git clone"改造成"只支持本地 repo",索引产物落 `<repo>/.code-reader/`。
+**Goal:** 把 `taisang` 从"只支持远程 git clone"改造成"只支持本地 repo",索引产物落 `<repo>/.taisang/`。
 
-**Architecture:** `Fetcher` 退化成只有 `current_commit(path)` 静态方法的薄壳(砍 git clone);`PathManager` 砍 `cache_dir`/`indices_dir`/`_repo_hash` 等远程相关方法,新增 `index_dir(source_root)` 等 classmethod 落 `<repo>/.code-reader/`;`IndexerService.build/update` 参数从 `repo_url: str` 改成 `source_root: Path`;`RepoIndex.repo_url` 字段改名 `source_root`;CLI 加 `_normalize_path` helper + 路径校验。破坏性改动,不写迁移。
+**Architecture:** `Fetcher` 退化成只有 `current_commit(path)` 静态方法的薄壳(砍 git clone);`PathManager` 砍 `cache_dir`/`indices_dir`/`_repo_hash` 等远程相关方法,新增 `index_dir(source_root)` 等 classmethod 落 `<repo>/.taisang/`;`IndexerService.build/update` 参数从 `repo_url: str` 改成 `source_root: Path`;`RepoIndex.repo_url` 字段改名 `source_root`;CLI 加 `_normalize_path` helper + 路径校验。破坏性改动,不写迁移。
 
 **Tech Stack:** Python 3.11+ / pydantic 2 / click / sqlite3 / subprocess(git)
 
@@ -15,26 +15,26 @@
 ## File Structure
 
 **修改的源文件**:
-- `src/code_reader/types.py` — `RepoIndex.repo_url` 改名 `source_root`
-- `src/code_reader/indexer/fetcher.py` — 砍 `fetch` + `_url_hash`,`_current_commit` 改 `current_commit` 静态方法 + OSError 兜底
-- `src/code_reader/storage/paths.py` — 砍 `cache_dir`/`indices_dir`/`_repo_hash`/`index_db_path(repo_url)`/`repo_map_path(repo_url)`/`chroma_path(repo_url)`/`index_errors_path(repo_url)`,新增 `index_dir(source_root)` 等 classmethod
-- `src/code_reader/indexer/service.py` — `build(repo_url)` → `build(source_root)`,`update(repo_url)` → `update(source_root)`,扫源码排除 `.code-reader/`
-- `src/code_reader/cli/main.py` — 加 `_normalize_path`,`cmd_index`/`cmd_ask` 改路径参数 + 路径校验 + `.gitignore` 提示
+- `src/taisang/types.py` — `RepoIndex.repo_url` 改名 `source_root`
+- `src/taisang/indexer/fetcher.py` — 砍 `fetch` + `_url_hash`,`_current_commit` 改 `current_commit` 静态方法 + OSError 兜底
+- `src/taisang/storage/paths.py` — 砍 `cache_dir`/`indices_dir`/`_repo_hash`/`index_db_path(repo_url)`/`repo_map_path(repo_url)`/`chroma_path(repo_url)`/`index_errors_path(repo_url)`,新增 `index_dir(source_root)` 等 classmethod
+- `src/taisang/indexer/service.py` — `build(repo_url)` → `build(source_root)`,`update(repo_url)` → `update(source_root)`,扫源码排除 `.taisang/`
+- `src/taisang/cli/main.py` — 加 `_normalize_path`,`cmd_index`/`cmd_ask` 改路径参数 + 路径校验 + `.gitignore` 提示
 
 **修改的测试文件**:
 - `tests/unit/test_fetcher.py` — 重写 3 个测试(clone 改 current_commit)
 - `tests/unit/test_paths.py` — 重写 4 个测试(cache/indices 改 index_dir)
 - `tests/unit/test_types.py` — 改 `repo_url` → `source_root` 断言
 - `tests/unit/test_cli.py` — 改参数 + 新增 2 个路径校验测试 + 改断言
-- `tests/integration/test_indexer_service.py` — 改 `idx.repo_url` → `idx.source_root` + 新增排除 `.code-reader/` 测试
-- `tests/integration/test_end_to_end.py` — 改 `service.build(str(repo))` → `service.build(repo)`,断言路径落 `<repo>/.code-reader/`
+- `tests/integration/test_indexer_service.py` — 改 `idx.repo_url` → `idx.source_root` + 新增排除 `.taisang/` 测试
+- `tests/integration/test_end_to_end.py` — 改 `service.build(str(repo))` → `service.build(repo)`,断言路径落 `<repo>/.taisang/`
 
 ---
 
 ## Task 1: 改 `RepoIndex.repo_url` → `source_root`
 
 **Files:**
-- Modify: `src/code_reader/types.py:37-44`
+- Modify: `src/taisang/types.py:37-44`
 - Test: `tests/unit/test_types.py`
 
 - [ ] **Step 1: 看 `test_types.py` 现有断言**
@@ -44,7 +44,7 @@ Expected: PASS(当前全绿)
 
 - [ ] **Step 2: 改 `types.py` 的 `RepoIndex` 字段名**
 
-把 `src/code_reader/types.py:40` 的 `repo_url: str` 改成 `source_root: str`:
+把 `src/taisang/types.py:40` 的 `repo_url: str` 改成 `source_root: str`:
 
 ```python
 class RepoIndex(BaseModel):
@@ -73,10 +73,10 @@ Expected: FAIL(预期 `IndexerService` / `CLI` / 集成测试硬编码 `repo_url
 
 ---
 
-## Task 2: 重写 `PathManager` 落 `<repo>/.code-reader/`
+## Task 2: 重写 `PathManager` 落 `<repo>/.taisang/`
 
 **Files:**
-- Modify: `src/code_reader/storage/paths.py` (整体重写)
+- Modify: `src/taisang/storage/paths.py` (整体重写)
 - Test: `tests/unit/test_paths.py` (整体重写)
 
 - [ ] **Step 1: 重写 `test_paths.py`(先写新测试)**
@@ -86,13 +86,13 @@ Expected: FAIL(预期 `IndexerService` / `CLI` / 集成测试硬编码 `repo_url
 ```python
 """测试路径管理。
 
-本地 repo 索引产物落 <source_root>/.code-reader/。
-~/.code-reader/ 只剩 settings.json。
+本地 repo 索引产物落 <source_root>/.taisang/。
+~/.taisang/ 只剩 settings.json。
 """
 
 from pathlib import Path
 
-from code_reader.storage.paths import PathManager
+from taisang.storage.paths import PathManager
 
 
 def _isolate_home(tmp_path, monkeypatch):
@@ -104,7 +104,7 @@ def _isolate_home(tmp_path, monkeypatch):
 def test_root_default(tmp_path, monkeypatch):
     _isolate_home(tmp_path, monkeypatch)
     pm = PathManager()
-    assert pm.root == tmp_path / ".code-reader"
+    assert pm.root == tmp_path / ".taisang"
 
 
 def test_settings_path(tmp_path, monkeypatch):
@@ -113,26 +113,26 @@ def test_settings_path(tmp_path, monkeypatch):
     assert pm.settings_path == pm.root / "settings.json"
 
 
-def test_index_dir_creates_code_reader_subdir(tmp_path):
-    """index_dir 返回 <source_root>/.code-reader/ 并自动创建。"""
+def test_index_dir_creates_taisang_subdir(tmp_path):
+    """index_dir 返回 <source_root>/.taisang/ 并自动创建。"""
     d = PathManager.index_dir(tmp_path)
-    assert d == tmp_path / ".code-reader"
+    assert d == tmp_path / ".taisang"
     assert d.exists() and d.is_dir()
 
 
-def test_index_db_path_under_code_reader(tmp_path):
+def test_index_db_path_under_taisang(tmp_path):
     p = PathManager.index_db_path(tmp_path)
-    assert p == tmp_path / ".code-reader" / "ast.db"
+    assert p == tmp_path / ".taisang" / "ast.db"
 
 
-def test_repo_map_path_under_code_reader(tmp_path):
+def test_repo_map_path_under_taisang(tmp_path):
     p = PathManager.repo_map_path(tmp_path)
-    assert p == tmp_path / ".code-reader" / "repo_map.json"
+    assert p == tmp_path / ".taisang" / "repo_map.json"
 
 
 def test_chroma_and_errors_paths(tmp_path):
-    assert PathManager.chroma_path(tmp_path) == tmp_path / ".code-reader" / "chroma"
-    assert PathManager.index_errors_path(tmp_path) == tmp_path / ".code-reader" / "index_errors.json"
+    assert PathManager.chroma_path(tmp_path) == tmp_path / ".taisang" / "chroma"
+    assert PathManager.index_errors_path(tmp_path) == tmp_path / ".taisang" / "index_errors.json"
 ```
 
 - [ ] **Step 2: 跑新测试看它失败**
@@ -145,10 +145,10 @@ Expected: FAIL(`PathManager` 还有 `cache_dir`/`indices_dir`,新测试调的 `i
 整个文件替换为:
 
 ```python
-"""路径管理。本地 repo 索引产物落 <repo>/.code-reader/。
+"""路径管理。本地 repo 索引产物落 <repo>/.taisang/。
 
-~/.code-reader/ 只保留 settings.json(LLM 配置)。
-本地 repo 的索引产物(ast.db / repo_map.json 等)落到 <source_root>/.code-reader/。
+~/.taisang/ 只保留 settings.json(LLM 配置)。
+本地 repo 的索引产物(ast.db / repo_map.json 等)落到 <source_root>/.taisang/。
 """
 
 from __future__ import annotations
@@ -159,13 +159,13 @@ from pathlib import Path
 class PathManager:
     """统一管理所有落盘路径。
 
-    本地 repo 索引产物落 <source_root>/.code-reader/。
-    ~/.code-reader/ 只保留 settings.json。
+    本地 repo 索引产物落 <source_root>/.taisang/。
+    ~/.taisang/ 只保留 settings.json。
     """
 
     def __init__(self, root: Path | None = None) -> None:
         if root is None:
-            root = Path.home() / ".code-reader"
+            root = Path.home() / ".taisang"
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
 
@@ -176,8 +176,8 @@ class PathManager:
 
     @staticmethod
     def index_dir(source_root: Path) -> Path:
-        """单个 repo 的索引产物目录:<source_root>/.code-reader/"""
-        d = source_root / ".code-reader"
+        """单个 repo 的索引产物目录:<source_root>/.taisang/"""
+        d = source_root / ".taisang"
         d.mkdir(parents=True, exist_ok=True)
         return d
 
@@ -212,7 +212,7 @@ Expected: PASS(7 个测试全绿)
 ## Task 3: 重写 `Fetcher` 砍 git clone
 
 **Files:**
-- Modify: `src/code_reader/indexer/fetcher.py` (整体重写)
+- Modify: `src/taisang/indexer/fetcher.py` (整体重写)
 - Test: `tests/unit/test_fetcher.py` (整体重写)
 
 - [ ] **Step 1: 重写 `test_fetcher.py`**
@@ -226,7 +226,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from code_reader.indexer.fetcher import Fetcher
+from taisang.indexer.fetcher import Fetcher
 
 
 def _make_local_git_repo(tmp_path: Path) -> Path:
@@ -280,7 +280,7 @@ def test_current_commit_returns_unknown_when_git_not_installed(tmp_path):
         raise FileNotFoundError("git not found")
 
     # monkeypatch subprocess.run 在 fetcher 模块里的引用
-    import code_reader.indexer.fetcher as fetcher_mod
+    import taisang.indexer.fetcher as fetcher_mod
 
     saved = fetcher_mod.subprocess.run
     fetcher_mod.subprocess.run = fake_run
@@ -302,7 +302,7 @@ Expected: FAIL(`Fetcher.fetch` 还在,`Fetcher()` 还需要 `cache_dir` 参数,�
 ```python
 """本地 repo 探针:取 commit hash。
 
-v1 不做远程 git clone。用户先 `git clone` 到本地,再 `code-reader index <path>`。
+v1 不做远程 git clone。用户先 `git clone` 到本地,再 `taisang index <path>`。
 """
 
 from __future__ import annotations
@@ -355,11 +355,11 @@ Expected: PASS(3 个测试全绿)
 ## Task 4: 改 `IndexerService.build/update` 接 `source_root`
 
 **Files:**
-- Modify: `src/code_reader/indexer/service.py:21-140`
+- Modify: `src/taisang/indexer/service.py:21-140`
 
 - [ ] **Step 1: 改 `IndexerService.__init__`**
 
-把 `src/code_reader/indexer/service.py:24-26` 的:
+把 `src/taisang/indexer/service.py:24-26` 的:
 
 ```python
 def __init__(self, pm: PathManager) -> None:
@@ -377,22 +377,22 @@ def __init__(self, pm: PathManager) -> None:
 
 - [ ] **Step 2: 改 `build` 方法签名和实现**
 
-把 `src/code_reader/indexer/service.py:28-73` 的整个 `build` 方法替换为:
+把 `src/taisang/indexer/service.py:28-73` 的整个 `build` 方法替换为:
 
 ```python
 def build(self, source_root: Path) -> RepoIndex:
     """全量索引:扫 source_root 下所有 .py → parse → linker → 入库。
 
-    索引产物落 <source_root>/.code-reader/ast.db。
+    索引产物落 <source_root>/.taisang/ast.db。
     """
     commit = self.fetcher.current_commit(source_root)
     storage = IndexStorage(self.pm.index_db_path(source_root))
 
     py_files = sorted(source_root.rglob("*.py"))
-    # 排除 .git 和 .code-reader 目录(防止把索引产物当源码解析)
+    # 排除 .git 和 .taisang 目录(防止把索引产物当源码解析)
     py_files = [
         f for f in py_files
-        if ".git" not in f.parts and ".code-reader" not in f.parts
+        if ".git" not in f.parts and ".taisang" not in f.parts
     ]
 
     symbols: list[Symbol] = []
@@ -436,7 +436,7 @@ def build(self, source_root: Path) -> RepoIndex:
 
 - [ ] **Step 3: 改 `update` 方法签名和实现**
 
-把 `src/code_reader/indexer/service.py:75-136` 的整个 `update` 方法替换为:
+把 `src/taisang/indexer/service.py:75-136` 的整个 `update` 方法替换为:
 
 ```python
 def update(self, source_root: Path) -> RepoIndex:
@@ -454,7 +454,7 @@ def update(self, source_root: Path) -> RepoIndex:
     py_files = sorted(source_root.rglob("*.py"))
     py_files = [
         f for f in py_files
-        if ".git" not in f.parts and ".code-reader" not in f.parts
+        if ".git" not in f.parts and ".taisang" not in f.parts
     ]
     new_fps: dict[str, str] = {}
     for f in py_files:
@@ -507,7 +507,7 @@ def update(self, source_root: Path) -> RepoIndex:
 
 ---
 
-## Task 5: 改 `test_indexer_service.py` + 新增排除 `.code-reader/` 测试
+## Task 5: 改 `test_indexer_service.py` + 新增排除 `.taisang/` 测试
 
 **Files:**
 - Modify: `tests/integration/test_indexer_service.py`
@@ -544,19 +544,19 @@ def test_index_builds_repoindex(tmp_path, monkeypatch):
 
 `test_index_records_errors_for_bad_files`(原 83-111 行):把 `service.build(str(repo))` 改 `service.build(repo)`,其余不变。
 
-- [ ] **Step 2: 新增"排除 `.code-reader/`"测试**
+- [ ] **Step 2: 新增"排除 `.taisang/`"测试**
 
 在文件末尾追加:
 
 ```python
-def test_index_excludes_code_reader_dir(tmp_path, monkeypatch):
-    """索引时应排除 .code-reader/ 目录,不解析里面的文件。"""
+def test_index_excludes_taisang_dir(tmp_path, monkeypatch):
+    """索引时应排除 .taisang/ 目录,不解析里面的文件。"""
     _isolate_home(tmp_path, monkeypatch)
     repo = tmp_path / "with-cr"
     repo.mkdir()
     (repo / "real.py").write_text("def foo():\n    pass\n", encoding="utf-8")
-    # 模拟索引产物已存在:在 .code-reader/ 里放个 .py 文件
-    cr_dir = repo / ".code-reader"
+    # 模拟索引产物已存在:在 .taisang/ 里放个 .py 文件
+    cr_dir = repo / ".taisang"
     cr_dir.mkdir()
     (cr_dir / "fake.py").write_text("def fake():\n    pass\n", encoding="utf-8")
 
@@ -565,15 +565,15 @@ def test_index_excludes_code_reader_dir(tmp_path, monkeypatch):
     idx = service.build(repo)
     # real.py 应被解析
     assert "real.py" in idx.files
-    # .code-reader/fake.py 不应被解析
-    assert ".code-reader/fake.py" not in idx.files
-    assert all(not f.startswith(".code-reader/") for f in idx.files)
+    # .taisang/fake.py 不应被解析
+    assert ".taisang/fake.py" not in idx.files
+    assert all(not f.startswith(".taisang/") for f in idx.files)
 ```
 
 - [ ] **Step 3: 跑 indexer service 测试**
 
 Run: `python -m pytest tests/integration/test_indexer_service.py -v 2>&1 | tail -20`
-Expected: PASS(5 个测试全绿:4 个改参数 + 1 个新增排除 .code-reader)
+Expected: PASS(5 个测试全绿:4 个改参数 + 1 个新增排除 .taisang)
 
 - [ ] **Step 4: 跑全量测试看剩余挂的**
 
@@ -587,11 +587,11 @@ Expected: `test_cli.py` 和 `test_end_to_end.py` 还挂(CLI 还没改),`test_pat
 ## Task 6: 改 CLI 接本地路径 + 路径校验
 
 **Files:**
-- Modify: `src/code_reader/cli/main.py`
+- Modify: `src/taisang/cli/main.py`
 - Modify: `tests/unit/test_cli.py`
 - Modify: `tests/integration/test_end_to_end.py`
 
-- [ ] **Step 1: 重写 `src/code_reader/cli/main.py`**
+- [ ] **Step 1: 重写 `src/taisang/cli/main.py`**
 
 整个文件替换为:
 
@@ -599,9 +599,9 @@ Expected: `test_cli.py` 和 `test_end_to_end.py` 还挂(CLI 还没改),`test_pat
 """Code Reader Agent CLI 入口。
 
 命令:
-- code-reader index <repo_path>  建索引(本地路径)
-- code-reader ask "<question>" --repo <path>  问问题
-- code-reader --help  帮助
+- taisang index <repo_path>  建索引(本地路径)
+- taisang ask "<question>" --repo <path>  问问题
+- taisang --help  帮助
 
 环境变量:
 - CODE_READER_MOCK_LLM=1  使用 MockLLM(测试用,返回固定回答)
@@ -643,7 +643,7 @@ def _make_llm():
     if not cfg.api_key:
         click.echo(
             "错误:未配置 LLM API key。请设置 CODE_READER_LLM_API_KEY 环境变量,"
-            "或写 ~/.code-reader/settings.json。测试可用 CODE_READER_MOCK_LLM=1。",
+            "或写 ~/.taisang/settings.json。测试可用 CODE_READER_MOCK_LLM=1。",
             err=True,
         )
         sys.exit(2)
@@ -660,7 +660,7 @@ def cli() -> None:
 def cmd_index(repo_path: str) -> None:
     """建索引:扫本地 repo → 解析 AST → 三层摘要 → 入库。
 
-    索引产物落到 <repo_path>/.code-reader/。
+    索引产物落到 <repo_path>/.taisang/。
     """
     source_root = _normalize_path(repo_path)
     if not source_root.is_dir():
@@ -690,7 +690,7 @@ def cmd_index(repo_path: str) -> None:
     if summarizer.errors:
         click.echo(f"  摘要失败 {len(summarizer.errors)} 个(已跳过)")
     click.echo("✓ 索引完成")
-    click.echo(f"提示:索引产物已落到 {source_root}/.code-reader/。建议把 .code-reader/ 加到 .gitignore")
+    click.echo(f"提示:索引产物已落到 {source_root}/.taisang/。建议把 .taisang/ 加到 .gitignore")
 
 
 @cli.command("ask")
@@ -709,7 +709,7 @@ def cmd_ask(question: str, repo: str) -> None:
     pm = PathManager()
     repo_map_path = pm.repo_map_path(source_root)
     if not repo_map_path.exists():
-        click.echo(f"错误:repo 未索引过,请先 `code-reader index {source_root}`", err=True)
+        click.echo(f"错误:repo 未索引过,请先 `taisang index {source_root}`", err=True)
         sys.exit(1)
 
     repo_map = RepoMap.model_validate_json(repo_map_path.read_text(encoding="utf-8"))
@@ -750,7 +750,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from code_reader.cli.main import cli
+from taisang.cli.main import cli
 
 
 def _isolate_home(tmp_path, monkeypatch):
@@ -794,17 +794,17 @@ def test_cli_help():
 
 
 def test_cli_index_command(tmp_path, monkeypatch):
-    """index 命令应建索引并落盘到 <repo>/.code-reader/。"""
+    """index 命令应建索引并落盘到 <repo>/.taisang/。"""
     _isolate_home(tmp_path, monkeypatch)
     monkeypatch.setenv("CODE_READER_MOCK_LLM", "1")
     repo = _make_repo(tmp_path)
     runner = CliRunner()
     result = runner.invoke(cli, ["index", str(repo)])
     assert result.exit_code == 0, result.output
-    # 索引产物应落到 <repo>/.code-reader/
-    assert (repo / ".code-reader").exists()
-    assert (repo / ".code-reader" / "ast.db").exists()
-    assert (repo / ".code-reader" / "repo_map.json").exists()
+    # 索引产物应落到 <repo>/.taisang/
+    assert (repo / ".taisang").exists()
+    assert (repo / ".taisang" / "ast.db").exists()
+    assert (repo / ".taisang" / "repo_map.json").exists()
 
 
 def test_cli_ask_command_with_mock_llm(tmp_path, monkeypatch):
@@ -875,9 +875,9 @@ Expected: All checks passed / All done
 - [ ] **Step 8: 提交**
 
 ```bash
-git add src/code_reader/types.py src/code_reader/indexer/fetcher.py src/code_reader/storage/paths.py src/code_reader/indexer/service.py src/code_reader/cli/main.py tests/unit/test_fetcher.py tests/unit/test_paths.py tests/unit/test_types.py tests/unit/test_cli.py tests/integration/test_indexer_service.py tests/integration/test_end_to_end.py
+git add src/taisang/types.py src/taisang/indexer/fetcher.py src/taisang/storage/paths.py src/taisang/indexer/service.py src/taisang/cli/main.py tests/unit/test_fetcher.py tests/unit/test_paths.py tests/unit/test_types.py tests/unit/test_cli.py tests/integration/test_indexer_service.py tests/integration/test_end_to_end.py
 git commit -m "$(cat <<'EOF'
-refactor: drop remote clone, support local repo only + land index under <repo>/.code-reader/
+refactor: drop remote clone, support local repo only + land index under <repo>/.taisang/
 
 Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
 EOF
@@ -898,13 +898,13 @@ EOF
 ### Task 2/3/9 遗留 — ✅ 已修(2026-08-21,本地 repo 改造)
 
 1. **Fetcher `git clone` 过度设计** ✅ 已修
-   - 解法:砍 `fetch` + `_url_hash`,退化成 `current_commit(path)` 静态方法薄壳。用户先 `git clone` 到本地再 `code-reader index <path>`
+   - 解法:砍 `fetch` + `_url_hash`,退化成 `current_commit(path)` 静态方法薄壳。用户先 `git clone` 到本地再 `taisang index <path>`
 2. **PathManager 集中落盘不可读** ✅ 已修
-   - 解法:砍 `cache_dir`/`indices_dir`/`_repo_hash`,新增 `index_dir(source_root)` 等 classmethod,落 `<repo>/.code-reader/`。删 repo 时索引自动清,team 共享连 repo 一起 copy
+   - 解法:砍 `cache_dir`/`indices_dir`/`_repo_hash`,新增 `index_dir(source_root)` 等 classmethod,落 `<repo>/.taisang/`。删 repo 时索引自动清,team 共享连 repo 一起 copy
 3. **`Fetcher._current_commit` 未捕获 OSError** ✅ 已修
    - 解法:`current_commit` 加 `try/except (TimeoutExpired, OSError, FileNotFoundError)`,Windows git 未装时返回 "unknown" 不崩
-4. **IndexerService 扫源码未排除 `.code-reader/`** ✅ 已修
-   - 解法:`py_files` 过滤条件加 `".code-reader" not in f.parts`,防止索引产物被当源码解析
+4. **IndexerService 扫源码未排除 `.taisang/`** ✅ 已修
+   - 解法:`py_files` 过滤条件加 `".taisang" not in f.parts`,防止索引产物被当源码解析
 5. **`RepoIndex.repo_url` 字段名误导** ✅ 已修
    - 解法:改名 `source_root: str`,语义清晰
 ```
@@ -928,11 +928,11 @@ export CODE_READER_LLM_MODEL=deepseek-chat
 # 先 clone 到本地(v1 不支持远程 clone)
 git clone https://github.com/tiangolo/fastapi ~/repos/fastapi
 
-# 建索引(产物落 ~/repos/fastapi/.code-reader/)
-code-reader index ~/repos/fastapi
+# 建索引(产物落 ~/repos/fastapi/.taisang/)
+taisang index ~/repos/fastapi
 
 # 问问题
-code-reader ask "FastAPI 的路由是怎么注册的" --repo ~/repos/fastapi
+taisang ask "FastAPI 的路由是怎么注册的" --repo ~/repos/fastapi
 ```
 ```
 
@@ -968,8 +968,8 @@ python -m pytest tests/integration -v
 # 4. 真实闭环(可选,需要 LLM key)
 # 先 clone 一个小 repo 到本地
 git clone https://github.com/pallets/click ~/repos/click
-code-reader index ~/repos/click
-code-reader ask "CliRunner 是干啥的" --repo ~/repos/click
+taisang index ~/repos/click
+taisang ask "CliRunner 是干啥的" --repo ~/repos/click
 # 检查索引产物
-ls ~/repos/click/.code-reader/
+ls ~/repos/click/.taisang/
 ```

@@ -55,7 +55,7 @@ class ConfirmReq(BaseModel):
 
 def create_app(source_root: Path) -> FastAPI:
     """构造 FastAPI app。source_root 是 agent 工作目录。"""
-    app = FastAPI(title="code-reader web")
+    app = FastAPI(title="taisang web")
     registry = SessionRegistry(source_root)
     # app.state 挂载,方便测试 + lifespan 访问
     app.state.registry = registry
@@ -110,6 +110,15 @@ def create_app(source_root: Path) -> FastAPI:
         # 用 per-session lock 串行化(防止前端连点发多消息踩 AgentService)
         if sess.lock.locked():
             raise HTTPException(409, "session busy: previous run still active")
+
+        # 首条消息自动取 query 作标题(若 title 还为空)
+        titled = registry.set_title_from_query(session_id, req.query)
+        if titled:
+            # 通知前端更新顶栏 + 会话列表项
+            sess.broker.publish(
+                "session_title_updated",
+                {"id": session_id, "title": sess.title},
+            )
 
         # 后台线程跑 run。on_event 把事件 push 到 broker。
         def _run():

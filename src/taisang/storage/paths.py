@@ -1,7 +1,7 @@
-"""路径管理。本地 repo 上下文产物落 <repo>/.code-reader/。
+"""路径管理。本地 repo 上下文产物落 <repo>/.taisang/。
 
-~/.code-reader/ 只保留 settings.json(LLM 配置)。
-本地 repo 的会话/observation 等上下文管理产物落到 <source_root>/.code-reader/。
+~/.taisang/ 只保留 settings.json(LLM 配置)。
+本地 repo 的会话/observation 等上下文管理产物落到 <source_root>/.taisang/。
 """
 
 from __future__ import annotations
@@ -12,13 +12,13 @@ from pathlib import Path
 class PathManager:
     """统一管理所有落盘路径。
 
-    本地 repo 上下文产物落 <source_root>/.code-reader/。
-    ~/.code-reader/ 只保留 settings.json。
+    本地 repo 上下文产物落 <source_root>/.taisang/。
+    ~/.taisang/ 只保留 settings.json。
     """
 
     def __init__(self, root: Path | None = None) -> None:
         if root is None:
-            root = Path.home() / ".code-reader"
+            root = Path.home() / ".taisang"
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
 
@@ -29,8 +29,8 @@ class PathManager:
 
     @classmethod
     def session_memory_dir(cls, source_root: Path, session_id: str) -> Path:
-        """session memory 目录:.code-reader/sessions/<id>/session-memory/"""
-        d = source_root / ".code-reader" / "sessions" / session_id / "session-memory"
+        """session memory 目录:.taisang/sessions/<id>/session-memory/"""
+        d = source_root / ".taisang" / "sessions" / session_id / "session-memory"
         d.mkdir(parents=True, exist_ok=True)
         return d
 
@@ -41,7 +41,7 @@ class PathManager:
 
     @classmethod
     def observations_dir(cls, source_root: Path) -> Path:
-        """大 observation 持久化目录:.code-reader/observations/"""
-        d = source_root / ".code-reader" / "observations"
+        """大 observation 持久化目录:.taisang/observations/"""
+        d = source_root / ".taisang" / "observations"
         d.mkdir(parents=True, exist_ok=True)
         return d

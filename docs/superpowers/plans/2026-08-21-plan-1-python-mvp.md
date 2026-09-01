@@ -22,16 +22,16 @@
 ## 文件结构
 
 ```
-code-reader-agent/
+taisang-agent/
 ├── pyproject.toml                    # 项目元数据 + 依赖 + ruff/black 配置
-├── src/code_reader/
+├── src/taisang/
 │   ├── __init__.py
 │   ├── config.py                     # LLM endpoint 配置加载(settings.json/env)
 │   ├── llm_client.py                 # OpenAI 兼容 client + MockLLM
 │   ├── types.py                      # Symbol/RepoIndex/RepoMap/Answer 数据类型
 │   ├── storage/
 │   │   ├── __init__.py
-│   │   └── paths.py                  # ~/.code-reader/ 路径管理
+│   │   └── paths.py                  # ~/.taisang/ 路径管理
 │   ├── indexer/
 │   │   ├── __init__.py
 │   │   ├── fetcher.py                # git clone
@@ -95,7 +95,7 @@ code-reader-agent/
 
 **Files:**
 - Create: `pyproject.toml`
-- Create: `src/code_reader/__init__.py`
+- Create: `src/taisang/__init__.py`
 - Create: `tests/__init__.py`
 - Create: `tests/unit/__init__.py`
 - Create: `tests/integration/__init__.py`
@@ -109,7 +109,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "code-reader"
+name = "taisang"
 version = "0.1.0"
 description = "Code Reader Agent - 3 分钟让陌生代码库变成可问答、可追踪调用链"
 readme = "README.md"
@@ -139,7 +139,7 @@ dev = [
 ]
 
 [project.scripts]
-code-reader = "code_reader.cli.main:cli"
+taisang = "taisang.cli.main:cli"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -162,7 +162,7 @@ pythonpath = ["src"]
 
 - [ ] **Step 2: 写空 __init__.py 文件**
 
-`src/code_reader/__init__.py`:
+`src/taisang/__init__.py`:
 ```python
 """Code Reader Agent - 3 分钟让陌生代码库变成可问答、可追踪调用链。"""
 
@@ -203,13 +203,13 @@ Expected: 安装成功，无报错
 
 - [ ] **Step 5: 验证 CLI 入口可加载（即使还没实现）**
 
-Run: `code-reader --help`
-Expected: 报错 `ModuleNotFoundError: No module named 'code_reader.cli'`（预期，因为 cli 还没写，证明入口注册了但模块缺失）
+Run: `taisang --help`
+Expected: 报错 `ModuleNotFoundError: No module named 'taisang.cli'`（预期，因为 cli 还没写，证明入口注册了但模块缺失）
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add pyproject.toml src/code_reader/__init__.py tests/__init__.py tests/unit/__init__.py tests/integration/__init__.py .github/workflows/ci.yml
+git add pyproject.toml src/taisang/__init__.py tests/__init__.py tests/unit/__init__.py tests/integration/__init__.py .github/workflows/ci.yml
 git commit -m "feat: scaffold project structure with pyproject.toml and CI placeholder"
 ```
 
@@ -218,7 +218,7 @@ git commit -m "feat: scaffold project structure with pyproject.toml and CI place
 ## Task 2: 核心数据类型 types.py
 
 **Files:**
-- Create: `src/code_reader/types.py`
+- Create: `src/taisang/types.py`
 - Test: `tests/unit/test_types.py`
 
 - [ ] **Step 1: 写失败测试**
@@ -226,7 +226,7 @@ git commit -m "feat: scaffold project structure with pyproject.toml and CI place
 `tests/unit/test_types.py`:
 ```python
 """测试核心数据类型能正确构造和序列化。"""
-from code_reader.types import (
+from taisang.types import (
     Symbol, SymbolKind, RepoIndex, RepoMap, FileSummary,
     ModuleSummary, GlobalSummary, Snippet, Citation, Answer
 )
@@ -298,11 +298,11 @@ def test_citation_and_answer():
 - [ ] **Step 2: 运行测试验证失败**
 
 Run: `pytest tests/unit/test_types.py -v`
-Expected: FAIL with `ModuleNotFoundError: No module named 'code_reader.types'`
+Expected: FAIL with `ModuleNotFoundError: No module named 'taisang.types'`
 
 - [ ] **Step 3: 写 types.py**
 
-`src/code_reader/types.py`:
+`src/taisang/types.py`:
 ```python
 """核心数据类型。所有跨模块共享的数据结构集中在此,避免循环导入。"""
 from __future__ import annotations
@@ -405,7 +405,7 @@ Expected: PASS (5 个测试全绿)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/code_reader/types.py tests/unit/test_types.py
+git add src/taisang/types.py tests/unit/test_types.py
 git commit -m "feat: add core data types (Symbol/RepoIndex/RepoMap/Answer)"
 ```
 
@@ -414,23 +414,23 @@ git commit -m "feat: add core data types (Symbol/RepoIndex/RepoMap/Answer)"
 ## Task 3: 路径管理 storage/paths.py
 
 **Files:**
-- Create: `src/code_reader/storage/__init__.py`
-- Create: `src/code_reader/storage/paths.py`
+- Create: `src/taisang/storage/__init__.py`
+- Create: `src/taisang/storage/paths.py`
 - Test: `tests/unit/test_paths.py`
 
 - [ ] **Step 1: 写失败测试**
 
 `tests/unit/test_paths.py`:
 ```python
-"""测试路径管理(用 tmp_path 隔离,不污染真实 ~/.code-reader/)。"""
+"""测试路径管理(用 tmp_path 隔离,不污染真实 ~/.taisang/)。"""
 from pathlib import Path
-from code_reader.storage.paths import PathManager
+from taisang.storage.paths import PathManager
 
 
 def test_root_default(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     pm = PathManager()
-    assert pm.root == tmp_path / ".code-reader"
+    assert pm.root == tmp_path / ".taisang"
 
 
 def test_indices_dir(tmp_path, monkeypatch):
@@ -455,11 +455,11 @@ Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 3: 写 paths.py**
 
-`src/code_reader/storage/__init__.py`: 空文件
+`src/taisang/storage/__init__.py`: 空文件
 
-`src/code_reader/storage/paths.py`:
+`src/taisang/storage/paths.py`:
 ```python
-"""~/.code-reader/ 路径管理。所有落盘位置都从这里取,便于测试用 env 覆盖。"""
+"""~/.taisang/ 路径管理。所有落盘位置都从这里取,便于测试用 env 覆盖。"""
 from __future__ import annotations
 
 import hashlib
@@ -469,12 +469,12 @@ from pathlib import Path
 class PathManager:
     """统一管理所有落盘路径。
 
-    默认根目录是 ~/.code-reader/,测试时通过 monkeypatch HOME 隔离。
+    默认根目录是 ~/.taisang/,测试时通过 monkeypatch HOME 隔离。
     """
 
     def __init__(self, root: Path | None = None) -> None:
         if root is None:
-            root = Path.home() / ".code-reader"
+            root = Path.home() / ".taisang"
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
 
@@ -515,8 +515,8 @@ Expected: PASS (3 个测试全绿)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/code_reader/storage/__init__.py src/code_reader/storage/paths.py tests/unit/test_paths.py
-git commit -m "feat: add PathManager for ~/.code-reader/ path management"
+git add src/taisang/storage/__init__.py src/taisang/storage/paths.py tests/unit/test_paths.py
+git commit -m "feat: add PathManager for ~/.taisang/ path management"
 ```
 
 ---
@@ -524,7 +524,7 @@ git commit -m "feat: add PathManager for ~/.code-reader/ path management"
 ## Task 4: LLM 配置加载 config.py
 
 **Files:**
-- Create: `src/code_reader/config.py`
+- Create: `src/taisang/config.py`
 - Test: `tests/unit/test_config.py`
 
 - [ ] **Step 1: 写失败测试**
@@ -534,7 +534,7 @@ git commit -m "feat: add PathManager for ~/.code-reader/ path management"
 """测试 LLM 配置加载(环境变量 / settings.json / 默认值)。"""
 import json
 from pathlib import Path
-from code_reader.config import LLMConfig, load_config
+from taisang.config import LLMConfig, load_config
 
 
 def test_config_from_env(monkeypatch):
@@ -549,7 +549,7 @@ def test_config_from_env(monkeypatch):
 
 def test_config_from_settings_file(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    settings = tmp_path / ".code-reader" / "settings.json"
+    settings = tmp_path / ".taisang" / "settings.json"
     settings.parent.mkdir(parents=True)
     settings.write_text(json.dumps({
         "llm": {
@@ -567,7 +567,7 @@ def test_config_from_settings_file(tmp_path, monkeypatch):
 
 def test_env_overrides_file(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    settings = tmp_path / ".code-reader" / "settings.json"
+    settings = tmp_path / ".taisang" / "settings.json"
     settings.parent.mkdir(parents=True)
     settings.write_text(json.dumps({
         "llm": {"base_url": "https://from-file", "api_key": "k", "model": "m"}
@@ -596,11 +596,11 @@ Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 3: 写 config.py**
 
-`src/code_reader/config.py`:
+`src/taisang/config.py`:
 ```python
 """LLM endpoint 配置加载。
 
-优先级: 环境变量 > ~/.code-reader/settings.json > 默认值。
+优先级: 环境变量 > ~/.taisang/settings.json > 默认值。
 支持两套独立配置: 主模型(Agent 循环) 和 摘要模型(便宜模型)。
 """
 from __future__ import annotations
@@ -623,7 +623,7 @@ class LLMConfig(BaseModel):
 
 
 def _settings_path() -> Path:
-    return Path.home() / ".code-reader" / "settings.json"
+    return Path.home() / ".taisang" / "settings.json"
 
 
 def _load_settings_file() -> dict:
@@ -656,7 +656,7 @@ Expected: PASS (4 个测试全绿)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/code_reader/config.py tests/unit/test_config.py
+git add src/taisang/config.py tests/unit/test_config.py
 git commit -m "feat: add LLMConfig with env/file/default priority"
 ```
 
@@ -665,7 +665,7 @@ git commit -m "feat: add LLMConfig with env/file/default priority"
 ## Task 5: LLM Client + MockLLM
 
 **Files:**
-- Create: `src/code_reader/llm_client.py`
+- Create: `src/taisang/llm_client.py`
 - Test: `tests/unit/test_llm_client.py`
 
 - [ ] **Step 1: 写失败测试**
@@ -673,7 +673,7 @@ git commit -m "feat: add LLMConfig with env/file/default priority"
 `tests/unit/test_llm_client.py`:
 ```python
 """测试 LLM client + MockLLM(自研轻量 mock)。"""
-from code_reader.llm_client import LLMClient, MockLLM, LLMResponse
+from taisang.llm_client import LLMClient, MockLLM, LLMResponse
 
 
 def test_mock_llm_returns_prescribed_responses_in_order():
@@ -714,7 +714,7 @@ def test_mock_llm_tool_call_response():
 
 def test_real_llm_client_constructs_with_config():
     """只测 client 能用 config 构造,不真发请求。"""
-    from code_reader.config import LLMConfig
+    from taisang.config import LLMConfig
     cfg = LLMConfig(base_url="https://api.x.com", api_key="k", model="m")
     client = LLMClient(cfg)
     assert client.model == "m"
@@ -727,7 +727,7 @@ Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 3: 写 llm_client.py**
 
-`src/code_reader/llm_client.py`:
+`src/taisang/llm_client.py`:
 ```python
 """LLM client:OpenAI 兼容接口 + 自研 MockLLM。
 
@@ -810,7 +810,7 @@ Expected: PASS (5 个测试全绿)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/code_reader/llm_client.py tests/unit/test_llm_client.py
+git add src/taisang/llm_client.py tests/unit/test_llm_client.py
 git commit -m "feat: add LLMClient (OpenAI-compatible) + MockLLM for testing"
 ```
 
@@ -819,8 +819,8 @@ git commit -m "feat: add LLMClient (OpenAI-compatible) + MockLLM for testing"
 ## Task 6: 文件指纹 fingerprint.py
 
 **Files:**
-- Create: `src/code_reader/indexer/__init__.py`
-- Create: `src/code_reader/indexer/fingerprint.py`
+- Create: `src/taisang/indexer/__init__.py`
+- Create: `src/taisang/indexer/fingerprint.py`
 - Test: `tests/unit/test_fingerprint.py`
 
 - [ ] **Step 1: 写失败测试**
@@ -829,7 +829,7 @@ git commit -m "feat: add LLMClient (OpenAI-compatible) + MockLLM for testing"
 ```python
 """测试文件指纹:同一文件 hash 稳定,不同文件 hash 不同,内容变 hash 变。"""
 from pathlib import Path
-from code_reader.indexer.fingerprint import file_hash, diff_files
+from taisang.indexer.fingerprint import file_hash, diff_files
 
 
 def test_file_hash_stable(tmp_path):
@@ -877,9 +877,9 @@ Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 3: 写 fingerprint.py**
 
-`src/code_reader/indexer/__init__.py`: 空文件
+`src/taisang/indexer/__init__.py`: 空文件
 
-`src/code_reader/indexer/fingerprint.py`:
+`src/taisang/indexer/fingerprint.py`:
 ```python
 """文件指纹:用 sha1 计算文件内容 hash,做增量索引基础。"""
 from __future__ import annotations
@@ -936,7 +936,7 @@ Expected: PASS (3 个测试全绿)
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/code_reader/indexer/__init__.py src/code_reader/indexer/fingerprint.py tests/unit/test_fingerprint.py
+git add src/taisang/indexer/__init__.py src/taisang/indexer/fingerprint.py tests/unit/test_fingerprint.py
 git commit -m "feat: add file fingerprint (sha1) and diff_files for incremental indexing"
 ```
 
@@ -945,7 +945,7 @@ git commit -m "feat: add file fingerprint (sha1) and diff_files for incremental 
 ## Task 7: Python AST 解析器 parser_python.py
 
 **Files:**
-- Create: `src/code_reader/indexer/parser_python.py`
+- Create: `src/taisang/indexer/parser_python.py`
 - Create: `tests/fixtures/python/sample_simple.py` (fixture)
 - Create: `tests/fixtures/python/sample_with_class.py` (fixture)
 - Create: `tests/fixtures/python/sample_with_syntax_error.py` (fixture)
@@ -1012,8 +1012,8 @@ def broken(
 ```python
 """测试 Python tree-sitter parser。"""
 from pathlib import Path
-from code_reader.indexer.parser_python import parse_file
-from code_reader.types import SymbolKind
+from taisang.indexer.parser_python import parse_file
+from taisang.types import SymbolKind
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "python"
 
@@ -1095,7 +1095,7 @@ Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 4: 写 parser_python.py**
 
-`src/code_reader/indexer/parser_python.py`:
+`src/taisang/indexer/parser_python.py`:
 ```python
 """Python tree-sitter parser。
 
@@ -1247,7 +1247,7 @@ Expected: PASS (9 个测试全绿)
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/code_reader/indexer/parser_python.py tests/fixtures/python/ tests/unit/test_parser_python.py
+git add src/taisang/indexer/parser_python.py tests/fixtures/python/ tests/unit/test_parser_python.py
 git commit -m "feat: add Python tree-sitter parser with fault-tolerant extraction"
 ```
 
@@ -1256,7 +1256,7 @@ git commit -m "feat: add Python tree-sitter parser with fault-tolerant extractio
 ## Task 8: 跨文件 linker linker.py
 
 **Files:**
-- Create: `src/code_reader/indexer/linker.py`
+- Create: `src/taisang/indexer/linker.py`
 - Test: `tests/unit/test_linker.py`
 
 - [ ] **Step 1: 写失败测试**
@@ -1264,8 +1264,8 @@ git commit -m "feat: add Python tree-sitter parser with fault-tolerant extractio
 `tests/unit/test_linker.py`:
 ```python
 """测试跨文件 linker:把多个文件的 Symbol 拼成全局调用图。"""
-from code_reader.indexer.linker import build_call_graph, resolve_call_chain
-from code_reader.types import Symbol, SymbolKind
+from taisang.indexer.linker import build_call_graph, resolve_call_chain
+from taisang.types import Symbol, SymbolKind
 
 
 def _sym(id_, kind, name, file, line, calls=None, imports=None):
@@ -1356,7 +1356,7 @@ Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 3: 写 linker.py**
 
-`src/code_reader/indexer/linker.py`:
+`src/taisang/indexer/linker.py`:
 ```python
 """跨文件 linker:把多文件 Symbol 拼成全局调用图。
 
@@ -1470,7 +1470,7 @@ Expected: PASS (6 个测试全绿)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/code_reader/indexer/linker.py tests/unit/test_linker.py
+git add src/taisang/indexer/linker.py tests/unit/test_linker.py
 git commit -m "feat: add cross-file linker with BFS call chain resolution"
 ```
 
@@ -1479,7 +1479,7 @@ git commit -m "feat: add cross-file linker with BFS call chain resolution"
 ## Task 9: SQLite 持久化 storage.py
 
 **Files:**
-- Create: `src/code_reader/indexer/storage.py`
+- Create: `src/taisang/indexer/storage.py`
 - Test: `tests/unit/test_storage.py`
 
 - [ ] **Step 1: 写失败测试**
@@ -1488,8 +1488,8 @@ git commit -m "feat: add cross-file linker with BFS call chain resolution"
 ```python
 """测试索引 SQLite 持久化。"""
 from pathlib import Path
-from code_reader.indexer.storage import IndexStorage
-from code_reader.types import Symbol, SymbolKind
+from taisang.indexer.storage import IndexStorage
+from taisang.types import Symbol, SymbolKind
 
 
 def _sym(id_, name, file="a.py", line=1):
@@ -1551,7 +1551,7 @@ Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 3: 写 storage.py**
 
-`src/code_reader/indexer/storage.py`:
+`src/taisang/indexer/storage.py`:
 ```python
 """索引 SQLite 持久化。
 
@@ -1667,7 +1667,7 @@ Expected: PASS (6 个测试全绿)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/code_reader/indexer/storage.py tests/unit/test_storage.py
+git add src/taisang/indexer/storage.py tests/unit/test_storage.py
 git commit -m "feat: add SQLite-based IndexStorage for symbols/fingerprints/errors"
 ```
 
@@ -1676,7 +1676,7 @@ git commit -m "feat: add SQLite-based IndexStorage for symbols/fingerprints/erro
 ## Task 10: Repo 抓取 fetcher.py
 
 **Files:**
-- Create: `src/code_reader/indexer/fetcher.py`
+- Create: `src/taisang/indexer/fetcher.py`
 - Test: `tests/unit/test_fetcher.py`
 
 - [ ] **Step 1: 写失败测试**
@@ -1686,7 +1686,7 @@ git commit -m "feat: add SQLite-based IndexStorage for symbols/fingerprints/erro
 """测试 repo 抓取。用本地 git init 造 fixture,不依赖网络。"""
 import subprocess
 from pathlib import Path
-from code_reader.indexer.fetcher import Fetcher
+from taisang.indexer.fetcher import Fetcher
 
 
 def _make_local_repo(tmp_path: Path) -> Path:
@@ -1743,7 +1743,7 @@ Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 3: 写 fetcher.py**
 
-`src/code_reader/indexer/fetcher.py`:
+`src/taisang/indexer/fetcher.py`:
 ```python
 """Repo 抓取:git clone 到本地 cache,返回本地路径和 commit hash。
 
@@ -1816,7 +1816,7 @@ Expected: PASS (3 个测试全绿)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/code_reader/indexer/fetcher.py tests/unit/test_fetcher.py
+git add src/taisang/indexer/fetcher.py tests/unit/test_fetcher.py
 git commit -m "feat: add Fetcher for git clone with cache and retry"
 ```
 
@@ -1825,7 +1825,7 @@ git commit -m "feat: add Fetcher for git clone with cache and retry"
 ## Task 11: 索引编排服务 indexer/service.py
 
 **Files:**
-- Create: `src/code_reader/indexer/service.py`
+- Create: `src/taisang/indexer/service.py`
 - Test: `tests/integration/test_indexer_service.py`
 
 > 这是 indexer 的编排入口,把 fetcher + parser + linker + storage 串起来。放到 integration 是因为它涉及多模块协作。
@@ -1837,8 +1837,8 @@ git commit -m "feat: add Fetcher for git clone with cache and retry"
 """测试 indexer service 端到端:本地 repo → RepoIndex。"""
 import subprocess
 from pathlib import Path
-from code_reader.indexer.service import IndexerService
-from code_reader.storage.paths import PathManager
+from taisang.indexer.service import IndexerService
+from taisang.storage.paths import PathManager
 
 
 def _make_repo(tmp_path: Path) -> Path:
@@ -1927,7 +1927,7 @@ Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 3: 写 service.py**
 
-`src/code_reader/indexer/service.py`:
+`src/taisang/indexer/service.py`:
 ```python
 """indexer 编排服务:fetcher → parser → linker → storage。
 
@@ -2048,7 +2048,7 @@ Expected: PASS (4 个测试全绿)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/code_reader/indexer/service.py tests/integration/test_indexer_service.py
+git add src/taisang/indexer/service.py tests/integration/test_indexer_service.py
 git commit -m "feat: add IndexerService orchestrator with build/update"
 ```
 
@@ -2057,9 +2057,9 @@ git commit -m "feat: add IndexerService orchestrator with build/update"
 ## Task 12: 分层摘要 summarizer
 
 **Files:**
-- Create: `src/code_reader/summarizer/__init__.py`
-- Create: `src/code_reader/summarizer/prompts.py`
-- Create: `src/code_reader/summarizer/service.py`
+- Create: `src/taisang/summarizer/__init__.py`
+- Create: `src/taisang/summarizer/prompts.py`
+- Create: `src/taisang/summarizer/service.py`
 - Test: `tests/unit/test_summarizer.py`
 
 - [ ] **Step 1: 写失败测试**
@@ -2068,10 +2068,10 @@ git commit -m "feat: add IndexerService orchestrator with build/update"
 ```python
 """测试分层摘要:用 MockLLM 避免真调 API。"""
 import pytest
-from code_reader.summarizer.service import SummarizerService
-from code_reader.summarizer.prompts import build_file_summary_prompt
-from code_reader.types import RepoIndex, Symbol, SymbolKind
-from code_reader.llm_client import MockLLM, LLMResponse
+from taisang.summarizer.service import SummarizerService
+from taisang.summarizer.prompts import build_file_summary_prompt
+from taisang.types import RepoIndex, Symbol, SymbolKind
+from taisang.llm_client import MockLLM, LLMResponse
 
 
 def _idx(symbols, files=None) -> RepoIndex:
@@ -2171,9 +2171,9 @@ Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 3: 写 prompts.py**
 
-`src/code_reader/summarizer/__init__.py`: 空文件
+`src/taisang/summarizer/__init__.py`: 空文件
 
-`src/code_reader/summarizer/prompts.py`:
+`src/taisang/summarizer/prompts.py`:
 ```python
 """摘要 prompt 模板。"""
 from __future__ import annotations
@@ -2243,7 +2243,7 @@ def build_global_summary_prompt(
 
 - [ ] **Step 4: 写 service.py**
 
-`src/code_reader/summarizer/service.py`:
+`src/taisang/summarizer/service.py`:
 ```python
 """分层摘要服务:文件级 → 模块级 → 全局级。
 
@@ -2375,7 +2375,7 @@ Expected: PASS (5 个测试全绿)
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/code_reader/summarizer/__init__.py src/code_reader/summarizer/prompts.py src/code_reader/summarizer/service.py tests/unit/test_summarizer.py
+git add src/taisang/summarizer/__init__.py src/taisang/summarizer/prompts.py src/taisang/summarizer/service.py tests/unit/test_summarizer.py
 git commit -m "feat: add 3-layer summarizer (file/module/global) with LLM failure fallback"
 ```
 
@@ -2384,11 +2384,11 @@ git commit -m "feat: add 3-layer summarizer (file/module/global) with LLM failur
 ## Task 13: 混合检索 retriever
 
 **Files:**
-- Create: `src/code_reader/retriever/__init__.py`
-- Create: `src/code_reader/retriever/vectorstore.py`
-- Create: `src/code_reader/retriever/bm25.py`
-- Create: `src/code_reader/retriever/hybrid.py`
-- Create: `src/code_reader/retriever/service.py`
+- Create: `src/taisang/retriever/__init__.py`
+- Create: `src/taisang/retriever/vectorstore.py`
+- Create: `src/taisang/retriever/bm25.py`
+- Create: `src/taisang/retriever/hybrid.py`
+- Create: `src/taisang/retriever/service.py`
 - Test: `tests/unit/test_retriever.py`
 
 > v1 用简单 embedding(OpenAI 兼容) + Chroma + BM25。如果 embedding API 不可用,fallback 到只用 BM25。
@@ -2399,10 +2399,10 @@ git commit -m "feat: add 3-layer summarizer (file/module/global) with LLM failur
 ```python
 """测试混合检索。用 MockLLM 做 embedding,fallback 纯 BM25。"""
 from pathlib import Path
-from code_reader.retriever.bm25 import BM25Index
-from code_reader.retriever.hybrid import hybrid_rank
-from code_reader.retriever.service import RetrieverService
-from code_reader.types import RepoMap, GlobalSummary, ModuleSummary, FileSummary, Snippet
+from taisang.retriever.bm25 import BM25Index
+from taisang.retriever.hybrid import hybrid_rank
+from taisang.retriever.service import RetrieverService
+from taisang.types import RepoMap, GlobalSummary, ModuleSummary, FileSummary, Snippet
 
 
 def test_bm25_basic_search():
@@ -2467,9 +2467,9 @@ Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 3: 写 bm25.py**
 
-`src/code_reader/retriever/__init__.py`: 空文件
+`src/taisang/retriever/__init__.py`: 空文件
 
-`src/code_reader/retriever/bm25.py`:
+`src/taisang/retriever/bm25.py`:
 ```python
 """BM25 索引:基于 rank_bm25 库,封装成 key-based 检索。"""
 from __future__ import annotations
@@ -2535,7 +2535,7 @@ class BM25Index:
 
 - [ ] **Step 4: 写 hybrid.py**
 
-`src/code_reader/retriever/hybrid.py`:
+`src/taisang/retriever/hybrid.py`:
 ```python
 """混合排序:融合向量检索和 BM25 的分数。"""
 from __future__ import annotations
@@ -2571,7 +2571,7 @@ def hybrid_rank(
 
 - [ ] **Step 5: 写 vectorstore.py**
 
-`src/code_reader/retriever/vectorstore.py`:
+`src/taisang/retriever/vectorstore.py`:
 ```python
 """Chroma 向量库封装。
 
@@ -2606,7 +2606,7 @@ class BM25OnlyStore:
 
 - [ ] **Step 6: 写 service.py**
 
-`src/code_reader/retriever/service.py`:
+`src/taisang/retriever/service.py`:
 ```python
 """检索服务:基于 RepoMap 建索引,提供 search_files。
 
@@ -2665,7 +2665,7 @@ Expected: PASS (5 个测试全绿)
 - [ ] **Step 8: Commit**
 
 ```bash
-git add src/code_reader/retriever/ tests/unit/test_retriever.py
+git add src/taisang/retriever/ tests/unit/test_retriever.py
 git commit -m "feat: add hybrid retriever (BM25 + vector interface, v1 BM25-only)"
 ```
 
@@ -2674,8 +2674,8 @@ git commit -m "feat: add hybrid retriever (BM25 + vector interface, v1 BM25-only
 ## Task 14: Agent 5 工具实现 agent_core/tools.py
 
 **Files:**
-- Create: `src/code_reader/agent_core/__init__.py`
-- Create: `src/code_reader/agent_core/tools.py`
+- Create: `src/taisang/agent_core/__init__.py`
+- Create: `src/taisang/agent_core/tools.py`
 - Test: `tests/unit/test_tools.py`
 
 - [ ] **Step 1: 写失败测试**
@@ -2684,12 +2684,12 @@ git commit -m "feat: add hybrid retriever (BM25 + vector interface, v1 BM25-only
 ```python
 """测试 Agent 5 工具。"""
 from pathlib import Path
-from code_reader.agent_core.tools import (
+from taisang.agent_core.tools import (
     ToolRegistry, ReadFileTool, GrepTool, GlobTool,
     TraceCallChainTool, LookupMapTool,
 )
-from code_reader.indexer.linker import CallGraphNode
-from code_reader.types import RepoMap, GlobalSummary, ModuleSummary, FileSummary
+from taisang.indexer.linker import CallGraphNode
+from taisang.types import RepoMap, GlobalSummary, ModuleSummary, FileSummary
 
 
 def test_read_file_tool(tmp_path):
@@ -2810,9 +2810,9 @@ Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 3: 写 tools.py**
 
-`src/code_reader/agent_core/__init__.py`: 空文件
+`src/taisang/agent_core/__init__.py`: 空文件
 
-`src/code_reader/agent_core/tools.py`:
+`src/taisang/agent_core/tools.py`:
 ```python
 """Agent 5 工具实现。
 
@@ -3091,7 +3091,7 @@ Expected: PASS (11 个测试全绿)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/code_reader/agent_core/__init__.py src/code_reader/agent_core/tools.py tests/unit/test_tools.py
+git add src/taisang/agent_core/__init__.py src/taisang/agent_core/tools.py tests/unit/test_tools.py
 git commit -m "feat: add 5 agent tools (read_file/grep/glob/trace_call_chain/lookup_map)"
 ```
 
@@ -3100,7 +3100,7 @@ git commit -m "feat: add 5 agent tools (read_file/grep/glob/trace_call_chain/loo
 ## Task 15: 上下文管理 agent_core/context.py
 
 **Files:**
-- Create: `src/code_reader/agent_core/context.py`
+- Create: `src/taisang/agent_core/context.py`
 - Test: `tests/unit/test_context.py`
 
 - [ ] **Step 1: 写失败测试**
@@ -3108,7 +3108,7 @@ git commit -m "feat: add 5 agent tools (read_file/grep/glob/trace_call_chain/loo
 `tests/unit/test_context.py`:
 ```python
 """测试上下文管理:token 估算 + compaction。"""
-from code_reader.agent_core.context import ContextManager
+from taisang.agent_core.context import ContextManager
 
 
 def test_estimate_tokens_approximate():
@@ -3175,7 +3175,7 @@ Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 3: 写 context.py**
 
-`src/code_reader/agent_core/context.py`:
+`src/taisang/agent_core/context.py`:
 ```python
 """Agent 上下文管理 + compaction。
 
@@ -3287,7 +3287,7 @@ Expected: PASS (6 个测试全绿)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/code_reader/agent_core/context.py tests/unit/test_context.py
+git add src/taisang/agent_core/context.py tests/unit/test_context.py
 git commit -m "feat: add ContextManager with token estimation and compaction"
 ```
 
@@ -3296,8 +3296,8 @@ git commit -m "feat: add ContextManager with token estimation and compaction"
 ## Task 16: Agent 循环 agent_core/service.py + prompts.py
 
 **Files:**
-- Create: `src/code_reader/agent_core/prompts.py`
-- Create: `src/code_reader/agent_core/service.py`
+- Create: `src/taisang/agent_core/prompts.py`
+- Create: `src/taisang/agent_core/service.py`
 - Test: `tests/unit/test_agent_core.py`
 
 - [ ] **Step 1: 写失败测试**
@@ -3306,12 +3306,12 @@ git commit -m "feat: add ContextManager with token estimation and compaction"
 ```python
 """测试 Agent 主循环。用 MockLLM 注入预设响应。"""
 from pathlib import Path
-from code_reader.agent_core.service import AgentService
-from code_reader.agent_core.tools import ToolRegistry
-from code_reader.agent_core.context import ContextManager
-from code_reader.indexer.linker import CallGraphNode
-from code_reader.llm_client import MockLLM, LLMResponse
-from code_reader.types import RepoMap, GlobalSummary, ModuleSummary, FileSummary, Answer
+from taisang.agent_core.service import AgentService
+from taisang.agent_core.tools import ToolRegistry
+from taisang.agent_core.context import ContextManager
+from taisang.indexer.linker import CallGraphNode
+from taisang.llm_client import MockLLM, LLMResponse
+from taisang.types import RepoMap, GlobalSummary, ModuleSummary, FileSummary, Answer
 
 
 def _make_empty_repo_map() -> RepoMap:
@@ -3397,7 +3397,7 @@ Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 3: 写 prompts.py**
 
-`src/code_reader/agent_core/prompts.py`:
+`src/taisang/agent_core/prompts.py`:
 ```python
 """Agent system prompt。"""
 from __future__ import annotations
@@ -3427,7 +3427,7 @@ SYSTEM_PROMPT = """你是 Code Reader Agent,专门帮用户读懂陌生代码库
 
 - [ ] **Step 4: 写 service.py**
 
-`src/code_reader/agent_core/service.py`:
+`src/taisang/agent_core/service.py`:
 ```python
 """Agent 主循环:plan → act → observe → reflect。"""
 from __future__ import annotations
@@ -3546,7 +3546,7 @@ Expected: PASS (5 个测试全绿)
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/code_reader/agent_core/prompts.py src/code_reader/agent_core/service.py tests/unit/test_agent_core.py
+git add src/taisang/agent_core/prompts.py src/taisang/agent_core/service.py tests/unit/test_agent_core.py
 git commit -m "feat: add AgentService with plan-act-observe-reflect loop"
 ```
 
@@ -3555,8 +3555,8 @@ git commit -m "feat: add AgentService with plan-act-observe-reflect loop"
 ## Task 17: CLI 入口 cli/main.py
 
 **Files:**
-- Create: `src/code_reader/cli/__init__.py`
-- Create: `src/code_reader/cli/main.py`
+- Create: `src/taisang/cli/__init__.py`
+- Create: `src/taisang/cli/main.py`
 - Test: `tests/unit/test_cli.py`
 
 - [ ] **Step 1: 写失败测试**
@@ -3567,7 +3567,7 @@ git commit -m "feat: add AgentService with plan-act-observe-reflect loop"
 import subprocess
 from pathlib import Path
 from click.testing import CliRunner
-from code_reader.cli.main import cli
+from taisang.cli.main import cli
 
 
 def _make_repo(tmp_path: Path) -> Path:
@@ -3596,7 +3596,7 @@ def test_cli_help():
 
 
 def test_cli_index_command(tmp_path, monkeypatch):
-    """index 命令应建索引并落盘到 ~/.code-reader/。"""
+    """index 命令应建索引并落盘到 ~/.taisang/。"""
     monkeypatch.setenv("HOME", str(tmp_path))
     # 用 MockLLM 替代真 LLM:通过环境变量切 mock 模式
     monkeypatch.setenv("CODE_READER_MOCK_LLM", "1")
@@ -3605,7 +3605,7 @@ def test_cli_index_command(tmp_path, monkeypatch):
     result = runner.invoke(cli, ["index", str(repo)])
     assert result.exit_code == 0, result.output
     # 索引产物应存在
-    assert (tmp_path / ".code-reader" / "indices").exists()
+    assert (tmp_path / ".taisang" / "indices").exists()
 
 
 def test_cli_ask_command_with_mock_llm(tmp_path, monkeypatch):
@@ -3629,16 +3629,16 @@ Expected: FAIL with `ModuleNotFoundError`
 
 - [ ] **Step 3: 写 cli/main.py**
 
-`src/code_reader/cli/__init__.py`: 空文件
+`src/taisang/cli/__init__.py`: 空文件
 
-`src/code_reader/cli/main.py`:
+`src/taisang/cli/main.py`:
 ```python
 """Code Reader Agent CLI 入口。
 
 命令:
-- code-reader index <repo_url>  建索引
-- code-reader ask "<question>" --repo <url>  问问题
-- code-reader --help  帮助
+- taisang index <repo_url>  建索引
+- taisang ask "<question>" --repo <url>  问问题
+- taisang --help  帮助
 
 环境变量:
 - CODE_READER_MOCK_LLM=1  使用 MockLLM(测试用,返回固定回答)
@@ -3669,7 +3669,7 @@ def _make_llm():
     if not cfg.api_key:
         click.echo(
             "错误:未配置 LLM API key。请设置 CODE_READER_LLM_API_KEY 环境变量,"
-            "或写 ~/.code-reader/settings.json。测试可用 CODE_READER_MOCK_LLM=1。",
+            "或写 ~/.taisang/settings.json。测试可用 CODE_READER_MOCK_LLM=1。",
             err=True,
         )
         sys.exit(2)
@@ -3724,7 +3724,7 @@ def cmd_ask(question: str, repo: str) -> None:
     pm = PathManager()
     repo_map_path = pm.repo_map_path(repo)
     if not repo_map_path.exists():
-        click.echo(f"错误:repo 未索引过,请先 `code-reader index {repo}`", err=True)
+        click.echo(f"错误:repo 未索引过,请先 `taisang index {repo}`", err=True)
         sys.exit(1)
 
     # 加载 repo_map 和索引
@@ -3768,7 +3768,7 @@ Expected: PASS (3 个测试全绿)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/code_reader/cli/__init__.py src/code_reader/cli/main.py tests/unit/test_cli.py
+git add src/taisang/cli/__init__.py src/taisang/cli/main.py tests/unit/test_cli.py
 git commit -m "feat: add CLI with index/ask commands (MockLLM for testing)"
 ```
 
@@ -3789,7 +3789,7 @@ git commit -m "feat: add CLI with index/ask commands (MockLLM for testing)"
 import subprocess
 from pathlib import Path
 from click.testing import CliRunner
-from code_reader.cli.main import cli
+from taisang.cli.main import cli
 
 
 def _make_realistic_repo(tmp_path: Path) -> Path:
@@ -3850,8 +3850,8 @@ def test_end_to_end_call_graph_built(tmp_path, monkeypatch):
     runner.invoke(cli, ["index", str(repo)])
 
     # 直接调 IndexerService 验证调用图
-    from code_reader.indexer.service import IndexerService
-    from code_reader.storage.paths import PathManager
+    from taisang.indexer.service import IndexerService
+    from taisang.storage.paths import PathManager
     pm = PathManager()
     service = IndexerService(pm)
     idx = service.update(str(repo))
@@ -3871,9 +3871,9 @@ def test_end_to_end_trace_call_chain_three_hops(tmp_path, monkeypatch):
     runner = CliRunner()
     runner.invoke(cli, ["index", str(repo)])
 
-    from code_reader.indexer.service import IndexerService
-    from code_reader.storage.paths import PathManager
-    from code_reader.agent_core.tools import TraceCallChainTool
+    from taisang.indexer.service import IndexerService
+    from taisang.storage.paths import PathManager
+    from taisang.agent_core.tools import TraceCallChainTool
     pm = PathManager()
     service = IndexerService(pm)
     idx = service.update(str(repo))
@@ -3940,10 +3940,10 @@ export CODE_READER_LLM_API_KEY=sk-xxx
 export CODE_READER_LLM_MODEL=deepseek-chat
 
 # 建索引
-code-reader index https://github.com/tiangolo/fastapi
+taisang index https://github.com/tiangolo/fastapi
 
 # 问问题
-code-reader ask "FastAPI 的路由是怎么注册的" --repo https://github.com/tiangolo/fastapi
+taisang ask "FastAPI 的路由是怎么注册的" --repo https://github.com/tiangolo/fastapi
 ```
 
 ## 跟 Claude Code / Cursor 的区别
@@ -4030,7 +4030,7 @@ git commit -m "docs: add minimal README and update progress after Plan 1 written
 - ✅ `SymbolKind` 枚举值(`FUNCTION`/`CLASS`/`METHOD`)在 Task 2 定义,Task 7/8 使用一致
 - ✅ `CallGraphNode` 在 Task 8 定义,Task 14/16 使用一致
 - ✅ `LLMResponse` 在 Task 5 定义,Task 12/16 使用一致
-- ✅ CLI 命令名 `code-reader` 全 plan 一致
+- ✅ CLI 命令名 `taisang` 全 plan 一致
 - ✅ `PathManager` 方法名(`indices_dir`/`cache_dir`/`repo_map_path`)在 Task 3 定义,Task 11/17 使用一致
 
 ### 已知风险(实现时注意)

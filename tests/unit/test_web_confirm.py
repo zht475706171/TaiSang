@@ -3,8 +3,8 @@
 import threading
 import time
 
-from code_reader.agent_core.events import CONFIRM_REQUEST
-from code_reader.web.confirm import WebConfirmer
+from taisang.agent_core.events import CONFIRM_REQUEST
+from taisang.web.confirm import WebConfirmer
 
 
 def test_web_confirmer_timeout_returns_false():

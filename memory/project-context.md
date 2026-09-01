@@ -9,7 +9,7 @@
 
 ## 项目元信息
 
-- **路径**：`D:/GoProject/Repo-Onboarding-Agent/`（目录名暂不改,内部代码/包名用 code-reader）
+- **路径**：`D:/GoProject/Repo-Onboarding-Agent/`（目录名暂不改,内部代码/包名用 taisang）
 - **License**：MIT
 - **技术栈**：Python（后端）+ FastAPI（Web 后端）+ 前端用 frontend-design skill 设计
 - **支持语言（v1）**：Python / JS / TS / Java / Go（5 门）
@@ -17,9 +17,9 @@
 - **首发渠道**：开发者社区引流（开源免费）
 - **目标用户**：开发者（开源社区引流来的）
 - **商业目标**：v1 上线 + 几个真实用户（不追营收）
-- **pip 包名**：`code-reader`
-- **CLI 命令**：`code-reader <subcommand>`
-- **配置目录**：`~/.code-reader/`
+- **pip 包名**：`taisang`
+- **CLI 命令**：`taisang <subcommand>`
+- **配置目录**：`~/.taisang/`
 
 ## 前传故事（面试叙事核心）
 
@@ -36,7 +36,7 @@
 **不绑死任何模型厂商**,支持用户自带任意 OpenAI 兼容 endpoint:
 - 配置 `base_url` + `api_key` + `model_name`,agent_core 用这个调
 - 兼容 OpenAI / DeepSeek / 通义千问 / Moonshot / 本地 Ollama / 自部署 vLLM 等
-- 配置在 `~/.code-reader/settings.json` 或环境变量 `CODE_READER_LLM_*`
+- 配置在 `~/.taisang/settings.json` 或环境变量 `CODE_READER_LLM_*`
 - 推荐组合:摘要用便宜模型(DeepSeek-V3),Agent 循环用强模型(Claude/GPT-4),可分别配置
 
 ## 6 个核心组件
@@ -87,12 +87,12 @@
 
 ## Plan 1 增量:本地 Repo 支持改造(2026-08-21)
 
-**起因**:泰哥提出强制远程 clone 反人类,索引产物集中落 `~/.code-reader/indices/<hash>/` 不可读。
+**起因**:泰哥提出强制远程 clone 反人类,索引产物集中落 `~/.taisang/indices/<hash>/` 不可读。
 
 **改造**:
 - `Fetcher` 退化成 `current_commit(path)` 静态方法薄壳,砍 git clone
-- `PathManager` 砍 `cache_dir`/`indices_dir`/`_repo_hash`,索引产物落 `<repo>/.code-reader/`
-- `IndexerService.build/update(source_root: Path)`,扫源码排除 `.code-reader/`,双层路径防御
+- `PathManager` 砍 `cache_dir`/`indices_dir`/`_repo_hash`,索引产物落 `<repo>/.taisang/`
+- `IndexerService.build/update(source_root: Path)`,扫源码排除 `.taisang/`,双层路径防御
 - `RepoIndex.repo_url` 改名 `source_root`
 - CLI 加 `_normalize_path` + 路径校验 + fail-fast `_make_llm()` + .gitignore 提示
 - 108 passed(从 103 → 108),ruff+black clean
@@ -102,11 +102,11 @@
 
 **当前 CLI 用法**:
 ```bash
-# 配置(~/.code-reader/settings.json 已配好 kimi-k2.6)
+# 配置(~/.taisang/settings.json 已配好 kimi-k2.6)
 # 先 clone 到本地(v1 不支持远程 clone)
-code-reader index <local_repo_path>
-code-reader ask "<问题>" --repo <local_repo_path>
-# 索引产物落 <local_repo_path>/.code-reader/
+taisang index <local_repo_path>
+taisang ask "<问题>" --repo <local_repo_path>
+# 索引产物落 <local_repo_path>/.taisang/
 ```
 
 **遗留技术债**(详见 lessons-learned):
@@ -118,7 +118,7 @@ code-reader ask "<问题>" --repo <local_repo_path>
 
 ## 下一步
 
-- **当前**:泰哥要真实 LLM 闭环测试(预计 `code-reader index D:/GoProject/wwBuy` + ask)
+- **当前**:泰哥要真实 LLM 闭环测试(预计 `taisang index D:/GoProject/wwBuy` + ask)
 - 测试通过后可选:启动 Plan 2(多语言扩展)、Plan 3(评测体系)、或处理 lessons-learned 高优技术债
 
 ## 相关文件

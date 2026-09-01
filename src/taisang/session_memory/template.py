@@ -1,4 +1,4 @@
-# src/code_reader/session_memory/template.py
+# src/taisang/session_memory/template.py
 """session memory 笔记 10 章节模板(改造自 Claude Code 原文,适配 coding agent 任务)。"""
 
 DEFAULT_TEMPLATE = """# Session Title

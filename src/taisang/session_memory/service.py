@@ -1,4 +1,4 @@
-# src/code_reader/session_memory/service.py
+# src/taisang/session_memory/service.py
 """SessionMemoryService:平时异步维护笔记,autocompact 触发时零 LLM 调用读笔记。
 
 3 道阈值门控(完全照搬 Claude Code 原文):

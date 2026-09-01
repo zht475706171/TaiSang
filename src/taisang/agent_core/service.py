@@ -134,7 +134,7 @@ class AgentService:
             confirmer=self.confirmer,
         )
         observations_dir = PathManager.observations_dir(self.source_root)
-        transcript_path = self.source_root / ".code-reader" / "sessions" / "current.jsonl"
+        transcript_path = self.source_root / ".taisang" / "sessions" / "current.jsonl"
 
         def _emit(evt: AgentEvent) -> None:
             if on_event is not None:

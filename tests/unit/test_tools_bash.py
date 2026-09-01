@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from code_reader.agent_core.tools import BashTool
+from taisang.agent_core.tools import BashTool
 
 _HAS_GIT = shutil.which("git") is not None
 

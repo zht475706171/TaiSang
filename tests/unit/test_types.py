@@ -3,7 +3,7 @@
 清理后只保留 Citation + Answer(其余索引时代类型已删)。
 """
 
-from code_reader.types import Answer, Citation
+from taisang.types import Answer, Citation
 
 
 def test_citation_and_answer():

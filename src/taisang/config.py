@@ -1,6 +1,6 @@
 """LLM endpoint 配置加载。
 
-优先级: 环境变量 > ~/.code-reader/settings.json > 默认值。
+优先级: 环境变量 > ~/.taisang/settings.json > 默认值。
 单一 LLM 配置(summarizer / outliner / agent 全用同一个模型)。
 """
 
@@ -22,7 +22,7 @@ class LLMConfig(BaseModel):
 
 
 def _settings_path() -> Path:
-    return Path.home() / ".code-reader" / "settings.json"
+    return Path.home() / ".taisang" / "settings.json"
 
 
 def _load_settings_file() -> dict:
@@ -35,9 +35,9 @@ def _load_settings_file() -> dict:
 def load_config() -> LLMConfig:
     """加载 LLM 配置。env 覆盖文件,文件覆盖默认值。"""
     file_cfg = _load_settings_file().get("llm", {})
-    base_url = os.environ.get("CODE_READER_LLM_BASE_URL", file_cfg.get("base_url"))
-    api_key = os.environ.get("CODE_READER_LLM_API_KEY", file_cfg.get("api_key"))
-    model = os.environ.get("CODE_READER_LLM_MODEL", file_cfg.get("model"))
+    base_url = os.environ.get("TAISANG_LLM_BASE_URL", file_cfg.get("base_url"))
+    api_key = os.environ.get("TAISANG_LLM_API_KEY", file_cfg.get("api_key"))
+    model = os.environ.get("TAISANG_LLM_MODEL", file_cfg.get("model"))
     config_data = {
         "base_url": base_url,
         "api_key": api_key,

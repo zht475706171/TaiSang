@@ -1,4 +1,4 @@
-# src/code_reader/session_memory/forked_agent.py
+# src/taisang/session_memory/forked_agent.py
 """分支 agent:只能 Edit memory_path,其他工具 deny。
 
 完全照搬 Claude Code 原文 createMemoryFileCanUseTool 的安全闸设计:

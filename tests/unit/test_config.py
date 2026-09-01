@@ -2,7 +2,7 @@
 
 import json
 
-from code_reader.config import load_config
+from taisang.config import load_config
 
 
 def _isolate_home(tmp_path, monkeypatch):
@@ -14,18 +14,18 @@ def _isolate_home(tmp_path, monkeypatch):
 def _clear_llm_env(monkeypatch):
     """清掉所有 LLM 相关 env, 让 settings.json / 默认值生效。"""
     for k in [
-        "CODE_READER_LLM_BASE_URL",
-        "CODE_READER_LLM_API_KEY",
-        "CODE_READER_LLM_MODEL",
+        "TAISANG_LLM_BASE_URL",
+        "TAISANG_LLM_API_KEY",
+        "TAISANG_LLM_MODEL",
     ]:
         monkeypatch.delenv(k, raising=False)
 
 
 def test_config_from_env(monkeypatch):
     _clear_llm_env(monkeypatch)
-    monkeypatch.setenv("CODE_READER_LLM_BASE_URL", "https://api.deepseek.com")
-    monkeypatch.setenv("CODE_READER_LLM_API_KEY", "sk-test")
-    monkeypatch.setenv("CODE_READER_LLM_MODEL", "deepseek-chat")
+    monkeypatch.setenv("TAISANG_LLM_BASE_URL", "https://api.deepseek.com")
+    monkeypatch.setenv("TAISANG_LLM_API_KEY", "sk-test")
+    monkeypatch.setenv("TAISANG_LLM_MODEL", "deepseek-chat")
     cfg = load_config()
     assert cfg.base_url == "https://api.deepseek.com"
     assert cfg.api_key == "sk-test"
@@ -35,7 +35,7 @@ def test_config_from_env(monkeypatch):
 def test_config_from_settings_file(tmp_path, monkeypatch):
     _isolate_home(tmp_path, monkeypatch)
     _clear_llm_env(monkeypatch)
-    settings = tmp_path / ".code-reader" / "settings.json"
+    settings = tmp_path / ".taisang" / "settings.json"
     settings.parent.mkdir(parents=True)
     settings.write_text(
         json.dumps(
@@ -57,12 +57,12 @@ def test_config_from_settings_file(tmp_path, monkeypatch):
 def test_env_overrides_file(tmp_path, monkeypatch):
     _isolate_home(tmp_path, monkeypatch)
     _clear_llm_env(monkeypatch)
-    settings = tmp_path / ".code-reader" / "settings.json"
+    settings = tmp_path / ".taisang" / "settings.json"
     settings.parent.mkdir(parents=True)
     settings.write_text(
         json.dumps({"llm": {"base_url": "https://from-file", "api_key": "k", "model": "m"}})
     )
-    monkeypatch.setenv("CODE_READER_LLM_MODEL", "from-env")
+    monkeypatch.setenv("TAISANG_LLM_MODEL", "from-env")
     cfg = load_config()
     assert cfg.model == "from-env"
     assert cfg.base_url == "https://from-file"
