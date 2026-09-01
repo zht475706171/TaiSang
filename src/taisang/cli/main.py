@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from pathlib import Path
@@ -43,6 +44,26 @@ from ..storage.paths import PathManager
 def _normalize_path(path: str) -> Path:
     """规范化路径:展开 ~ + resolve。"""
     return Path(os.path.expanduser(path)).resolve()
+
+
+def _setup_logging(level: str) -> None:
+    """配 root logger level + 格式。
+
+    level: 'debug' / 'info' / 'warning' / 'error'。
+    session_memory logger 用 'session_memory' 名,INFO 级别能看到
+    TRIGGER/STARTED/DONE/SKIPPED + forked agent 每轮 applied/denied 计数。
+    """
+    level_map = {
+        "debug": logging.DEBUG,
+        "info": logging.INFO,
+        "warning": logging.WARNING,
+        "error": logging.ERROR,
+    }
+    logging.basicConfig(
+        level=level_map.get(level, logging.WARNING),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
 
 
 def _make_llm():
@@ -156,8 +177,15 @@ def cli() -> None:
     multiple=True,
     help="允许 agent 访问的额外目录(可传多个)。--repo 自动加入允许列表。",
 )
-def chat(repo: str, allow_dirs: tuple[str, ...]) -> None:
+@click.option(
+    "--log-level",
+    type=click.Choice(["debug", "info", "warning", "error"], case_sensitive=False),
+    default="warning",
+    help="日志级别(默认 warning,看 session memory 用 info)",
+)
+def chat(repo: str, allow_dirs: tuple[str, ...], log_level: str) -> None:
     """进入交互式 coding agent。"""
+    _setup_logging(log_level.lower())
     source_root = _normalize_path(repo)
     if not source_root.is_dir():
         click.echo(f"错误:{source_root} 不是目录", err=True)
@@ -244,12 +272,26 @@ def chat(repo: str, allow_dirs: tuple[str, ...]) -> None:
     multiple=True,
     help="允许 agent 访问的额外目录(可传多个)。--repo 自动加入允许列表。",
 )
-def web(repo: str, port: int, host: str, no_browser: bool, allow_dirs: tuple[str, ...]) -> None:
+@click.option(
+    "--log-level",
+    type=click.Choice(["debug", "info", "warning", "error"], case_sensitive=False),
+    default="warning",
+    help="日志级别(默认 warning,看 session memory 用 info,排查问题用 debug)",
+)
+def web(
+    repo: str,
+    port: int,
+    host: str,
+    no_browser: bool,
+    allow_dirs: tuple[str, ...],
+    log_level: str,
+) -> None:
     """起本地 Web UI 服务(豆包风格),自动开浏览器。
 
     后端复用 AgentService 全部逻辑,前端单 HTML + SSE。
     浏览器访问 http://127.0.0.1:<port> 即可。
     """
+    _setup_logging(log_level.lower())
     source_root = _normalize_path(repo)
     if not source_root.is_dir():
         click.echo(f"错误:{source_root} 不是目录", err=True)
@@ -278,7 +320,7 @@ def web(repo: str, port: int, host: str, no_browser: bool, allow_dirs: tuple[str
 
         # 延迟开浏览器,等服务起来
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
-    uvicorn.run(app, host=host, port=port, log_level="warning")
+    uvicorn.run(app, host=host, port=port, log_level=log_level.lower())
 
 
 if __name__ == "__main__":
