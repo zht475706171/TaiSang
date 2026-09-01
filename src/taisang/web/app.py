@@ -10,6 +10,7 @@
 - POST /api/sessions/{id}/messages → 发消息 {query},后台 run,事件经 SSE 推
 - GET  /api/sessions/{id}/events   → SSE 流
 - POST /api/sessions/{id}/confirm/{token} → {approve: bool} 回应确认
+- POST /api/sessions/{id}/permission/{token} → {approve: bool} 回应权限请求
 
 run 跑在线程池(AsyncExitStack + run_in_threadpool),on_event 回调把事件
 push 到该会话 EventBroker,SSE 端点从 broker 订阅队列 get + yield。
@@ -170,6 +171,17 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
         ok = sess.confirmer.resolve(token, req.approve)
         if not ok:
             raise HTTPException(404, "confirm token not found or expired")
+        return {"resolved": True}
+
+    @app.post("/api/sessions/{session_id}/permission/{token}")
+    async def permission(session_id: str, token: str, req: ConfirmReq) -> dict:
+        """前端 POST 回应权限请求(approve/deny)。token 对应一次 permission_request 事件。"""
+        sess = registry.get_or_load(session_id)
+        if sess is None:
+            raise HTTPException(404, f"session not found: {session_id}")
+        ok = sess.permission.resolve(token, req.approve)
+        if not ok:
+            raise HTTPException(404, "permission token not found or expired")
         return {"resolved": True}
 
     return app

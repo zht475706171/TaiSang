@@ -22,6 +22,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..agent_core.permission import WebPermissionManager
 from ..agent_core.service import AgentService
 from ..config import load_config
 from ..llm_client import LLMClient, MockLLM
@@ -33,12 +34,13 @@ from .sse import EventBroker
 
 @dataclass
 class _Session:
-    """单个会话的运行时态:AgentService + 事件总线 + 确认器 + 并发锁。"""
+    """单个会话的运行时态:AgentService + 事件总线 + 确认器 + 权限器 + 并发锁。"""
 
     session_id: str
     agent: AgentService
     broker: EventBroker
     confirmer: WebConfirmer
+    permission: WebPermissionManager
     lock: threading.Lock = field(default_factory=threading.Lock)
     title: str = ""  # 空 → 首条消息发出时自动取 query 前 40 字
     created_at: float = field(default_factory=time.time)
@@ -64,10 +66,15 @@ class SessionRegistry:
         return LLMClient(cfg)
 
     def _build_session(self, session_id: str) -> _Session:
-        """构造一个 _Session(AgentService + broker + confirmer 串起来)。"""
+        """构造一个 _Session(AgentService + broker + confirmer + permission 串起来)。"""
         broker = EventBroker()
         # WebConfirmer 的 emit 回调:推到本会话 broker
         confirmer = WebConfirmer(emit=broker.publish)
+        # WebPermissionManager 同样 emit 到本会话 broker,前端弹权限卡片
+        permission = WebPermissionManager(
+            emit=broker.publish,
+            initial_dirs=[self.source_root] + self.allow_dirs,
+        )
         llm = self._make_llm()
         session_mem = SessionMemoryService(
             llm=llm,
@@ -79,9 +86,16 @@ class SessionRegistry:
             source_root=self.source_root,
             confirmer=confirmer,
             session_memory=session_mem,
+            permission=permission,
             allow_dirs=[self.source_root] + self.allow_dirs,
         )
-        return _Session(session_id=session_id, agent=agent, broker=broker, confirmer=confirmer)
+        return _Session(
+            session_id=session_id,
+            agent=agent,
+            broker=broker,
+            confirmer=confirmer,
+            permission=permission,
+        )
 
     def create(self, title: str = "") -> str:
         """新建会话,返回 session_id。落盘 sessions/<id>/ 目录。

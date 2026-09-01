@@ -13,8 +13,10 @@
 - Bash(command) — 执行 shell 命令(持久 shell,cd 持久化,危险命令黑名单)
 
 安全:
-- 文件工具对 path 做 allow_dirs 多目录校验,拒绝越界访问
+- 文件工具对 path 做 PermissionManager.check():首次访问新目录问用户批准,
+  批准后该目录(项目根)加入已批准集合,后续不再问。类似 Claude Code permission。
 - 文件工具接受绝对路径或相对 cwd 的路径(cwd 随 Bash cd 动态同步)
+- BashTool 的 cd 切到未批准目录时也先问用户;批准后后续文件工具跟过去不问
 - EditTool/WriteTool 改文件前调用 confirmer,默认 AutoDenyConfirmer(拒绝所有)
 - GrepTool 的 regex.search 有超时保护(Linux/Mac via signal.SIGALRM,Windows 跳过)
 - BashTool 用持久 shell(claude code 风格),cd 持久化,危险命令黑名单,输出截断保护
@@ -32,6 +34,7 @@ from pathlib import Path
 
 from ..storage.paths import PathManager
 from .confirm import AutoDenyConfirmer
+from .permission import AutoApprovePermissionManager, PermissionManager
 
 log = logging.getLogger(__name__)
 
@@ -53,26 +56,6 @@ MAX_LINE_LENGTH = 500
 def _rel(cwd: Path, path: Path) -> str:
     """返回相对 cwd 的 Unix 风格路径。消除重复的 relative_to + replace。"""
     return str(path.relative_to(cwd)).replace("\\", "/")
-
-
-def _is_allowed(target: Path, allow_dirs: list[Path]) -> bool:
-    """校验 target 解析后在任一允许目录内。防 path traversal,但支持多目录。
-
-    allow_dirs 是用户配置的允许访问顶层目录列表(含初始 cwd + --allow-dirs)。
-    target 必须落在其中一个内才放行。
-    """
-    try:
-        target_resolved = target.resolve()
-        for d in allow_dirs:
-            d_resolved = d.resolve()
-            try:
-                target_resolved.relative_to(d_resolved)
-                return True
-            except ValueError:
-                continue
-        return False
-    except (OSError, ValueError):
-        return False
 
 
 def _resolve_path(path: str, cwd: Path) -> Path:
@@ -119,9 +102,9 @@ class _BaseTool:
 class ReadFileTool(_BaseTool):
     name = "read_file"
 
-    def __init__(self, cwd: Path, allow_dirs: list[Path], max_bytes: int = 32_000) -> None:
+    def __init__(self, cwd: Path, permission: PermissionManager, max_bytes: int = 32_000) -> None:
         self.cwd = cwd
-        self.allow_dirs = allow_dirs
+        self.permission = permission
         self.max_bytes = max_bytes
 
     def schema(self) -> dict:
@@ -155,8 +138,8 @@ class ReadFileTool(_BaseTool):
     def run(self, args: dict) -> dict:
         path = args.get("path", "")
         full = _resolve_path(path, self.cwd)
-        if not _is_allowed(full, self.allow_dirs):
-            return {"content": "", "error": f"path outside allowed dirs: {path}"}
+        if not self.permission.check(full):
+            return {"content": "", "error": f"permission denied: {path}"}
         if not full.exists() or not full.is_file():
             return {"content": "", "error": f"file not found: {path}"}
         try:
@@ -197,9 +180,9 @@ class ReadFileTool(_BaseTool):
 class GrepTool(_BaseTool):
     name = "grep"
 
-    def __init__(self, cwd: Path, allow_dirs: list[Path], max_matches: int = 200) -> None:
+    def __init__(self, cwd: Path, permission: PermissionManager, max_matches: int = 200) -> None:
         self.cwd = cwd
-        self.allow_dirs = allow_dirs
+        self.permission = permission
         self.max_matches = max_matches
 
     def schema(self) -> dict:
@@ -234,14 +217,31 @@ class GrepTool(_BaseTool):
             if any(ch in scope for ch in "*?["):
                 parent = scope_full.parent
                 name = scope_full.name
+                # glob 模式:对 parent 目录做权限检查
+                if not self.permission.check(parent):
+                    return {
+                        "matches": [],
+                        "truncated": False,
+                        "error": f"permission denied: {scope}",
+                    }
                 files = list(parent.glob(name))
-            elif scope_full.is_file() and _is_allowed(scope_full, self.allow_dirs):
+            elif scope_full.is_file():
+                if not self.permission.check(scope_full):
+                    return {
+                        "matches": [],
+                        "truncated": False,
+                        "error": f"permission denied: {scope}",
+                    }
                 files = [scope_full]
             else:
                 files = []
         else:
-            if not _is_allowed(self.cwd, self.allow_dirs):
-                return {"matches": [], "truncated": False, "error": "cwd outside allowed dirs"}
+            if not self.permission.check(self.cwd):
+                return {
+                    "matches": [],
+                    "truncated": False,
+                    "error": "permission denied: cwd not approved",
+                }
             files = [f for f in self.cwd.rglob("*") if f.is_file() and ".git" not in f.parts]
 
         matches: list[dict] = []
@@ -271,9 +271,9 @@ class GrepTool(_BaseTool):
 class GlobTool(_BaseTool):
     name = "glob"
 
-    def __init__(self, cwd: Path, allow_dirs: list[Path]) -> None:
+    def __init__(self, cwd: Path, permission: PermissionManager) -> None:
         self.cwd = cwd
-        self.allow_dirs = allow_dirs
+        self.permission = permission
 
     def schema(self) -> dict:
         return {
@@ -303,8 +303,8 @@ class GlobTool(_BaseTool):
         else:
             root = self.cwd
             rel_base = self.cwd
-        if not _is_allowed(root, self.allow_dirs):
-            return {"matches": [], "truncated": False, "error": "scope outside allowed dirs"}
+        if not self.permission.check(root):
+            return {"matches": [], "truncated": False, "error": "permission denied"}
         matched: list[str] = []
         for f in root.rglob("*"):
             if ".git" in f.parts:
@@ -325,9 +325,9 @@ class GlobTool(_BaseTool):
 class EditTool(_BaseTool):
     name = "Edit"
 
-    def __init__(self, cwd: Path, allow_dirs: list[Path], confirmer) -> None:
+    def __init__(self, cwd: Path, permission: PermissionManager, confirmer) -> None:
         self.cwd = cwd
-        self.allow_dirs = allow_dirs
+        self.permission = permission
         self.confirmer = confirmer  # callable(file_path, old, new) -> bool
 
     def schema(self) -> dict:
@@ -351,8 +351,8 @@ class EditTool(_BaseTool):
     def run(self, args: dict) -> dict:
         path = args.get("file_path", "")
         full = _resolve_path(path, self.cwd)
-        if not _is_allowed(full, self.allow_dirs):
-            return {"ok": False, "error": "path outside allowed dirs"}
+        if not self.permission.check(full):
+            return {"ok": False, "error": "permission denied"}
         if not full.exists():
             return {"ok": False, "error": f"file not found: {path}"}
         old = args.get("old_string", "")
@@ -373,9 +373,9 @@ class EditTool(_BaseTool):
 class WriteTool(_BaseTool):
     name = "Write"
 
-    def __init__(self, cwd: Path, allow_dirs: list[Path], confirmer) -> None:
+    def __init__(self, cwd: Path, permission: PermissionManager, confirmer) -> None:
         self.cwd = cwd
-        self.allow_dirs = allow_dirs
+        self.permission = permission
         self.confirmer = confirmer
 
     def schema(self) -> dict:
@@ -398,8 +398,8 @@ class WriteTool(_BaseTool):
     def run(self, args: dict) -> dict:
         path = args.get("file_path", "")
         full = _resolve_path(path, self.cwd)
-        if not _is_allowed(full, self.allow_dirs):
-            return {"ok": False, "error": "path outside allowed dirs"}
+        if not self.permission.check(full):
+            return {"ok": False, "error": "permission denied"}
         content = args.get("content", "")
         # 用户确认
         if not self.confirmer(str(full), "", content):
@@ -448,23 +448,35 @@ class BashTool(_BaseTool):
     安全:
     - 危险命令黑名单(rm -rf / / mkfs / fork bomb / 强推 main 等)
     - cd 持久化:持久 shell 内 cd 改 cwd,后续命令沿用(类 Claude Code)
+    - cd 到新目录前问用户批准(PermissionManager.check)
     - 超时兜底(PipeShell 内部实现)
     - stdout+stderr 合并输出,内联上限 30000 字符;超长落盘到
       .taisang/observations/ 并返回 <persisted-output> 包装 + 2KB 预览
 
-    路径:不再限定 source_root。cd 可切到 allow_dirs 内任意目录。
-    allow_dirs 外的目录由调用方(PipeShell)不阻,这里靠黑名单 + 用户监督。
+    路径:不再限定 source_root。cd 可切到任意目录,首次切到新目录问用户;
+    批准后该目录(项目根)加入已批准集合,后续不再问。
     """
 
     name = "Bash"
 
-    def __init__(self, shell, observations_dir: Path, timeout: int = 30) -> None:
+    def __init__(
+        self,
+        shell,
+        observations_dir: Path,
+        permission: PermissionManager | None = None,
+        timeout: int = 30,
+    ) -> None:
         """
         shell: PersistentShell 实例(由 AgentService 持有,跨 Bash 调用复用)。
         observations_dir: 超长输出落盘目录。
+        permission: PermissionManager,cd 切新目录前问用户批准。None 时用
+            AutoApprovePermissionManager(测试场景,无脑批准)。
         """
         self.shell = shell
         self.observations_dir = observations_dir
+        self.permission = permission or AutoApprovePermissionManager(
+            initial_dirs=[shell.cwd()] if shell is not None else []
+        )
         self.timeout = timeout
 
     def schema(self) -> dict:
@@ -472,6 +484,7 @@ class BashTool(_BaseTool):
             "name": self.name,
             "description": (
                 "执行 shell 命令。用持久 shell,cd 改的 cwd 跨调用保留。"
+                "cd 切到新目录首次会问用户批准。"
                 "危险命令(rm -rf / / mkfs / 强推 main)会被拒。"
             ),
             "parameters": {
@@ -490,6 +503,21 @@ class BashTool(_BaseTool):
         # 危险命令黑名单检查
         if _is_dangerous(command):
             return {"ok": False, "error": f"dangerous command blocked: {command[:80]}"}
+        # cd 命令:先问用户权限,批准再交给 shell 执行
+        import re as _re
+
+        cd_match = _re.match(r"^\s*cd\s+(?P<path>[^\s;&|]+|\"[^\"]+\"|'[^']+')\s*$", command)
+        if cd_match:
+            raw_path = cd_match.group("path").strip("'\"")
+            target = Path(raw_path)
+            if not target.is_absolute():
+                target = self.shell.cwd() / target
+            try:
+                target_resolved = target.resolve()
+            except (OSError, ValueError) as e:
+                return {"ok": False, "error": f"cd: {e}"}
+            if not self.permission.check(target_resolved):
+                return {"ok": False, "error": f"permission denied: {raw_path}"}
         # 跑命令(持久 shell)
         try:
             result = self.shell.run(command, timeout=self.timeout)
@@ -544,6 +572,10 @@ class ToolRegistry:
     需要跟随。每次 call() 前从 shell.cwd() 同步到文件工具的 cwd 属性,保证文件
     工具解析相对路径时用 shell 当前 cwd。
 
+    permission: PermissionManager,首次访问新目录问用户批准。默认 None 时用
+    AutoApprovePermissionManager(测试用,无脑批准)。生产场景 CLI 传 CliPermissionManager,
+    Web 传 WebPermissionManager。
+
     confirmer 默认 None 时用 AutoDenyConfirmer(拒绝所有改动),防止忘了传
     confirmer 误改文件。测试时显式传 AutoApproveConfirmer / AutoDenyConfirmer。
     """
@@ -551,29 +583,33 @@ class ToolRegistry:
     def __init__(
         self,
         cwd: Path,
-        allow_dirs: list[Path],
         shell=None,
         confirmer=None,
+        permission: PermissionManager | None = None,
         bash_timeout: int = 30,
         observations_dir: Path | None = None,
     ) -> None:
         if confirmer is None:
             confirmer = AutoDenyConfirmer()
+        if permission is None:
+            permission = AutoApprovePermissionManager(initial_dirs=[cwd])
         if observations_dir is None:
             observations_dir = PathManager.observations_dir(cwd)
         self._shell = shell
-        self._allow_dirs = allow_dirs
+        self._permission = permission
         self._cwd = cwd
         self._bash_timeout = bash_timeout
-        # 文件工具:用 cwd + allow_dirs
-        self._read = ReadFileTool(cwd, allow_dirs)
-        self._grep = GrepTool(cwd, allow_dirs)
-        self._glob = GlobTool(cwd, allow_dirs)
-        self._edit = EditTool(cwd, allow_dirs, confirmer)
-        self._write = WriteTool(cwd, allow_dirs, confirmer)
+        # 文件工具:用 cwd + permission
+        self._read = ReadFileTool(cwd, permission)
+        self._grep = GrepTool(cwd, permission)
+        self._glob = GlobTool(cwd, permission)
+        self._edit = EditTool(cwd, permission, confirmer)
+        self._write = WriteTool(cwd, permission, confirmer)
         self._bash: BashTool | None = None
         if shell is not None:
-            self._bash = BashTool(shell, observations_dir, timeout=bash_timeout)
+            self._bash = BashTool(
+                shell, observations_dir, permission=permission, timeout=bash_timeout
+            )
         self._tools: dict[str, _BaseTool] = {
             ReadFileTool.name: self._read,
             GrepTool.name: self._grep,

@@ -32,6 +32,7 @@ from ..agent_core.events import (
     TOOL_RESULT,
     USAGE_REPORT,
 )
+from ..agent_core.permission import CliPermissionManager
 from ..agent_core.service import AgentService
 from ..config import load_config
 from ..llm_client import LLMClient, LLMResponse, MockLLM
@@ -176,6 +177,7 @@ def chat(repo: str, allow_dirs: tuple[str, ...]) -> None:
         source_root=source_root,
         confirmer=confirmer,
         session_memory=session_mem,
+        permission=CliPermissionManager(initial_dirs=allow_paths),
         allow_dirs=allow_paths,
     )
 
@@ -229,7 +231,7 @@ def chat(repo: str, allow_dirs: tuple[str, ...]) -> None:
 
 
 @cli.command()
-@click.option("--repo", default=".", help="工作目录(默认当前目录)")
+@click.option("--repo", default="~", help="工作目录(默认家目录 ~)")
 @click.option("--port", default=8765, help="HTTP 端口(默认 8765)")
 @click.option("--host", default="127.0.0.1", help="绑定地址(默认 127.0.0.1,仅本机)")
 @click.option(

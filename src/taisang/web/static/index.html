@@ -27,6 +27,7 @@
     --amber-soft: rgba(212, 165, 67, 0.15);
     --red: #c95d4a;
     --green: #7a9d6e;
+    --sky: #6b8fa8;
     --user-bubble: #2a3548;
     --user-bubble-border: #3a4862;
   }
@@ -455,6 +456,67 @@
   .confirm-card.answered button { opacity: 0.4; cursor: not-allowed; }
   .confirm-card.answered button:hover { background: transparent; color: inherit; }
 
+  /* 权限卡片:问用户是否允许 agent 访问某目录。色调用 sky(信息性,非破坏) */
+  .permission-card {
+    align-self: flex-start;
+    max-width: 82%;
+    margin: 0;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-left: 2px solid var(--sky);
+    border-radius: 4px;
+    padding: 14px 16px;
+    width: 100%;
+    max-width: 560px;
+  }
+  .permission-card .title {
+    color: var(--sky);
+    font-size: 13px;
+    font-family: "IBM Plex Mono", monospace;
+    margin-bottom: 8px;
+    font-weight: 500;
+  }
+  .permission-card .path {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    color: var(--text);
+    margin-bottom: 10px;
+    word-break: break-all;
+    padding: 6px 8px;
+    background: var(--bg);
+    border-radius: 3px;
+  }
+  .permission-card .actions { display: flex; gap: 8px; }
+  .permission-card button {
+    padding: 5px 16px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    font-size: 12px;
+    font-family: "IBM Plex Mono", monospace;
+    background: transparent;
+    color: var(--text-2);
+    transition: all 0.12s;
+  }
+  .permission-card button.approve {
+    color: var(--green);
+    border-color: var(--green);
+  }
+  .permission-card button.approve:hover {
+    background: var(--green);
+    color: var(--bg);
+  }
+  .permission-card button.deny {
+    color: var(--text-2);
+    border-color: var(--border);
+  }
+  .permission-card button.deny:hover {
+    background: var(--bg);
+    color: var(--text);
+  }
+  .permission-card.answered button { opacity: 0.4; cursor: not-allowed; }
+  .permission-card.answered button:hover { background: transparent; color: inherit; }
+
   .usage {
     font-family: "IBM Plex Mono", monospace;
     font-size: 11px;
@@ -686,6 +748,7 @@ function openEventStream(id) {
   eventSource.addEventListener('compacted', (e) => renderCompacted(JSON.parse(e.data)));
   eventSource.addEventListener('usage_report', (e) => renderUsage(JSON.parse(e.data)));
   eventSource.addEventListener('confirm_request', (e) => renderConfirm(JSON.parse(e.data)));
+  eventSource.addEventListener('permission_request', (e) => renderPermission(JSON.parse(e.data)));
   eventSource.addEventListener('run_error', (e) => renderRunError(JSON.parse(e.data)));
   eventSource.addEventListener('run_end', () => clearThinking());
   eventSource.addEventListener('session_title_updated', (e) => {
@@ -839,6 +902,35 @@ async function respondConfirm(token, approve, el) {
   el.classList.add('answered');
   el.querySelectorAll('button').forEach(b => b.disabled = true);
   await fetch(`/api/sessions/${currentSessionId}/confirm/${token}`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({approve})
+  });
+  el.querySelector('.title').textContent = approve ? '✓ allowed' : '✗ denied';
+}
+
+function renderPermission(data) {
+  clearThinking();
+  const box = document.getElementById('messages');
+  const el = document.createElement('div');
+  el.className = 'permission-card';
+  el.dataset.token = data.token;
+  el.innerHTML = `
+    <div class="title">▸ agent wants to access a directory</div>
+    <div class="path">${escapeHtml(data.path)}</div>
+    <div class="actions">
+      <button class="approve">allow</button>
+      <button class="deny">deny</button>
+    </div>`;
+  el.querySelector('.approve').addEventListener('click', () => respondPermission(data.token, true, el));
+  el.querySelector('.deny').addEventListener('click', () => respondPermission(data.token, false, el));
+  box.appendChild(el);
+  scrollToBottom();
+}
+
+async function respondPermission(token, approve, el) {
+  el.classList.add('answered');
+  el.querySelectorAll('button').forEach(b => b.disabled = true);
+  await fetch(`/api/sessions/${currentSessionId}/permission/${token}`, {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({approve})
   });

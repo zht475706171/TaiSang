@@ -34,6 +34,7 @@ from .events import (
     USAGE_REPORT,
     AgentEvent,
 )
+from .permission import AutoApprovePermissionManager, PermissionManager
 from .prompts import SYSTEM_PROMPT
 from .tools import ToolRegistry
 
@@ -74,6 +75,7 @@ class AgentService:
         max_steps: int = 50,
         token_budget: int = 32_000,
         debug: bool = False,
+        permission: PermissionManager | None = None,
         allow_dirs: list[Path] | None = None,
     ) -> None:
         self.llm = llm
@@ -86,8 +88,15 @@ class AgentService:
         self.max_steps = max_steps
         self.token_budget = token_budget
         self.debug = debug  # /debug 模式:emit DEBUG_REQUEST/DEBUG_RESPONSE/DEBUG_TOOL_RESULT
-        # 允许访问的目录列表:初始 cwd + 用户传入的 --allow-dirs。文件工具做 containment 校验用。
-        self.allow_dirs = allow_dirs if allow_dirs else [source_root]
+        # 权限管理:首次访问新目录问用户批准。默认 None 时用 AutoApprove
+        # (测试场景);CLI 传 CliPermissionManager,Web 传 WebPermissionManager。
+        # allow_dirs 仍保留:作为初始已批准目录列表传给 PermissionManager。
+        initial_approved = allow_dirs if allow_dirs else [source_root]
+        self.permission = (
+            permission if permission is not None else AutoApprovePermissionManager(initial_approved)
+        )
+        # 兼容旧代码读取 self.allow_dirs(已批准目录集合)
+        self.allow_dirs = initial_approved
         # 持久 shell(claude code 风格):跨 Bash 调用复用,cd 持久化。
         # shell 跟 AgentService 实例生命周期绑定:实例创建时起,reset 不重启,实例销毁时关。
         from .shell import PipeShell
@@ -139,9 +148,9 @@ class AgentService:
 
         registry = ToolRegistry(
             cwd=self.source_root,
-            allow_dirs=self.allow_dirs,
             shell=self.shell,
             confirmer=self.confirmer,
+            permission=self.permission,
         )
         observations_dir = PathManager.observations_dir(self.source_root)
         transcript_path = self.source_root / ".taisang" / "sessions" / "current.jsonl"
