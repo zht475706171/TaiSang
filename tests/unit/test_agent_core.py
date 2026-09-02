@@ -267,3 +267,20 @@ def test_agent_emits_usage_report_event(tmp_path):
     assert p["turn"]["total"] == 15
     assert p["session"]["total"] == 15
     assert p["cache"]["available"] is False
+
+
+def test_agent_service_on_append_propagates_to_ctx(tmp_path):
+    """AgentService(on_append=...) 构造后,ctx.append_user 触发 on_append 回调。"""
+    llm = MockLLM([LLMResponse(text="ok", tool_calls=[])])
+    collected: list[dict] = []
+    agent = AgentService(
+        llm=llm,
+        source_root=tmp_path,
+        confirmer=lambda file_path, old, new: True,
+        on_append=lambda r: collected.append(r),
+    )
+    # 构造时 append_system(SYSTEM_PROMPT) 也触发 on_append(正确:system prompt
+    # 也需落盘,resume 时才能恢复完整 ctx)。
+    agent.ctx.append_user("hello")
+    assert any(m == {"role": "user", "content": "hello"} for m in collected)
+    assert collected[0]["role"] == "system"  # system prompt 先落盘

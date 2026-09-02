@@ -77,6 +77,7 @@ class AgentService:
         debug: bool = False,
         permission: PermissionManager | None = None,
         allow_dirs: list[Path] | None = None,
+        on_append: "Callable[[dict], None] | None" = None,
     ) -> None:
         self.llm = llm
         self.source_root = source_root
@@ -104,7 +105,8 @@ class AgentService:
         self.shell = PipeShell(cwd=source_root)
         # ContextManager 提到实例属性:跨 run() 调用保留对话历史(多轮记忆)。
         # 每次 run() 只 append_user(query),不重建 ctx,REPL 多轮对话才能看到上一轮。
-        self.ctx = ContextManager(token_budget=self.token_budget)
+        # on_append 透传给 ContextManager:每条 append 触发回调(ConversationStore 落盘)。
+        self.ctx = ContextManager(token_budget=self.token_budget, on_append=on_append)
         self.ctx.append_system(SYSTEM_PROMPT)
         # session memory post-sampling 计数器:跨 run() 累计工具调用次数。
         self._tool_calls_since_last_extract = 0
@@ -124,7 +126,8 @@ class AgentService:
         对话历史,长期笔记保留以便下次对话继续利用)。compaction_state 一起重置,
         因为决策冻结表是针对当前 ctx 的 tool_call_id 的,ctx 换了旧决策作废。
         """
-        self.ctx = ContextManager(token_budget=self.token_budget)
+        on_append = self.ctx.on_append  # 保留原 on_append(reset 不丢持久化回调)
+        self.ctx = ContextManager(token_budget=self.token_budget, on_append=on_append)
         self.ctx.append_system(SYSTEM_PROMPT)
         self.compaction_state = ContentReplacementState()
         self._tool_calls_since_last_extract = 0
@@ -332,7 +335,7 @@ class AgentService:
                         f"portion.\n\nSummary:\n{summary}"
                     ),
                 }
-                self.ctx.replace_messages([boundary, summary_msg])
+                self.ctx.replace_messages([boundary, summary_msg], compaction_via="session_memory")
                 _emit(AgentEvent(type=COMPACTED, payload={"via": "session_memory"}))
                 return True
 
@@ -340,7 +343,7 @@ class AgentService:
         from ..compaction.autocompact import autocompact as do_autocompact
 
         new_msgs = do_autocompact(self.ctx.messages(), self.llm, transcript_path)
-        self.ctx.replace_messages(new_msgs)
+        self.ctx.replace_messages(new_msgs, compaction_via="llm")
         _emit(AgentEvent(type=COMPACTED, payload={"via": "llm"}))
         return True
 
