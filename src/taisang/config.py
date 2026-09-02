@@ -1,7 +1,7 @@
 """LLM endpoint 配置加载。
 
 优先级: 环境变量 > ~/.taisang/settings.json > 默认值。
-单一 LLM 配置(summarizer / outliner / agent 全用同一个模型)。
+单一 LLM 配置(summarizer / agent 全用同一个模型)。
 """
 
 from __future__ import annotations
