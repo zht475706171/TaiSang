@@ -56,36 +56,36 @@
     font-display: swap;
   }
 </style>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github-dark.min.css">
+<!-- 浅色代码高亮主题,匹配纸白底 -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/styles/github.min.css">
 <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.9.0/highlight.min.js"></script>
 <style>
   :root {
-    /* Inkwell palette: deep blue-black ink + warm cream + amber accent */
-    --bg: #16191f;
-    --bg-2: #1d2128;
-    --bg-3: #262b34;
-    --bg-4: #2f3540;
-    --border: #2f3540;
-    --border-soft: #232830;
-    --text: #e6e0d0;
-    --text-2: #a8a395;
-    --text-3: #6b6857;
-    --amber: #d4a543;
-    --amber-dim: #8a6b2a;
-    --amber-soft: rgba(212, 165, 67, 0.15);
-    --red: #c95d4a;
-    --green: #7a9d6e;
-    --sky: #6b8fa8;
-    --user-bubble: #2a3548;
-    --user-bubble-border: #3a4862;
+    /* Inkwell-on-paper:暖纸白 + 墨黑 + 朱砂印泥 accent */
+    --paper: #f7f4ec;
+    --paper-2: #efebe0;
+    --paper-3: #e6e0cf;
+    --ink: #1c1b18;
+    --ink-2: #4a4842;
+    --ink-3: #8a877c;
+    --rule: #d9d3c4;
+    --rule-soft: #e3ddce;
+    --accent: #a8341a;
+    --accent-dim: #c25a3e;
+    --accent-soft: rgba(168, 52, 26, 0.10);
+    --ok: #5a7a52;
+    --info: #3a6a8a;
+    --user-bubble: #e8e3d2;
+    --user-bubble-border: #d4ceb8;
+    --code-bg: #efebe0;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; }
   body {
     font-family: "IBM Plex Sans", -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-    background: var(--bg);
-    color: var(--text);
+    background: var(--paper);
+    color: var(--ink);
     height: 100vh;
     display: flex;
     font-size: 14px;
@@ -93,48 +93,52 @@
   }
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: var(--bg-4); border-radius: 5px; }
-  ::-webkit-scrollbar-thumb:hover { background: var(--text-3); }
-  ::selection { background: var(--amber-soft); color: var(--text); }
+  ::-webkit-scrollbar-thumb { background: var(--paper-3); border-radius: 5px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--ink-3); }
+  ::selection { background: var(--accent-soft); color: var(--ink); }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
 
-  /* ===== 左侧会话列表(git log 风格) ===== */
+  /* ===== 左侧会话列表 ===== */
   #sidebar {
-    width: 280px;
-    background: var(--bg-2);
-    border-right: 1px solid var(--border);
+    width: 260px;
+    background: var(--paper-2);
+    border-right: 1px solid var(--rule);
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
   }
   #brand {
     padding: 22px 20px 16px;
-    border-bottom: 1px solid var(--border-soft);
+    border-bottom: 1px solid var(--rule-soft);
   }
   #brand .mark {
     font-family: "IBM Plex Mono", monospace;
     font-weight: 600;
     font-size: 18px;
-    color: var(--text);
+    color: var(--ink);
     letter-spacing: 0.02em;
   }
-  #brand .mark .diamond { color: var(--amber); margin-right: 8px; }
+  #brand .mark .diamond { color: var(--accent); margin-right: 8px; }
   #brand .tag {
     font-family: "IBM Plex Mono", monospace;
     font-size: 11px;
-    color: var(--text-3);
+    color: var(--ink-3);
     margin-top: 4px;
     letter-spacing: 0.05em;
     text-transform: uppercase;
   }
   #new-session-wrap {
     padding: 14px 16px 10px;
-    border-bottom: 1px solid var(--border-soft);
+    border-bottom: 1px solid var(--rule-soft);
   }
   #new-session-btn {
     width: 100%;
     background: transparent;
-    color: var(--text);
-    border: 1px dashed var(--border);
+    color: var(--ink);
+    border: 1px dashed var(--rule);
     padding: 9px 12px;
     border-radius: 4px;
     cursor: pointer;
@@ -144,11 +148,11 @@
     transition: all 0.15s;
   }
   #new-session-btn:hover {
-    border-color: var(--amber);
-    color: var(--amber);
-    background: var(--amber-soft);
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-soft);
   }
-  #new-session-btn .plus { color: var(--amber); margin-right: 8px; font-weight: 600; }
+  #new-session-btn .plus { color: var(--accent); margin-right: 8px; font-weight: 600; }
   #session-list {
     flex: 1;
     overflow-y: auto;
@@ -160,40 +164,50 @@
     display: flex;
     flex-direction: column;
     gap: 3px;
-    border-left: 3px solid transparent;
     transition: background 0.12s;
     position: relative;
   }
-  .session-item:hover { background: var(--bg-3); }
+  .session-item:hover { background: var(--paper-3); }
   .session-item.active {
-    background: var(--bg-3);
-    border-left-color: var(--amber);
+    background: var(--paper-3);
+  }
+  /* signature:active 会话用朱砂实心方块(印章隐喻),不用左 border bar */
+  .session-item.active::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 8px;
+    height: 8px;
+    background: var(--accent);
+    border-radius: 1px;
   }
   .session-item .subject {
     font-family: "IBM Plex Mono", monospace;
     font-size: 13px;
-    color: var(--text);
+    color: var(--ink);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     padding-right: 22px;
   }
-  .session-item.active .subject { color: var(--amber); }
+  .session-item.active .subject { color: var(--accent); font-weight: 500; }
   .session-item .meta {
     font-family: "IBM Plex Mono", monospace;
     font-size: 11px;
-    color: var(--text-3);
+    color: var(--ink-3);
     display: flex;
     gap: 8px;
     align-items: center;
   }
-  .session-item .meta .dot { color: var(--bg-4); }
+  .session-item .meta .dot { color: var(--rule); }
   .session-item .del {
     position: absolute;
     right: 12px;
     top: 50%;
     transform: translateY(-50%);
-    color: var(--text-3);
+    color: var(--ink-3);
     opacity: 0;
     font-size: 16px;
     padding: 2px 6px;
@@ -201,12 +215,12 @@
     transition: opacity 0.12s, color 0.12s;
   }
   .session-item:hover .del { opacity: 0.7; }
-  .session-item .del:hover { opacity: 1; color: var(--red); background: var(--bg-4); }
+  .session-item .del:hover { opacity: 1; color: var(--accent); background: var(--paper); }
   #session-list-empty {
     padding: 24px 20px;
     font-family: "IBM Plex Mono", monospace;
     font-size: 12px;
-    color: var(--text-3);
+    color: var(--ink-3);
     text-align: center;
   }
 
@@ -214,8 +228,8 @@
   #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   #topbar {
     padding: 14px 24px;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg);
+    border-bottom: 1px solid var(--rule);
+    background: var(--paper);
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -224,7 +238,7 @@
   #topbar .label {
     font-family: "IBM Plex Mono", monospace;
     font-size: 11px;
-    color: var(--text-3);
+    color: var(--ink-3);
     text-transform: uppercase;
     letter-spacing: 0.08em;
     margin-right: 10px;
@@ -233,18 +247,18 @@
     font-family: "IBM Plex Mono", monospace;
     font-size: 14px;
     font-weight: 500;
-    color: var(--text);
+    color: var(--ink);
     flex: 1;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  #current-title.empty { color: var(--text-3); font-style: italic; }
+  #current-title.empty { color: var(--ink-3); font-style: italic; }
   #topbar-actions { display: flex; gap: 6px; }
   #topbar-actions button {
     background: transparent;
-    color: var(--text-2);
-    border: 1px solid var(--border);
+    color: var(--ink-2);
+    border: 1px solid var(--rule);
     padding: 5px 12px;
     border-radius: 3px;
     cursor: pointer;
@@ -253,13 +267,13 @@
     transition: all 0.12s;
   }
   #topbar-actions button:hover {
-    color: var(--amber);
-    border-color: var(--amber-dim);
+    color: var(--accent);
+    border-color: var(--accent-dim);
   }
   #topbar-actions button.active {
-    color: var(--amber);
-    border-color: var(--amber);
-    background: var(--amber-soft);
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-soft);
   }
 
   #messages {
@@ -284,61 +298,62 @@
   .msg.user {
     align-self: flex-end;
     background: var(--user-bubble);
-    color: var(--text);
+    color: var(--ink);
     border: 1px solid var(--user-bubble-border);
     border-radius: 12px 12px 3px 12px;
   }
   .msg.ai {
     align-self: flex-start;
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-left: 2px solid var(--amber-dim);
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-left: 2px solid var(--accent);
     border-radius: 4px 12px 12px 4px;
     max-width: 82%;
+    color: var(--ink);
   }
   .msg.ai p { margin: 0.5em 0; }
   .msg.ai p:first-child { margin-top: 0; }
   .msg.ai p:last-child { margin-bottom: 0; }
   .msg.ai pre {
-    background: #0d1117;
+    background: var(--code-bg);
     padding: 12px 14px;
     border-radius: 4px;
     overflow-x: auto;
     margin: 0.6em 0;
     font-size: 13px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--rule);
   }
   .msg.ai code { font-family: "IBM Plex Mono", monospace; }
   .msg.ai :not(pre) > code {
-    background: var(--bg-3);
+    background: var(--paper-3);
     padding: 1px 6px;
     border-radius: 3px;
     font-size: 12.5px;
-    color: var(--amber);
+    color: var(--accent);
   }
   .msg.ai ul, .msg.ai ol { margin: 0.5em 0; padding-left: 1.6em; }
   .msg.ai li { margin: 0.2em 0; }
-  .msg.ai a { color: var(--amber); text-decoration: none; border-bottom: 1px dotted var(--amber-dim); }
+  .msg.ai a { color: var(--accent); text-decoration: none; border-bottom: 1px dotted var(--accent-dim); }
   .msg.ai a:hover { border-bottom-style: solid; }
   .msg.ai h1, .msg.ai h2, .msg.ai h3 {
     font-family: "IBM Plex Sans", sans-serif;
     margin: 0.8em 0 0.4em;
-    color: var(--text);
+    color: var(--ink);
   }
   .msg.ai h1 { font-size: 17px; }
   .msg.ai h2 { font-size: 15px; }
-  .msg.ai h3 { font-size: 14px; color: var(--text-2); }
+  .msg.ai h3 { font-size: 14px; color: var(--ink-2); }
 
-  /* 工具卡片(终端日志风) */
-  .tool-card, .thinking, .compacted, .confirm-card, .run-error, .debug-card {
+  /* 工具卡片 */
+  .tool-card, .thinking, .compacted, .confirm-card, .permission-card, .run-error, .debug-card {
     align-self: flex-start;
     max-width: 82%;
     margin: 0;
   }
   .tool-card {
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-left: 2px solid var(--amber-dim);
+    background: var(--paper-2);
+    border: 1px solid var(--rule);
+    border-left: 2px solid var(--accent);
     border-radius: 4px;
     overflow: hidden;
     font-size: 13px;
@@ -354,20 +369,20 @@
     user-select: none;
     transition: background 0.12s;
   }
-  .tool-card-header:hover { background: var(--bg-3); }
+  .tool-card-header:hover { background: var(--paper-3); }
   .tool-card-header .arrow {
-    color: var(--text-3);
+    color: var(--ink-3);
     transition: transform 0.15s;
     font-size: 10px;
   }
   .tool-card.expanded .arrow { transform: rotate(90deg); }
   .tool-card-header .name {
-    color: var(--amber);
+    color: var(--accent);
     font-family: "IBM Plex Mono", monospace;
     font-weight: 500;
   }
   .tool-card-header .args {
-    color: var(--text-3);
+    color: var(--ink-3);
     font-family: "IBM Plex Mono", monospace;
     font-size: 12px;
     white-space: nowrap;
@@ -377,27 +392,27 @@
   }
   .tool-card-header .bytes {
     margin-left: auto;
-    color: var(--text-3);
+    color: var(--ink-3);
     font-family: "IBM Plex Mono", monospace;
     font-size: 11px;
   }
   .tool-card-body {
     padding: 10px 12px;
-    border-top: 1px solid var(--border-soft);
+    border-top: 1px solid var(--rule-soft);
     display: none;
     white-space: pre-wrap;
     font-family: "IBM Plex Mono", monospace;
     font-size: 12px;
     max-height: 320px;
     overflow-y: auto;
-    color: var(--text-2);
+    color: var(--ink-2);
     line-height: 1.5;
   }
   .tool-card.expanded .tool-card-body { display: block; }
 
-  /* 思考动画(琥珀点) */
+  /* 思考动画(朱砂点) */
   .thinking {
-    color: var(--text-2);
+    color: var(--ink-2);
     font-size: 13px;
     font-family: "IBM Plex Mono", monospace;
     padding: 6px 2px;
@@ -405,14 +420,14 @@
     align-items: center;
     gap: 8px;
   }
-  .thinking .label { color: var(--text-3); }
+  .thinking .label { color: var(--ink-3); }
   .thinking .dots { display: inline-flex; gap: 4px; }
   .thinking .dots span {
     display: inline-block;
     width: 5px;
     height: 5px;
     border-radius: 50%;
-    background: var(--amber);
+    background: var(--accent);
     animation: pulse 1.4s infinite ease-in-out both;
   }
   .thinking .dots span:nth-child(1) { animation-delay: -0.32s; }
@@ -421,174 +436,129 @@
     0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
     40% { opacity: 1; transform: scale(1); }
   }
+  @media (prefers-reduced-motion: reduce) {
+    .thinking .dots span { animation: none; opacity: 0.6; }
+  }
 
   .compacted {
-    color: var(--amber);
+    color: var(--accent);
     font-size: 12px;
     font-family: "IBM Plex Mono", monospace;
     font-style: italic;
     padding: 4px 8px;
-    border-left: 2px solid var(--amber-dim);
-    background: var(--amber-soft);
+    border-left: 2px solid var(--accent);
+    background: var(--accent-soft);
     border-radius: 0 3px 3px 0;
   }
 
-  .confirm-card {
-    background: var(--bg-2);
-    border: 1px solid var(--amber-dim);
-    border-left: 2px solid var(--amber);
+  .confirm-card, .permission-card {
+    background: var(--paper-2);
     border-radius: 4px;
     padding: 14px 16px;
     width: 100%;
     max-width: 560px;
   }
-  .confirm-card .title {
-    color: var(--amber);
+  .confirm-card {
+    border: 1px solid var(--accent-dim);
+    border-left: 2px solid var(--accent);
+  }
+  .permission-card {
+    border: 1px solid var(--rule);
+    border-left: 2px solid var(--info);
+  }
+  .confirm-card .title, .permission-card .title {
     font-size: 13px;
     font-family: "IBM Plex Mono", monospace;
     margin-bottom: 8px;
     font-weight: 500;
   }
-  .confirm-card .path {
+  .confirm-card .title { color: var(--accent); }
+  .permission-card .title { color: var(--info); }
+  .confirm-card .path, .permission-card .path {
     font-family: "IBM Plex Mono", monospace;
     font-size: 12px;
-    color: var(--text);
+    color: var(--ink);
     margin-bottom: 10px;
     word-break: break-all;
     padding: 6px 8px;
-    background: var(--bg);
+    background: var(--paper);
     border-radius: 3px;
   }
   .confirm-card .diff {
     font-family: "IBM Plex Mono", monospace;
     font-size: 11.5px;
-    color: var(--text-2);
+    color: var(--ink-2);
     margin-bottom: 10px;
     white-space: pre-wrap;
     max-height: 140px;
     overflow-y: auto;
-    background: var(--bg);
+    background: var(--paper);
     padding: 8px 10px;
     border-radius: 3px;
-    border: 1px solid var(--border-soft);
+    border: 1px solid var(--rule-soft);
   }
-  .confirm-card .diff .del-line { color: var(--red); }
-  .confirm-card .diff .add-line { color: var(--green); }
-  .confirm-card .actions { display: flex; gap: 8px; }
-  .confirm-card button {
+  .confirm-card .diff .del-line { color: var(--accent); }
+  .confirm-card .diff .add-line { color: var(--ok); }
+  .confirm-card .actions, .permission-card .actions { display: flex; gap: 8px; }
+  .confirm-card button, .permission-card button {
     padding: 5px 16px;
     border-radius: 3px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--rule);
     cursor: pointer;
     font-size: 12px;
     font-family: "IBM Plex Mono", monospace;
     background: transparent;
-    color: var(--text-2);
+    color: var(--ink-2);
     transition: all 0.12s;
   }
-  .confirm-card button.approve {
-    color: var(--green);
-    border-color: var(--green);
+  .confirm-card button.approve, .permission-card button.approve {
+    color: var(--ok);
+    border-color: var(--ok);
   }
-  .confirm-card button.approve:hover {
-    background: var(--green);
-    color: var(--bg);
+  .confirm-card button.approve:hover, .permission-card button.approve:hover {
+    background: var(--ok);
+    color: var(--paper);
   }
-  .confirm-card button.deny {
-    color: var(--red);
-    border-color: var(--red);
+  .confirm-card button.deny, .permission-card button.deny {
+    color: var(--accent);
+    border-color: var(--accent-dim);
   }
-  .confirm-card button.deny:hover {
-    background: var(--red);
-    color: var(--bg);
+  .confirm-card button.deny:hover, .permission-card button.deny:hover {
+    background: var(--accent);
+    color: var(--paper);
   }
-  .confirm-card.answered button { opacity: 0.4; cursor: not-allowed; }
-  .confirm-card.answered button:hover { background: transparent; color: inherit; }
-
-  /* 权限卡片:问用户是否允许 agent 访问某目录。色调用 sky(信息性,非破坏) */
-  .permission-card {
-    align-self: flex-start;
-    max-width: 82%;
-    margin: 0;
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-left: 2px solid var(--sky);
-    border-radius: 4px;
-    padding: 14px 16px;
-    width: 100%;
-    max-width: 560px;
+  .confirm-card.answered button, .permission-card.answered button {
+    opacity: 0.4;
+    cursor: not-allowed;
   }
-  .permission-card .title {
-    color: var(--sky);
-    font-size: 13px;
-    font-family: "IBM Plex Mono", monospace;
-    margin-bottom: 8px;
-    font-weight: 500;
-  }
-  .permission-card .path {
-    font-family: "IBM Plex Mono", monospace;
-    font-size: 12px;
-    color: var(--text);
-    margin-bottom: 10px;
-    word-break: break-all;
-    padding: 6px 8px;
-    background: var(--bg);
-    border-radius: 3px;
-  }
-  .permission-card .actions { display: flex; gap: 8px; }
-  .permission-card button {
-    padding: 5px 16px;
-    border-radius: 3px;
-    border: 1px solid var(--border);
-    cursor: pointer;
-    font-size: 12px;
-    font-family: "IBM Plex Mono", monospace;
+  .confirm-card.answered button:hover, .permission-card.answered button:hover {
     background: transparent;
-    color: var(--text-2);
-    transition: all 0.12s;
+    color: inherit;
   }
-  .permission-card button.approve {
-    color: var(--green);
-    border-color: var(--green);
-  }
-  .permission-card button.approve:hover {
-    background: var(--green);
-    color: var(--bg);
-  }
-  .permission-card button.deny {
-    color: var(--text-2);
-    border-color: var(--border);
-  }
-  .permission-card button.deny:hover {
-    background: var(--bg);
-    color: var(--text);
-  }
-  .permission-card.answered button { opacity: 0.4; cursor: not-allowed; }
-  .permission-card.answered button:hover { background: transparent; color: inherit; }
 
   .usage {
     font-family: "IBM Plex Mono", monospace;
     font-size: 11px;
-    color: var(--text-3);
+    color: var(--ink-3);
     margin-top: 8px;
     padding-top: 6px;
-    border-top: 1px solid var(--border-soft);
+    border-top: 1px solid var(--rule-soft);
   }
   .run-error {
-    color: var(--red);
+    color: var(--accent);
     font-size: 13px;
     font-family: "IBM Plex Mono", monospace;
     padding: 10px 14px;
-    background: rgba(201, 93, 74, 0.08);
-    border-left: 2px solid var(--red);
+    background: var(--accent-soft);
+    border-left: 2px solid var(--accent);
     border-radius: 0 3px 3px 0;
   }
 
   /* 底部输入 */
   #input-area {
     padding: 14px 24px 18px;
-    border-top: 1px solid var(--border);
-    background: var(--bg-2);
+    border-top: 1px solid var(--rule);
+    background: var(--paper-2);
   }
   #input-wrap {
     display: flex;
@@ -599,11 +569,11 @@
   }
   #query-input {
     flex: 1;
-    background: var(--bg);
-    border: 1px solid var(--border);
+    background: var(--paper);
+    border: 1px solid var(--rule);
     border-radius: 4px;
     padding: 10px 14px;
-    color: var(--text);
+    color: var(--ink);
     font-size: 14px;
     font-family: "IBM Plex Sans", sans-serif;
     resize: none;
@@ -612,14 +582,14 @@
     line-height: 1.5;
     transition: border-color 0.12s;
   }
-  #query-input::placeholder { color: var(--text-3); }
+  #query-input::placeholder { color: var(--ink-3); }
   #query-input:focus {
     outline: none;
-    border-color: var(--amber-dim);
+    border-color: var(--accent);
   }
   #send-btn {
-    background: var(--amber);
-    color: var(--bg);
+    background: var(--accent);
+    color: var(--paper);
     border: none;
     padding: 10px 22px;
     border-radius: 4px;
@@ -628,14 +598,14 @@
     font-family: "IBM Plex Mono", monospace;
     font-weight: 600;
     letter-spacing: 0.04em;
-    transition: all 0.12s;
+    transition: background 0.12s;
   }
-  #send-btn:hover { background: #e3b654; }
+  #send-btn:hover { background: #8f2a14; }
   #send-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
   .empty-hint {
     text-align: center;
-    color: var(--text-3);
+    color: var(--ink-3);
     margin-top: 120px;
     font-family: "IBM Plex Mono", monospace;
     font-size: 13px;
@@ -644,7 +614,7 @@
   .empty-hint .glyph {
     display: block;
     font-size: 32px;
-    color: var(--bg-4);
+    color: var(--rule);
     margin-bottom: 12px;
   }
 </style>
@@ -657,7 +627,7 @@
     <div class="tag">coding agent</div>
   </div>
   <div id="new-session-wrap">
-    <button id="new-session-btn"><span class="plus">+</span>new session</button>
+    <button id="new-session-btn"><span class="plus">+</span>新对话</button>
   </div>
   <div id="session-list"></div>
 </div>
@@ -672,12 +642,12 @@
     </div>
   </div>
   <div id="messages">
-    <div class="empty-hint"><span class="glyph">◆</span>点击左侧 + new session 开始对话</div>
+    <div class="empty-hint"><span class="glyph">◆</span>点击左侧 + 新对话 开始</div>
   </div>
   <div id="input-area">
     <div id="input-wrap">
       <textarea id="query-input" placeholder="输入问题,Enter 发送,Shift+Enter 换行..." rows="1"></textarea>
-      <button id="send-btn">SEND</button>
+      <button id="send-btn">发送</button>
     </div>
   </div>
 </div>
@@ -720,7 +690,7 @@ async function loadSessions() {
   if (!list.length) {
     const empty = document.createElement('div');
     empty.id = 'session-list-empty';
-    empty.textContent = 'no sessions yet';
+    empty.textContent = '还没有会话';
     box.appendChild(empty);
     return;
   }
@@ -767,7 +737,7 @@ async function deleteSession(id) {
   if (id === currentSessionId) {
     if (eventSource) { eventSource.close(); eventSource = null; }
     currentSessionId = null;
-    document.getElementById('messages').innerHTML = '<div class="empty-hint"><span class="glyph">◆</span>点击左侧 + new session 开始对话</div>';
+    document.getElementById('messages').innerHTML = '<div class="empty-hint"><span class="glyph">◆</span>点击左侧 + 新对话 开始</div>';
     const titleEl = document.getElementById('current-title');
     titleEl.textContent = '未选择会话';
     titleEl.classList.add('empty');
@@ -905,7 +875,7 @@ function renderUsage(data) {
   if (!target) {
     target = document.createElement('div');
     target.className = 'msg ai';
-    target.innerHTML = '<span style="color:var(--text-3)">(no content)</span>';
+    target.innerHTML = '<span style="color:var(--ink-3)">(no content)</span>';
     box.appendChild(target);
   }
   const u = document.createElement('div');
@@ -932,14 +902,14 @@ function renderConfirm(data) {
   el.dataset.token = data.token;
   const diffHtml = data.old
     ? `<div class="diff"><span class="del-line">- ${escapeHtml(data.old.slice(0, 500))}</span>\n<span class="add-line">+ ${escapeHtml(data.new.slice(0, 500))}</span></div>`
-    : `<div class="diff">(new file, ${data.new.length} chars)</div>`;
+    : `<div class="diff">(新文件, ${data.new.length} 字符)</div>`;
   el.innerHTML = `
-    <div class="title">▸ agent wants to modify a file</div>
+    <div class="title">▸ agent 想修改文件</div>
     <div class="path">${escapeHtml(data.file_path)}</div>
     ${diffHtml}
     <div class="actions">
-      <button class="approve">allow</button>
-      <button class="deny">deny</button>
+      <button class="approve">允许</button>
+      <button class="deny">拒绝</button>
     </div>`;
   el.querySelector('.approve').addEventListener('click', () => respondConfirm(data.token, true, el));
   el.querySelector('.deny').addEventListener('click', () => respondConfirm(data.token, false, el));
@@ -954,7 +924,7 @@ async function respondConfirm(token, approve, el) {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({approve})
   });
-  el.querySelector('.title').textContent = approve ? '✓ allowed' : '✗ denied';
+  el.querySelector('.title').textContent = approve ? '✓ 已允许' : '✗ 已拒绝';
 }
 
 function renderPermission(data) {
@@ -964,11 +934,11 @@ function renderPermission(data) {
   el.className = 'permission-card';
   el.dataset.token = data.token;
   el.innerHTML = `
-    <div class="title">▸ agent wants to access a directory</div>
+    <div class="title">▸ agent 想访问目录</div>
     <div class="path">${escapeHtml(data.path)}</div>
     <div class="actions">
-      <button class="approve">allow</button>
-      <button class="deny">deny</button>
+      <button class="approve">允许</button>
+      <button class="deny">拒绝</button>
     </div>`;
   el.querySelector('.approve').addEventListener('click', () => respondPermission(data.token, true, el));
   el.querySelector('.deny').addEventListener('click', () => respondPermission(data.token, false, el));
@@ -983,14 +953,14 @@ async function respondPermission(token, approve, el) {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({approve})
   });
-  el.querySelector('.title').textContent = approve ? '✓ allowed' : '✗ denied';
+  el.querySelector('.title').textContent = approve ? '✓ 已允许' : '✗ 已拒绝';
 }
 
 function renderRunError(data) {
   const box = document.getElementById('messages');
   const el = document.createElement('div');
   el.className = 'run-error';
-  el.textContent = 'error: ' + (data.error || 'unknown error');
+  el.textContent = '错误: ' + (data.error || '未知错误');
   box.appendChild(el);
   scrollToBottom();
 }
@@ -1050,7 +1020,7 @@ document.getElementById('reset-btn').addEventListener('click', async () => {
   if (!confirm('清空当前会话上下文?(session memory 笔记保留)')) return;
   await fetch(`/api/sessions/${currentSessionId}/reset`, {method: 'POST'});
   document.getElementById('messages').innerHTML = '';
-  appendSystemNote('context reset');
+  appendSystemNote('上下文已重置');
 });
 
 document.getElementById('debug-btn').addEventListener('click', async () => {
