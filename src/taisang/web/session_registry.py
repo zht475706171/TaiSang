@@ -168,9 +168,10 @@ class SessionRegistry:
     def list_all(self) -> list[dict]:
         """列会话(内存 + 磁盘并集),按 updated_at 倒序。
 
-        返回 [{id, title, active, relative_time}]。
-        title 空 → 前端显示"新会话"。
-        relative_time:如 "3min ago" / "2h ago" / "刚刚"。
+        title / updated_at / last_prompt 从 meta.json 读;meta.json 不存在或损坏
+        时 fallback 用目录 mtime + session_id 当 title。
+
+        返回 [{id, title, active, updated_at, relative_time}]。
         """
         sessions_dir = self.source_root / ".taisang" / "sessions"
         disk_ids: set[str] = set()
@@ -187,13 +188,23 @@ class SessionRegistry:
         for sid in all_ids:
             with self._lock:
                 sess = self._sessions.get(sid)
-            title = sess.title if sess is not None else ""
-            # 磁盘会话 lazy 重建前没有时间戳,用目录 mtime 兜底
+            # 优先:内存实例的 title(刚更新过,最准)
+            # 其次:meta.json(重启后或别的进程写的)
+            # 最后:fallback 用 session_id
             if sess is not None:
+                title = sess.title
                 ts = sess.updated_at
             else:
-                d = sessions_dir / sid
-                ts = d.stat().st_mtime if d.exists() else now
+                # lazy 重建前从 meta.json 读
+                store = ConversationStore(session_id=sid, sessions_dir=sessions_dir)
+                meta = store.load_meta()
+                if meta is not None:
+                    title = meta.get("title") or sid
+                    ts = meta.get("updated_at", now)
+                else:
+                    title = sid
+                    d = sessions_dir / sid
+                    ts = d.stat().st_mtime if d.exists() else now
             items.append(
                 {
                     "id": sid,
@@ -203,9 +214,31 @@ class SessionRegistry:
                     "relative_time": _relative_time(now - ts),
                 }
             )
-        # 按 updated_at 倒序(最近在最上)
         items.sort(key=lambda x: x["updated_at"], reverse=True)
         return items
+
+    def update_meta_after_turn(self, session_id: str, last_user_query: str) -> None:
+        """turn 结束后更新 meta.json。title 取 last_user_query 前 40 字。
+
+        在 app.py 的 send_message 路由里,agent.run() 返回后调用。
+        """
+        sess = self.get_or_load(session_id)
+        if sess is None:
+            return
+        first_line = last_user_query.strip().split("\n")[0].strip()
+        if first_line:
+            title = first_line[:40] + ("…" if len(first_line) > 40 else "")
+        else:
+            title = "新会话"
+        sess.title = title
+        sess.updated_at = time.time()
+        sess.store.write_meta({
+            "id": session_id,
+            "title": title,
+            "last_prompt": last_user_query[:200],
+            "created_at": sess.created_at,
+            "updated_at": sess.updated_at,
+        })
 
     def delete(self, session_id: str) -> bool:
         """删会话:内存移除 + 磁盘目录删除。返回是否删过。"""

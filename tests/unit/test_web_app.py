@@ -88,3 +88,40 @@ def test_get_or_load_restores_history_after_restart(tmp_path, monkeypatch):
     # 找到 user message 内容是"你好"
     user_msgs = [m for m in msgs if m["role"] == "user"]
     assert any(m["content"] == "你好" for m in user_msgs)
+
+
+def test_list_all_reads_title_from_meta(tmp_path, monkeypatch):
+    """list_all 从 meta.json 读 title(替代扫目录 mtime 兜底)。"""
+    monkeypatch.setenv("TAISANG_MOCK_LLM", "1")
+    from taisang.web.session_registry import SessionRegistry
+    from taisang.storage.conversation_store import ConversationStore
+
+    reg = SessionRegistry(tmp_path)
+    sid = reg.create(title="")  # 空 title
+    # 手动写 meta.json 模拟 turn 结束后的状态
+    sess = reg.get_or_load(sid)
+    sess.store.write_meta({
+        "id": sid, "title": "最后问的问题", "last_prompt": "最后问的问题",
+        "created_at": 1.0, "updated_at": 2.0,
+    })
+    # 释放内存实例,强制 list_all 从磁盘读
+    reg._sessions.clear()
+
+    items = reg.list_all()
+    assert len(items) == 1
+    assert items[0]["title"] == "最后问的问题"
+
+
+def test_list_all_fallback_when_meta_missing(tmp_path, monkeypatch):
+    """meta.json 不存在时 fallback 用 session_id 当 title。"""
+    monkeypatch.setenv("TAISANG_MOCK_LLM", "1")
+    from taisang.web.session_registry import SessionRegistry
+
+    reg = SessionRegistry(tmp_path)
+    sid = reg.create(title="")
+    reg._sessions.clear()  # 强制从磁盘读
+
+    items = reg.list_all()
+    assert len(items) == 1
+    # title fallback 到 id(meta 没有)
+    assert items[0]["title"] == sid
