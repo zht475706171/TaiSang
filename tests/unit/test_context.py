@@ -120,20 +120,45 @@ def test_replace_messages_without_compaction_via_no_boundary():
     assert ctx.messages() == new_msgs
 
 
-def test_load_from_records_filters_boundary_and_skips_on_append():
-    """load_from_records 灌回时过滤 boundary record,且不触发 on_append(避免重复写盘)。"""
+def test_load_from_records_truncates_to_last_boundary():
+    """load_from_records 截断式 resume:只保留最后一条 boundary 之后的 records
+    (boundary 之前的内容已被压缩成后面的 summary,灌回前面内容会造成 ctx 膨胀)。
+    不触发 on_append(避免重复写盘)。"""
     collected: list[dict] = []
     ctx = ContextManager(on_append=lambda r: collected.append(r))
     records = [
-        {"role": "user", "content": "q1"},
-        {"role": "system", "content": "[compacted via llm]"},  # boundary,过滤掉
-        {"role": "user", "content": "q2"},
+        {"role": "user", "content": "q1"},  # boundary 前,被截掉
+        {"role": "system", "content": "[compacted via llm]"},  # boundary
+        {"role": "user", "content": "q2"},  # boundary 后,保留
     ]
     ctx.load_from_records(records)
-    # boundary 被过滤
-    assert ctx.messages() == [
-        {"role": "user", "content": "q1"},
-        {"role": "user", "content": "q2"},
-    ]
+    # 只保留 boundary 之后的 q2
+    assert ctx.messages() == [{"role": "user", "content": "q2"}]
     # 不触发 on_append
     assert collected == []
+
+
+def test_load_from_records_multiple_boundaries_keeps_only_last():
+    """多次压缩:每次 boundary 都 supersede 前面所有内容,只灌回最后一个 boundary 后的。"""
+    ctx = ContextManager()
+    records = [
+        {"role": "user", "content": "very old"},
+        {"role": "system", "content": "[compacted via llm]"},
+        {"role": "user", "content": "middle"},
+        {"role": "system", "content": "[compacted via session_memory]"},  # 最后一个 boundary
+        {"role": "user", "content": "after second compaction"},
+    ]
+    ctx.load_from_records(records)
+    assert ctx.messages() == [{"role": "user", "content": "after second compaction"}]
+
+
+def test_load_from_records_no_boundary_returns_all():
+    """无 boundary(从未压缩过的新会话):灌回全部 records。"""
+    ctx = ContextManager()
+    records = [
+        {"role": "system", "content": "system prompt"},
+        {"role": "user", "content": "q1"},
+        {"role": "assistant", "content": "a1"},
+    ]
+    ctx.load_from_records(records)
+    assert ctx.messages() == records

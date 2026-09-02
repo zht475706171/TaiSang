@@ -135,17 +135,22 @@ class ContextManager:
     def load_from_records(self, records: list[dict]) -> None:
         """resume 灌回专用:从 jsonl records 重建内存 _messages。
 
-        - 过滤 compacted boundary record(role=system 且 content 以 [compacted 开头)
-        - 直接赋值 _messages,不走 on_append(避免重复写盘)
+        - 截断式 resume:找到最后一条 compacted boundary record(role=system
+          且 content 以 [compacted 开头),只灌回 boundary 之后的 records。
+          boundary 之前的内容已被压缩成后面的 summary,boundary 后的 records
+          就是压缩后快照。无 boundary(从未压缩过)则灌回全部。
+        - 直接赋值 _messages,不走 on_append(避免重复写盘)。
 
         用于 SessionRegistry.get_or_load lazy 重建时,把磁盘 jsonl 灌回内存 ctx。
         """
-        self._messages = [
-            r for r in records
-            if not (r.get("role") == "system"
+        last_boundary_idx = -1
+        for i, r in enumerate(records):
+            if (r.get("role") == "system"
                     and isinstance(r.get("content"), str)
-                    and r["content"].startswith("[compacted"))
-        ]
+                    and r["content"].startswith("[compacted")):
+                last_boundary_idx = i
+        # boundary 后的 records 就是压缩后快照(boundary 自身不灌回)
+        self._messages = list(records[last_boundary_idx + 1:])
 
     # NOTE:旧 compact() 保留(向后兼容 test_context.py 5 个测试)。
     # Task 12 的新版 AgentService 不再调本方法,改用 enforce_budget + autocompact。

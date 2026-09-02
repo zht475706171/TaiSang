@@ -181,3 +181,44 @@ def test_get_messages_unknown_session_404(tmp_path, monkeypatch):
     client = TestClient(app)
     r = client.get("/api/sessions/nonexistent/messages")
     assert r.status_code == 404
+
+
+def test_autocompact_writes_boundary_and_resume_gets_compacted(tmp_path, monkeypatch):
+    """autocompact 触发后,jsonl 里有 [compacted via ...] boundary record;
+    新建 registry(模拟重启)后 get_or_load 灌回的是截断到最后一个 boundary 后的
+    records(压缩前内容被丢弃,只保留压缩后快照)。"""
+    monkeypatch.setenv("TAISANG_MOCK_LLM", "1")
+    from taisang.web.session_registry import SessionRegistry
+
+    reg1 = SessionRegistry(tmp_path)
+    sid = reg1.create(title="")
+    sess1 = reg1.get_or_load(sid)
+
+    # 模拟压缩前:ctx 有一些 messages,写进 jsonl
+    sess1.agent.ctx.append_user("old message 1")
+    sess1.agent.ctx.append_user("old message 2")
+
+    # 模拟 autocompact 触发:replace_messages 带 compaction_via
+    new_msgs = [
+        {"role": "system", "content": "you are an agent"},
+        {"role": "user", "content": "summary: 之前聊过 old message 1 和 2"},
+    ]
+    sess1.agent.ctx.replace_messages(new_msgs, compaction_via="llm")
+
+    # 验证 jsonl 有 boundary record
+    records = sess1.store.load_all()
+    boundary_records = [r for r in records if r.get("role") == "system" and "[compacted" in r.get("content", "")]
+    assert len(boundary_records) == 1
+    assert "llm" in boundary_records[0]["content"]
+
+    # 模拟重启:新建 registry
+    reg2 = SessionRegistry(tmp_path)
+    sess2 = reg2.get_or_load(sid)
+    msgs = sess2.agent.ctx.messages()
+    # 灌回的是截断到最后 boundary 之后的 records(= 压缩后快照)
+    # 含 summary(压缩后内容),不含压缩前的独立 old message
+    user_contents = [m.get("content", "") for m in msgs if m.get("role") == "user"]
+    assert any("summary: 之前聊过" in c for c in user_contents)
+    # 压缩前的 old message 1/2 是独立 user 消息,截断后不该作为独立消息存在
+    assert "old message 1" not in user_contents
+    assert "old message 2" not in user_contents
