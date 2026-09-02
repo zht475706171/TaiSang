@@ -156,7 +156,12 @@ class SessionRegistry:
         records = sess.store.load_all()
         if records:
             sess.agent.ctx.load_from_records(records)
-        sess.title = session_id  # 兜底;后面 list_all 会用 meta.json 覆盖
+        # title 优先从 meta.json 读(重启后恢复动态 title);meta 不存在才 fallback id
+        meta = sess.store.load_meta()
+        if meta is not None and meta.get("title"):
+            sess.title = meta["title"]
+        else:
+            sess.title = session_id
         with self._lock:
             # 并发下可能已被另一线程建了,保留先到那个
             existing = self._sessions.get(session_id)

@@ -139,6 +139,9 @@ class ContextManager:
           且 content 以 [compacted 开头),只灌回 boundary 之后的 records。
           boundary 之前的内容已被压缩成后面的 summary,boundary 后的 records
           就是压缩后快照。无 boundary(从未压缩过)则灌回全部。
+        - 去重重复 system:每次进程重启 AgentService.__init__ 都会 append_system
+          一条 SYSTEM_PROMPT 到 jsonl,多次重启会累积多条相同 system。灌回时只保留
+         第一条 system(后续重复的丢弃),避免 ctx 有 N 条相同 system 让 LLM 困惑。
         - 直接赋值 _messages,不走 on_append(避免重复写盘)。
 
         用于 SessionRegistry.get_or_load lazy 重建时,把磁盘 jsonl 灌回内存 ctx。
@@ -149,8 +152,18 @@ class ContextManager:
                     and isinstance(r.get("content"), str)
                     and r["content"].startswith("[compacted")):
                 last_boundary_idx = i
-        # boundary 后的 records 就是压缩后快照(boundary 自身不灌回)
-        self._messages = list(records[last_boundary_idx + 1:])
+        truncated = list(records[last_boundary_idx + 1:])
+        # 去重重复 system:只保留第一条 system,丢弃后续相同 role=system 的 record
+        # (boundary 已被截断逻辑处理,这里只处理 SYSTEM_PROMPT 重复)
+        seen_system = False
+        deduped: list[dict] = []
+        for r in truncated:
+            if r.get("role") == "system":
+                if seen_system:
+                    continue
+                seen_system = True
+            deduped.append(r)
+        self._messages = deduped
 
     # NOTE:旧 compact() 保留(向后兼容 test_context.py 5 个测试)。
     # Task 12 的新版 AgentService 不再调本方法,改用 enforce_budget + autocompact。

@@ -232,6 +232,8 @@ class AgentService:
                 # 对齐 Claude Code shouldExtractMemory 的 hasToolCallsInLastTurn=False 分支。
                 self._maybe_trigger_session_memory(last_turn_has_tool_calls=False)
                 citations = self._extract_citations(resp.text)
+                # 最终答案也要落盘(走 on_append 写 jsonl),否则 resume 缺 assistant 回复
+                self.ctx.append_assistant(text=resp.text, tool_calls=None)
                 _emit(AgentEvent(type=FINAL_ANSWER, payload={"text": resp.text}))
                 self._emit_usage_report(_emit)
                 return Answer(

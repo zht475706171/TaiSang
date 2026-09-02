@@ -162,3 +162,26 @@ def test_load_from_records_no_boundary_returns_all():
     ]
     ctx.load_from_records(records)
     assert ctx.messages() == records
+
+
+def test_load_from_records_dedupes_repeated_system():
+    """多次重启累积多条相同 SYSTEM_PROMPT,灌回时只保留第一条 system。
+    场景:每次进程重启 AgentService.__init__ 都 append_system 一条到 jsonl,
+    多次重启后 jsonl 有 N 条相同 system。灌回 ctx 只保留第一条,避免 LLM 困惑。"""
+    ctx = ContextManager()
+    records = [
+        {"role": "system", "content": "system prompt"},  # 保留
+        {"role": "user", "content": "q1"},
+        {"role": "assistant", "content": "a1"},
+        {"role": "system", "content": "system prompt"},  # 重启累积,丢弃
+        {"role": "system", "content": "system prompt"},  # 再次重启,丢弃
+        {"role": "user", "content": "q2"},
+    ]
+    ctx.load_from_records(records)
+    # 只保留第一条 system,其余 system 丢弃
+    system_count = sum(1 for m in ctx.messages() if m["role"] == "system")
+    assert system_count == 1
+    # user / assistant 都保留
+    roles = [m["role"] for m in ctx.messages()]
+    assert roles.count("user") == 2
+    assert roles.count("assistant") == 1
