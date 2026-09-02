@@ -148,3 +148,36 @@ def test_send_message_updates_meta(tmp_path, monkeypatch):
     app.state.registry._sessions.clear()
     items = app.state.registry.list_all()
     assert items[0]["title"] == "帮我看看这个文件"
+
+
+def test_get_messages_returns_history(tmp_path, monkeypatch):
+    """GET /api/sessions/{id}/messages 返回 conversation.jsonl 的所有 record。"""
+    monkeypatch.setenv("TAISANG_MOCK_LLM", "1")
+    from taisang.web.app import create_app
+
+    app = create_app(tmp_path)
+    client = TestClient(app)
+    sid = client.post("/api/sessions", json={"title": ""}).json()["id"]
+    # 手动往 jsonl 写几条 record(通过 ctx.append 触发 on_append 落盘)
+    sess = app.state.registry.get_or_load(sid)
+    sess.agent.ctx.append_user("q1")
+    sess.agent.ctx.append_assistant("a1", tool_calls=None)
+
+    r = client.get(f"/api/sessions/{sid}/messages")
+    assert r.status_code == 200
+    data = r.json()
+    # 至少 2 条(user + assistant;SYSTEM_PROMPT 也可能算 1 条)
+    roles = [m.get("role") for m in data]
+    assert "user" in roles
+    assert "assistant" in roles
+
+
+def test_get_messages_unknown_session_404(tmp_path, monkeypatch):
+    """GET 不存在的 session 返回 404。"""
+    monkeypatch.setenv("TAISANG_MOCK_LLM", "1")
+    from taisang.web.app import create_app
+
+    app = create_app(tmp_path)
+    client = TestClient(app)
+    r = client.get("/api/sessions/nonexistent/messages")
+    assert r.status_code == 404

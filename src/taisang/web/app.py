@@ -140,6 +140,14 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
         asyncio.get_running_loop().run_in_executor(None, _run)
         return {"ok": True}
 
+    @app.get("/api/sessions/{session_id}/messages")
+    async def get_messages(session_id: str) -> list[dict]:
+        """返回会话历史 messages(给前端 resume 渲染用)。"""
+        sess = registry.get_or_load(session_id)
+        if sess is None:
+            raise HTTPException(404, f"session not found: {session_id}")
+        return sess.store.load_all()
+
     @app.get("/api/sessions/{session_id}/events")
     async def event_stream(session_id: str) -> StreamingResponse:
         """SSE 流。订阅 broker,从队列读事件 + yield 编码后的 SSE 字符串。"""
