@@ -13,6 +13,8 @@ Task 12 重写:
 
 from __future__ import annotations
 
+from typing import Callable
+
 import tiktoken
 
 
@@ -31,11 +33,13 @@ class ContextManager:
         token_budget: int = 32_000,
         compact_ratio: float = 0.8,  # 用到 80% 触发
         keep_recent: int = 4,  # compact 时保留最近 N 条 tool_result
+        on_append: "Callable[[dict], None] | None" = None,
     ) -> None:
         self.token_budget = token_budget
         self.compact_ratio = compact_ratio
         self.keep_recent = keep_recent
         self._messages: list[dict] = []
+        self.on_append = on_append
         # 真 token 计数器(懒加载,首次用时初始化)
         if ContextManager._enc is None:
             try:
@@ -75,26 +79,35 @@ class ContextManager:
         return self.total_tokens() > self.token_budget * self.compact_ratio
 
     def append_system(self, text: str) -> None:
-        self._messages.append({"role": "system", "content": text})
+        msg = {"role": "system", "content": text}
+        self._messages.append(msg)
+        if self.on_append:
+            self.on_append(msg)
 
     def append_user(self, text: str) -> None:
-        self._messages.append({"role": "user", "content": text})
+        msg = {"role": "user", "content": text}
+        self._messages.append(msg)
+        if self.on_append:
+            self.on_append(msg)
 
     def append_assistant(self, text: str, tool_calls: list[dict] | None = None) -> None:
         msg = {"role": "assistant", "content": text}
         if tool_calls:
             msg["tool_calls"] = tool_calls
         self._messages.append(msg)
+        if self.on_append:
+            self.on_append(msg)
 
     def append_tool_result(self, text: str, name: str, tool_call_id: str | None = None) -> None:
-        self._messages.append(
-            {
-                "role": "tool",
-                "name": name,
-                "content": text,
-                "tool_call_id": tool_call_id or name,
-            }
-        )
+        msg = {
+            "role": "tool",
+            "name": name,
+            "content": text,
+            "tool_call_id": tool_call_id or name,
+        }
+        self._messages.append(msg)
+        if self.on_append:
+            self.on_append(msg)
 
     def messages(self) -> list[dict]:
         return list(self._messages)

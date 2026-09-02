@@ -59,3 +59,28 @@ def test_total_tokens_after_compaction_within_budget():
         cm.append_tool_result("x" * 500, name="read_file")
     cm.compact()
     assert cm.total_tokens() < 1000
+
+
+def test_on_append_called_on_each_append():
+    """每次 append_user/assistant/tool_result 都触发 on_append 回调,传入完整 record。"""
+    collected: list[dict] = []
+    ctx = ContextManager(on_append=lambda r: collected.append(r))
+    ctx.append_user("hello")
+    ctx.append_assistant("hi", tool_calls=[{"id": "t1", "type": "function", "function": {"name": "f", "arguments": "{}"}}])
+    ctx.append_tool_result("result", name="f", tool_call_id="t1")
+
+    assert len(collected) == 3
+    assert collected[0] == {"role": "user", "content": "hello"}
+    assert collected[1]["role"] == "assistant"
+    assert collected[1]["content"] == "hi"
+    assert collected[1]["tool_calls"] is not None
+    assert collected[2]["role"] == "tool"
+    assert collected[2]["name"] == "f"
+    assert collected[2]["tool_call_id"] == "t1"
+
+
+def test_on_append_none_no_error():
+    """on_append=None(默认)时不报错。"""
+    ctx = ContextManager()
+    ctx.append_user("hello")  # 不应抛异常
+    assert len(ctx.messages()) == 1
