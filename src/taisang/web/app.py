@@ -8,6 +8,7 @@
 - POST /api/sessions/{id}/reset   → 重置上下文
 - POST /api/sessions/{id}/debug   → 切 debug {on: bool}
 - POST /api/sessions/{id}/messages → 发消息 {query},后台 run,事件经 SSE 推
+- GET  /api/sessions/{id}/messages → 取会话历史 messages(前端 resume 渲染用)
 - GET  /api/sessions/{id}/events   → SSE 流
 - POST /api/sessions/{id}/confirm/{token} → {approve: bool} 回应确认
 - POST /api/sessions/{id}/permission/{token} → {approve: bool} 回应权限请求
