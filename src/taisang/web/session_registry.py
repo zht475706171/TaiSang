@@ -27,6 +27,7 @@ from ..agent_core.service import AgentService
 from ..config import load_config
 from ..llm_client import LLMClient, MockLLM
 from ..session_memory.service import SessionMemoryService
+from ..storage.conversation_store import ConversationStore
 from ..storage.paths import PathManager
 from .confirm import WebConfirmer
 from .sse import EventBroker
@@ -41,6 +42,7 @@ class _Session:
     broker: EventBroker
     confirmer: WebConfirmer
     permission: WebPermissionManager
+    store: ConversationStore
     lock: threading.Lock = field(default_factory=threading.Lock)
     title: str = ""  # 空 → 首条消息发出时自动取 query 前 40 字
     created_at: float = field(default_factory=time.time)
@@ -80,6 +82,9 @@ class SessionRegistry:
             llm=llm,
             memory_path=PathManager.session_memory_path(self.source_root, session_id),
         )
+        # ConversationStore + on_append 回调:ctx 每次 append 同步写 jsonl
+        sessions_dir = self.source_root / ".taisang" / "sessions"
+        store = ConversationStore(session_id=session_id, sessions_dir=sessions_dir)
         # 不在启动时 ensure_file:让 should_extract 的 init 分支(10000 token)
         # 自己创建笔记。否则笔记一开始就存在,init 分支永远走不到,
         # 直接走 update 分支(5000 token)门槛太低。extract worker 里有 ensure_file。
@@ -90,6 +95,7 @@ class SessionRegistry:
             session_memory=session_mem,
             permission=permission,
             allow_dirs=[self.source_root] + self.allow_dirs,
+            on_append=store.append,
         )
         return _Session(
             session_id=session_id,
@@ -97,6 +103,7 @@ class SessionRegistry:
             broker=broker,
             confirmer=confirmer,
             permission=permission,
+            store=store,
         )
 
     def create(self, title: str = "") -> str:
@@ -132,7 +139,10 @@ class SessionRegistry:
         return True
 
     def get_or_load(self, session_id: str) -> _Session | None:
-        """取会话。内存没有但磁盘有目录则 lazy 重建;都没有返回 None。"""
+        """取会话。内存没有但磁盘有目录则 lazy 重建;都没有返回 None。
+
+        lazy 重建时从 conversation.jsonl 读历史灌回 ctx(resume)。
+        """
         with self._lock:
             sess = self._sessions.get(session_id)
         if sess is not None:
@@ -142,7 +152,11 @@ class SessionRegistry:
         if not sess_dir.is_dir():
             return None
         sess = self._build_session(session_id)
-        sess.title = session_id
+        # 从 jsonl 灌回历史到 ctx(resume)
+        records = sess.store.load_all()
+        if records:
+            sess.agent.ctx.load_from_records(records)
+        sess.title = session_id  # 兜底;后面 list_all 会用 meta.json 覆盖
         with self._lock:
             # 并发下可能已被另一线程建了,保留先到那个
             existing = self._sessions.get(session_id)
