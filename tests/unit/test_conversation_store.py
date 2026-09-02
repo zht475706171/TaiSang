@@ -56,3 +56,27 @@ def test_load_all_file_not_exists(tmp_path: Path) -> None:
     store = ConversationStore(session_id="nonexist", sessions_dir=sessions_dir)
     # 不调 append,文件不存在
     assert store.load_all() == []
+
+
+def test_write_and_load_meta_roundtrip(store: ConversationStore) -> None:
+    """write_meta 后 load_meta 返回同样内容。"""
+    meta = {
+        "id": "abc12345",
+        "title": "帮我看看这个文件",
+        "last_prompt": "帮我看看这个文件",
+        "created_at": 1693622400.0,
+        "updated_at": 1693622400.123,
+    }
+    store.write_meta(meta)
+    assert store.load_meta() == meta
+
+
+def test_load_meta_file_not_exists(store: ConversationStore) -> None:
+    """meta.json 不存在时 load_meta 返回 None。"""
+    assert store.load_meta() is None
+
+
+def test_load_meta_corrupt_returns_none(store: ConversationStore) -> None:
+    """meta.json 损坏时 load_meta 返回 None(不抛异常)。"""
+    store.meta_path.write_text("{not json", encoding="utf-8")
+    assert store.load_meta() is None

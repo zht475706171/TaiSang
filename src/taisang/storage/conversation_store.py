@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -60,3 +61,21 @@ class ConversationStore:
                         e,
                     )
         return records
+
+    def write_meta(self, meta: dict) -> None:
+        """整体重写 meta.json。tmp 文件 + os.replace 原子替换。"""
+        tmp = self.meta_path.with_suffix(".json.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, self.meta_path)
+
+    def load_meta(self) -> dict | None:
+        """读 meta.json。损坏/不存在返回 None。"""
+        if not self.meta_path.exists():
+            return None
+        try:
+            with open(self.meta_path, encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            log.warning("meta.json 损坏已忽略: session=%s err=%s", self.session_id, e)
+            return None
