@@ -745,14 +745,24 @@ async function deleteSession(id) {
   await loadSessions();
 }
 
-function switchSession(id, title) {
+async function switchSession(id, title) {
   if (eventSource) eventSource.close();
   currentSessionId = id;
   const titleEl = document.getElementById('current-title');
   titleEl.textContent = title || '新会话';
   titleEl.classList.toggle('empty', !title);
   document.getElementById('messages').innerHTML = '';
-  loadSessions();
+  // 拉历史并渲染(resume)
+  try {
+    const r = await fetch(`/api/sessions/${id}/messages`);
+    if (r.ok) {
+      const history = await r.json();
+      renderHistory(history);
+    }
+  } catch (e) {
+    console.error('load history failed:', e);
+  }
+  loadSessions();  // 刷新左侧 active 状态
   openEventStream(id);
 }
 
@@ -866,6 +876,75 @@ function renderCompacted(data) {
   el.className = 'compacted';
   el.textContent = `context compacted via ${data.via}`;
   box.appendChild(el);
+  scrollToBottom();
+}
+
+// ========== 历史渲染(resume 时拉回来渲染) ==========
+function renderHistory(records) {
+  const box = document.getElementById('messages');
+  for (const r of records) {
+    if (r.role === 'user') {
+      const el = document.createElement('div');
+      el.className = 'msg user';
+      el.textContent = r.content || '';
+      box.appendChild(el);
+    } else if (r.role === 'assistant') {
+      renderFinalAnswer({text: r.content || ''});
+      // 若该 assistant 有 tool_calls,渲染已展开的工具卡片
+      if (r.tool_calls && r.tool_calls.length) {
+        for (const tc of r.tool_calls) {
+          const fn = tc.function || {};
+          let args = {};
+          try { args = JSON.parse(fn.arguments || '{}'); } catch (e) {}
+          const el = document.createElement('div');
+          el.className = 'tool-card expanded';
+          el.dataset.name = fn.name;
+          el.dataset.filled = '1';
+          el.innerHTML = `
+            <div class="tool-card-header">
+              <span class="arrow">▶</span>
+              <span class="name">${escapeHtml(fn.name || '')}</span>
+              <span class="args">${escapeHtml(JSON.stringify(args))}</span>
+            </div>
+            <div class="tool-card-body">执行中...</div>`;
+          el.querySelector('.tool-card-header').addEventListener('click', () => el.classList.toggle('expanded'));
+          box.appendChild(el);
+        }
+      }
+    } else if (r.role === 'tool') {
+      // tool_result:补全上一个同名未填的 tool-card-body
+      const cards = box.querySelectorAll('.tool-card');
+      let target = null;
+      for (const c of cards) {
+        if (c.dataset.name === r.name && !c.dataset.filled) target = c;
+      }
+      const preview = (r.content || '').slice(0, 30);
+      const bytes = (r.content || '').length;
+      if (target) {
+        target.dataset.filled = '1';
+        target.querySelector('.tool-card-body').textContent = preview;
+        target.querySelector('.args').textContent = `${bytes} bytes`;
+      } else {
+        const el = document.createElement('div');
+        el.className = 'tool-card expanded';
+        el.dataset.name = r.name;
+        el.dataset.filled = '1';
+        el.innerHTML = `
+          <div class="tool-card-header">
+            <span class="arrow">▶</span>
+            <span class="name">${escapeHtml(r.name)}</span>
+            <span class="args">${bytes} bytes</span>
+          </div>
+          <div class="tool-card-body">${escapeHtml(preview)}</div>`;
+        el.querySelector('.tool-card-header').addEventListener('click', () => el.classList.toggle('expanded'));
+        box.appendChild(el);
+      }
+    } else if (r.role === 'system' && typeof r.content === 'string' && r.content.startsWith('[compacted')) {
+      const via = r.content.includes('session_memory') ? 'session_memory' : 'llm';
+      renderCompacted({via});
+    }
+    // system role 的 SYSTEM_PROMPT(非 boundary)不渲染
+  }
   scrollToBottom();
 }
 
