@@ -146,7 +146,7 @@ def test_session_memory_extract_uses_forked_agent(tmp_path):
     )
     service = SessionMemoryService(llm=mock, memory_path=memory_path)
     # 直接调 _do_extract(绕过 should_extract)— 异步启动后台线程
-    service._do_extract(recent_conversation="最新对话:写了 00_项目是什么.md")
+    service._do_extract(recent_conversation="最新对话:写了 00_项目是什么.md", current_tokens=15_000)
     # 等 worker 线程完成(_extracting 清零)
     deadline = time.time() + 5
     while service._extracting and time.time() < deadline:
@@ -193,7 +193,7 @@ def test_forked_agent_denies_non_edit_tool(tmp_path):
             LLMResponse(text="done", tool_calls=[]),
         ]
     )
-    run_forked_agent(mock, memory_path, "test prompt")
+    run_forked_agent(mock, memory_path, "recent conversation text", "test prompt")
     # 内容不变
     assert memory_path.read_text(encoding="utf-8") == original
 
@@ -235,7 +235,7 @@ def test_forked_agent_denies_edit_wrong_file(tmp_path):
             LLMResponse(text="done", tool_calls=[]),
         ]
     )
-    run_forked_agent(mock, memory_path, "test prompt")
+    run_forked_agent(mock, memory_path, "recent conversation text", "test prompt")
     # memory_path 不变
     assert memory_path.read_text(encoding="utf-8") == original
     # other_path 也未被改(_apply_edit 只对 memory_path 执行)
@@ -270,7 +270,7 @@ def test_extract_is_async_non_blocking(tmp_path):
 
     service = SessionMemoryService(llm=SlowLLM(), memory_path=memory_path)
     t0 = time.time()
-    service._do_extract(recent_conversation="test")
+    service._do_extract(recent_conversation="test", current_tokens=15_000)
     elapsed = time.time() - t0
     # 异步:0.1s 内返回(不是 2s)
     assert elapsed < 0.1, f"_do_extract blocked for {elapsed:.2f}s, expected async"
@@ -292,7 +292,7 @@ def test_extract_failure_does_not_propagate(tmp_path):
 
     service = SessionMemoryService(llm=FailingLLM(), memory_path=memory_path)
     # 调 _do_extract 不抛异常(后台 worker 会失败,但主流程不知)
-    service._do_extract(recent_conversation="test")
+    service._do_extract(recent_conversation="test", current_tokens=15_000)
     # 等 worker 完成
     deadline = time.time() + 5
     while service._extracting and time.time() < deadline:
@@ -314,7 +314,9 @@ def test_extract_skipped_when_already_running(tmp_path):
     # should_extract 应返回 False(已在跑)
     assert service.should_extract(current_tokens=20_000, tool_calls_since_last=10) is False
     # _do_extract 也应跳过(不启动新线程)
-    service._do_extract(recent_conversation="test")  # 应立即返回不启动 worker
+    service._do_extract(
+        recent_conversation="test", current_tokens=20_000
+    )  # 应立即返回不启动 worker
     # _extracting 仍 True(没被覆盖)
     assert service._extracting is True
 
@@ -379,7 +381,7 @@ def test_forked_agent_multi_turn_loop(tmp_path):
             LLMResponse(text="done", tool_calls=[]),
         ]
     )
-    run_forked_agent(mock, memory_path, "test prompt")
+    run_forked_agent(mock, memory_path, "recent conversation text", "test prompt")
     content = memory_path.read_text(encoding="utf-8")
     assert "(new1)" in content
     assert "(new2)" in content
@@ -422,7 +424,7 @@ def test_forked_agent_max_turns_cap(tmp_path):
         )
     mock = MockLLM(responses)
     # max_turns=3 缩小测试规模(够证明 cap 生效,不用等 10 轮)
-    run_forked_agent(mock, memory_path, "test prompt", max_turns=3)
+    run_forked_agent(mock, memory_path, "recent conversation text", "test prompt", max_turns=3)
     # 只应消耗 3 个 response(第 4 个没被调)
     assert len(mock.calls) == 3, f"expected 3 LLM calls (max_turns=3), got {len(mock.calls)}"
 
@@ -491,3 +493,87 @@ def test_recent_text_does_not_truncate(tmp_path):
     # 500 字完整保留(不是截到 200)
     assert long_content in text
     assert len(long_content) == 500
+
+
+# -------------------- bug 修复:init 分支 + delta 基准 --------------------
+
+
+def test_init_branch_not_bypassed_by_early_ensure_file(tmp_path):
+    """启动时不 ensure_file,笔记不存在 → 走 init 分支(10000 token),不是 update(5000)。
+
+    验证:笔记不存在 + tokens=6000(< 10000)→ 不触发(之前会因为 ensure_file 建空笔记
+    后走 update 分支,6000 >= 5000 触发,bug)。
+    """
+    memory_path = tmp_path / "summary.md"
+    service = SessionMemoryService(llm=MockLLM([]), memory_path=memory_path)
+    # 不调 ensure_file(模拟启动时不预建)
+    assert not memory_path.exists()
+    # tokens=6000 < MIN_TOKENS_TO_INIT(10000)→ 不触发
+    assert service.should_extract(current_tokens=6_000, tool_calls_since_last=10) is False
+    # tokens=12000 >= 10000 → 触发 init
+    assert service.should_extract(current_tokens=12_000, tool_calls_since_last=0) is True
+
+
+def test_do_extract_records_last_extracted_tokens(tmp_path):
+    """_do_extract 触发时记录 _last_extracted_tokens = current_tokens。
+
+    验证:触发 extract(current_tokens=15000)后,_last_extracted_tokens=15000,
+    下次 delta = new - 15000,不是 new - 0。
+    """
+    import json
+    import time
+
+    memory_path = tmp_path / "summary.md"
+    memory_path.parent.mkdir(parents=True, exist_ok=True)
+    memory_path.write_text("# Session Title\n*desc*\n(old)\n", encoding="utf-8")
+    mock = MockLLM(
+        [
+            LLMResponse(
+                text="",
+                tool_calls=[
+                    {
+                        "id": "c1",
+                        "type": "function",
+                        "function": {
+                            "name": "Edit",
+                            "arguments": json.dumps(
+                                {
+                                    "file_path": str(memory_path),
+                                    "old_string": "(old)",
+                                    "new_string": "(new)",
+                                },
+                                ensure_ascii=False,
+                            ),
+                        },
+                    }
+                ],
+            ),
+            LLMResponse(text="done", tool_calls=[]),
+        ]
+    )
+    service = SessionMemoryService(llm=mock, memory_path=memory_path)
+    assert service._last_extracted_tokens == 0  # 初始
+    # 触发 extract,current_tokens=15000
+    service._do_extract(recent_conversation="test", current_tokens=15_000)
+    # 立即记录(不等 worker 完成,因为记录在触发时做)
+    assert service._last_extracted_tokens == 15_000
+    # 等 worker 完成
+    deadline = time.time() + 5
+    while service._extracting and time.time() < deadline:
+        time.sleep(0.01)
+    # worker 完成后 _last_extracted_tokens 仍 = 15000(不被覆盖)
+    assert service._last_extracted_tokens == 15_000
+    # 下次 should_extract:delta = 18000 - 15000 = 3000 < 5000 → 不触发
+    assert (
+        service.should_extract(
+            current_tokens=18_000, tool_calls_since_last=5, last_turn_has_tool_calls=True
+        )
+        is False
+    )
+    # delta = 21000 - 15000 = 6000 >= 5000 + tool_calls >= 3 → 触发
+    assert (
+        service.should_extract(
+            current_tokens=21_000, tool_calls_since_last=5, last_turn_has_tool_calls=True
+        )
+        is True
+    )

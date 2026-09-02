@@ -80,7 +80,9 @@ class SessionRegistry:
             llm=llm,
             memory_path=PathManager.session_memory_path(self.source_root, session_id),
         )
-        session_mem.ensure_file()
+        # 不在启动时 ensure_file:让 should_extract 的 init 分支(10000 token)
+        # 自己创建笔记。否则笔记一开始就存在,init 分支永远走不到,
+        # 直接走 update 分支(5000 token)门槛太低。extract worker 里有 ensure_file。
         agent = AgentService(
             llm=llm,
             source_root=self.source_root,

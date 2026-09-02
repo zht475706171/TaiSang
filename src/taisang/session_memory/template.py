@@ -81,14 +81,14 @@ def get_template() -> str:
     return DEFAULT_TEMPLATE
 
 
-def get_update_prompt(current_notes: str, recent_conversation: str, memory_path: str) -> str:
-    """根据当前笔记 + 最新对话片段 + 笔记路径,组装更新 prompt。
+def get_update_prompt(current_notes: str, memory_path: str) -> str:
+    """根据当前笔记 + 笔记路径,组装更新 prompt。
 
-    注意:recent_conversation 在新设计下是完整最近 N 条对话(不截断),
-    但本函数只做字符串拼接,截断与否由调用方决定。
+    注意:recent_conversation 不再拼进 prompt 文本,而是作为独立的 user message
+    放在 update 指令之前(对齐 Claude Code 的 [...forkContextMessages, ...promptMessages] 结构)。
+    本函数只负责 update 指令本身的模板填充。
     """
     return DEFAULT_UPDATE_PROMPT.format(
         current_notes=current_notes,
-        recent_conversation=recent_conversation,
         memory_path=str(memory_path),
     )

@@ -355,25 +355,31 @@ class AgentService:
         """
         if not self.session_memory:
             return
+        current_tokens = self.ctx.total_tokens()
         if self.session_memory.should_extract(
-            self.ctx.total_tokens(),
+            current_tokens,
             self._tool_calls_since_last_extract,
             last_turn_has_tool_calls=last_turn_has_tool_calls,
         ):
-            self.session_memory._do_extract(recent_conversation=self._recent_text())
+            self.session_memory._do_extract(
+                recent_conversation=self._recent_text(),
+                current_tokens=current_tokens,
+            )
             self._tool_calls_since_last_extract = 0
 
     def _recent_text(self) -> str:
-        """取最近几轮对话作为 session memory extract 输入。读 self.ctx。
+        """取完整对话历史作为 session memory extract 输入。读 self.ctx。
 
-        不截断(对齐 Claude Code:forkContextMessages 传完整消息,不截 200 字)。
-        取最近 20 条消息,每条原样拼接 role + content(content 是字符串就直接用,
+        对齐 Claude Code:forkContextMessages 传完整 messages,不截断。
+        不用担心过大 —— autocompact 触发后 ctx 会被替换成 [boundary, summary_msg],
+        所以 ctx 最多也就 token_budget(32K)左右,且 session_memory 触发阈值
+        (init 10000 / update delta 5000)保证了积累量,不会发空内容。
+        每条原样拼接 role + content(content 是字符串就直接用,
         是 list 就 JSON 序列化以保留 tool_calls 结构)。
         """
         msgs = self.ctx.messages()
-        recent = msgs[-20:]
         lines: list[str] = []
-        for m in recent:
+        for m in msgs:
             role = m.get("role", "?")
             content = m.get("content", "")
             if isinstance(content, list):

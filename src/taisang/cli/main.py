@@ -198,7 +198,8 @@ def chat(repo: str, allow_dirs: tuple[str, ...], log_level: str) -> None:
         llm=llm,
         memory_path=PathManager.session_memory_path(source_root, "main"),
     )
-    session_mem.ensure_file()
+    # 不在启动时 ensure_file:让 should_extract 的 init 分支(10000 token)
+    # 自己创建笔记。extract worker 里有 ensure_file。
 
     agent = AgentService(
         llm=llm,

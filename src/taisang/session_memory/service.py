@@ -130,15 +130,22 @@ class SessionMemoryService:
             return None  # 还是空模板,没维护过
         return content
 
-    def _do_extract(self, recent_conversation: str) -> None:
+    def _do_extract(self, recent_conversation: str, current_tokens: int) -> None:
         """启动后台线程异步提取笔记(立即返回,不阻塞主流程)。
 
         机制:
         - 检查 _extracting 标志:已在跑就跳过(不排队)
+        - 触发时记录 _last_extracted_tokens = current_tokens(下次 delta 从这算)
         - 启动 daemon 线程跑 _extract_worker
         - _extract_worker 内部 try/except 全包,失败只 log warning
 
         主流程调本方法后立即拿到控制权,不用等 LLM 调用完成。
+
+        参数:
+            recent_conversation: 最近对话文本(传给 forked agent 当上下文)
+            current_tokens: 触发时的 ctx token 数,用于更新 _last_extracted_tokens
+                (下次 delta_tokens = new_current - 这个值,对齐 Claude Code
+                recordExtractionTokenCount)
         """
         with self._lock:
             if self._extracting:
@@ -148,6 +155,10 @@ class SessionMemoryService:
                 )
                 return
             self._extracting = True
+            # 记录触发时的 token 数,下次 delta 从这算(对齐 Claude Code
+            # recordExtractionTokenCount)。放 lock 里跟 _extracting 一起写,
+            # 避免跟下次 should_extract 竞争。
+            self._last_extracted_tokens = current_tokens
         log.info("session memory extract STARTED: memory=%s", self.memory_path.name)
         # 启动后台 daemon 线程(主进程退出时不等)
         t = threading.Thread(
@@ -167,11 +178,11 @@ class SessionMemoryService:
         try:
             self.ensure_file()
             current_notes = self.memory_path.read_text(encoding="utf-8")
-            prompt = get_update_prompt(current_notes, recent_conversation, self.memory_path)
+            prompt = get_update_prompt(current_notes, self.memory_path)
             # 函数内 import 避免循环依赖
             from .forked_agent import run_forked_agent
 
-            run_forked_agent(self.llm, self.memory_path, prompt)
+            run_forked_agent(self.llm, self.memory_path, recent_conversation, prompt)
             log.info(
                 "session memory extract DONE: memory=%s",
                 self.memory_path.name,

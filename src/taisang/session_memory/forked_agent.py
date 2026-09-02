@@ -25,12 +25,16 @@ MAX_TURNS = 10  # 多轮 loop 硬上限,防 LLM 一直调工具不停
 def run_forked_agent(
     llm: LLMClient | MockLLM,
     memory_path: Path,
+    recent_conversation: str,
     update_prompt: str,
     max_turns: int = MAX_TURNS,
 ) -> LLMResponse:
     """跑分支 agent,多轮 loop 调 Edit 改 memory_path。
 
     机制(对齐 Claude Code runForkedAgent + query loop):
+    - initialMessages = [recent_conversation 作为 user, assistant 占位, update_prompt 作为 user]
+      —— 对齐原版 [...forkContextMessages, ...promptMessages] 结构,
+      让 update 指令里的 "Based on the user conversation above" 指向前面的对话历史。
     - 循环 max_turns 次:
       - 发 messages 给 LLM
       - LLM 没返回 tool_calls → 终止(它说停了)
@@ -47,6 +51,10 @@ def run_forked_agent(
     """
     messages: list[dict] = [
         {"role": "system", "content": "你是会话笔记维护助手。"},
+        # 把最近对话作为 user 消息(update 指令之前的 "above")
+        {"role": "user", "content": recent_conversation},
+        # assistant 占位回应,让 update 指令出现在新 user turn 里
+        {"role": "assistant", "content": "(以上是最近的用户对话历史,请基于此更新笔记)"},
         {"role": "user", "content": update_prompt},
     ]
     tools = _allowed_tools_schema(memory_path)
