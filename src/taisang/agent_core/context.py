@@ -112,13 +112,40 @@ class ContextManager:
     def messages(self) -> list[dict]:
         return list(self._messages)
 
-    def replace_messages(self, new_messages: list[dict]) -> None:
-        """autocompact 调用:整个换掉 messages。
+    def replace_messages(
+        self,
+        new_messages: list[dict],
+        compaction_via: str | None = None,
+    ) -> None:
+        """整体替换 messages。
 
-        Task 12 三道压缩流水线最后一道(autocompact)产出新的 messages 后,
-        调本方法整体替换,而非逐条 append。
+        compaction_via 非 None 时(autocompact 触发):先写一条 system boundary
+        record 到 on_append,再把 new_messages 逐条写到 on_append。这是压缩边界,
+        resume 时读到这条知道这里压缩过(UI 显示分隔符,灌回 ctx 时跳过)。
+
+        compaction_via=None 时(如 enforce_budget 路径):只替换内存,不写 on_append
+        (避免每次 run 循环都重复写盘;enforce_budget 的替换是瞬态优化,不需要持久化)。
         """
+        if self.on_append and compaction_via:
+            self.on_append({"role": "system", "content": f"[compacted via {compaction_via}]"})
+            for msg in new_messages:
+                self.on_append(msg)
         self._messages = list(new_messages)
+
+    def load_from_records(self, records: list[dict]) -> None:
+        """resume 灌回专用:从 jsonl records 重建内存 _messages。
+
+        - 过滤 compacted boundary record(role=system 且 content 以 [compacted 开头)
+        - 直接赋值 _messages,不走 on_append(避免重复写盘)
+
+        用于 SessionRegistry.get_or_load lazy 重建时,把磁盘 jsonl 灌回内存 ctx。
+        """
+        self._messages = [
+            r for r in records
+            if not (r.get("role") == "system"
+                    and isinstance(r.get("content"), str)
+                    and r["content"].startswith("[compacted"))
+        ]
 
     # NOTE:旧 compact() 保留(向后兼容 test_context.py 5 个测试)。
     # Task 12 的新版 AgentService 不再调本方法,改用 enforce_budget + autocompact。
