@@ -104,22 +104,13 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
         """发消息:后台线程跑 agent.run,事件经 SSE 推。立即返回 {ok: true}。
 
         前端 POST 后立刻去订阅 /events 收事件流。run 异步,不阻塞此响应。
+        turn 结束(成功或异常)后更新 meta.json(title=最后 query 前40字)。
         """
         sess = registry.get_or_load(session_id)
         if sess is None:
             raise HTTPException(404, f"session not found: {session_id}")
-        # 用 per-session lock 串行化(防止前端连点发多消息踩 AgentService)
         if sess.lock.locked():
             raise HTTPException(409, "session busy: previous run still active")
-
-        # 首条消息自动取 query 作标题(若 title 还为空)
-        titled = registry.set_title_from_query(session_id, req.query)
-        if titled:
-            # 通知前端更新顶栏 + 会话列表项
-            sess.broker.publish(
-                "session_title_updated",
-                {"id": session_id, "title": sess.title},
-            )
 
         # 后台线程跑 run。on_event 把事件 push 到 broker。
         def _run():
@@ -133,6 +124,16 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
                     log.exception("agent run failed: %s", e)
                     sess.broker.publish("run_error", {"error": f"agent run failed: {e}"})
                 finally:
+                    # turn 结束更新 meta.json(title=最后 query 前40字)
+                    try:
+                        registry.update_meta_after_turn(session_id, req.query)
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("update_meta_after_turn failed: %s", e)
+                    # 通知前端更新顶栏 + 会话列表项(title 可能变了)
+                    sess.broker.publish(
+                        "session_title_updated",
+                        {"id": session_id, "title": sess.title},
+                    )
                     # run 结束哨兵:前端据此停止 thinking 动画
                     sess.broker.publish("run_end", {})
 

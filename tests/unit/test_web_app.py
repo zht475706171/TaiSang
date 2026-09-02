@@ -125,3 +125,26 @@ def test_list_all_fallback_when_meta_missing(tmp_path, monkeypatch):
     assert len(items) == 1
     # title fallback 到 id(meta 没有)
     assert items[0]["title"] == sid
+
+
+def test_send_message_updates_meta(tmp_path, monkeypatch):
+    """POST /messages 后,meta.json 的 title 是 query 前 40 字。"""
+    monkeypatch.setenv("TAISANG_MOCK_LLM", "1")
+    from taisang.web.app import create_app
+
+    app = create_app(tmp_path)
+    client = TestClient(app)
+    sid = client.post("/api/sessions", json={"title": ""}).json()["id"]
+    client.post(f"/api/sessions/{sid}/messages", json={"query": "帮我看看这个文件"})
+
+    # 等后台 run 跑完(lock 释放)
+    sess = app.state.registry.get_or_load(sid)
+    import time
+    deadline = time.time() + 5
+    while sess.lock.locked() and time.time() < deadline:
+        time.sleep(0.01)
+
+    # 释放内存实例,强制从 meta.json 读
+    app.state.registry._sessions.clear()
+    items = app.state.registry.list_all()
+    assert items[0]["title"] == "帮我看看这个文件"
