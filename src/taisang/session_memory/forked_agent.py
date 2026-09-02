@@ -59,6 +59,16 @@ def run_forked_agent(
         resp = llm.chat(messages=messages, tools=tools)
         last_resp = resp
 
+        # log LLM 响应(无论有没有 tool_calls),方便诊断 LLM 为啥跳过/调啥工具
+        text_preview = (resp.text or "")[:300]
+        log.info(
+            "session memory forked agent: turn %d/%d LLM response: " "text=%r tool_calls=%d",
+            turn,
+            max_turns,
+            text_preview,
+            len(resp.tool_calls),
+        )
+
         if not resp.tool_calls:
             log.info(
                 "session memory forked agent: turn %d/%d done (LLM stopped, no more tool_calls), "
