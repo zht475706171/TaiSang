@@ -617,6 +617,128 @@
     color: var(--rule);
     margin-bottom: 12px;
   }
+
+  /* ===== 配置页 ===== */
+  #config-btn-wrap {
+    padding: 12px 20px;
+    border-top: 1px solid var(--rule-soft);
+    flex-shrink: 0;
+  }
+  #config-btn {
+    width: 100%;
+    padding: 8px 12px;
+    background: transparent;
+    border: 1px solid var(--rule);
+    color: var(--ink-2);
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    border-radius: 4px;
+    text-align: left;
+  }
+  #config-btn:hover { background: var(--paper-3); color: var(--ink); }
+  #config-btn .gear { margin-right: 8px; }
+
+  #config-page {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: var(--paper);
+    z-index: 100;
+    padding: 40px 20% 20px;
+    overflow-y: auto;
+  }
+  #config-page.hidden { display: none; }
+  .config-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 32px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .config-header h2 {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--ink);
+    margin: 0;
+  }
+  #config-close-btn {
+    background: transparent;
+    border: none;
+    font-size: 24px;
+    color: var(--ink-3);
+    cursor: pointer;
+    padding: 0 8px;
+  }
+  #config-close-btn:hover { color: var(--ink); }
+  .config-form label {
+    display: block;
+    margin-bottom: 20px;
+  }
+  .field-label {
+    display: block;
+    font-size: 12px;
+    color: var(--ink-3);
+    margin-bottom: 6px;
+    font-family: "IBM Plex Mono", monospace;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+  .config-form input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    background: var(--paper-2);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 14px;
+    color: var(--ink);
+    box-sizing: border-box;
+  }
+  .config-form input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .config-form input[readonly] { background: var(--paper-3); color: var(--ink-3); }
+  .api-key-row { display: flex; gap: 8px; }
+  .api-key-row input { flex: 1; }
+  .api-key-row button {
+    padding: 10px 16px;
+    border: 1px solid var(--rule);
+    background: transparent;
+    color: var(--ink-2);
+    cursor: pointer;
+    border-radius: 4px;
+    font-size: 13px;
+  }
+  .api-key-row button:hover { background: var(--paper-3); }
+  .config-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    margin-top: 32px;
+  }
+  .config-actions button {
+    padding: 10px 24px;
+    border: 1px solid var(--rule);
+    background: transparent;
+    color: var(--ink-2);
+    cursor: pointer;
+    border-radius: 4px;
+    font-size: 14px;
+  }
+  .config-actions button.primary {
+    background: var(--accent);
+    color: var(--paper);
+    border-color: var(--accent);
+  }
+  .config-actions button:hover { background: var(--paper-3); }
+  .config-actions button.primary:hover { opacity: 0.9; }
+  .cfg-msg {
+    margin-top: 16px;
+    font-size: 13px;
+    color: var(--accent);
+    min-height: 18px;
+  }
+  .cfg-msg.error { color: #c0392b; }
 </style>
 </head>
 <body>
@@ -630,6 +752,9 @@
     <button id="new-session-btn"><span class="plus">+</span>新对话</button>
   </div>
   <div id="session-list"></div>
+  <div id="config-btn-wrap">
+    <button id="config-btn"><span class="gear">⚙</span>设置</button>
+  </div>
 </div>
 
 <div id="main">
@@ -649,6 +774,35 @@
       <textarea id="query-input" placeholder="输入问题,Enter 发送,Shift+Enter 换行..." rows="1"></textarea>
       <button id="send-btn">发送</button>
     </div>
+  </div>
+</div>
+
+<div id="config-page" class="hidden">
+  <div class="config-header">
+    <h2>⚙ LLM 配置</h2>
+    <button id="config-close-btn" title="关闭">×</button>
+  </div>
+  <div class="config-form">
+    <label>
+      <span class="field-label">Model</span>
+      <input id="cfg-model" type="text" placeholder="gpt-4o / glm-5.2 / Kimi-K2.6 / ...">
+    </label>
+    <label>
+      <span class="field-label">API Key</span>
+      <div class="api-key-row">
+        <input id="cfg-api-key" type="text" readonly placeholder="(未设置)">
+        <button id="cfg-api-key-edit" type="button">修改</button>
+      </div>
+    </label>
+    <label>
+      <span class="field-label">Base URL</span>
+      <input id="cfg-base-url" type="text" placeholder="https://api.openai.com/v1">
+    </label>
+    <div class="config-actions">
+      <button id="cfg-cancel">取消</button>
+      <button id="cfg-save" class="primary">保存</button>
+    </div>
+    <div id="cfg-msg" class="cfg-msg"></div>
   </div>
 </div>
 
@@ -1120,6 +1274,84 @@ function appendSystemNote(text) {
   box.appendChild(el);
   scrollToBottom();
 }
+
+// ========== 配置页 ==========
+const configPage = document.getElementById('config-page');
+const cfgModel = document.getElementById('cfg-model');
+const cfgApiKey = document.getElementById('cfg-api-key');
+const cfgBaseUrl = document.getElementById('cfg-base-url');
+const cfgMsg = document.getElementById('cfg-msg');
+
+async function openConfigPage() {
+  cfgMsg.textContent = '';
+  cfgMsg.classList.remove('error');
+  try {
+    const r = await fetch('/api/config');
+    if (!r.ok) throw new Error('GET /api/config failed');
+    const data = await r.json();
+    cfgModel.value = data.model || '';
+    cfgBaseUrl.value = data.base_url || '';
+    cfgApiKey.value = data.api_key || '';
+    cfgApiKey.setAttribute('readonly', '');
+    cfgApiKey.dataset.original = data.api_key || '';
+    cfgApiKey.placeholder = data.api_key_set ? data.api_key : '(未设置)';
+    configPage.classList.remove('hidden');
+  } catch (e) {
+    cfgMsg.textContent = '加载配置失败: ' + e.message;
+    cfgMsg.classList.add('error');
+    configPage.classList.remove('hidden');
+  }
+}
+
+function closeConfigPage() {
+  configPage.classList.add('hidden');
+}
+
+async function saveConfig() {
+  cfgMsg.textContent = '';
+  cfgMsg.classList.remove('error');
+  const model = cfgModel.value.trim();
+  const baseUrl = cfgBaseUrl.value.trim();
+  if (!model) {
+    cfgMsg.textContent = 'model 不能为空';
+    cfgMsg.classList.add('error');
+    return;
+  }
+  if (!baseUrl) {
+    cfgMsg.textContent = 'base_url 不能为空';
+    cfgMsg.classList.add('error');
+    return;
+  }
+  // api_key 只读 → __unchanged__ sentinel;可编辑(用户点了修改) → 提交明文
+  const apiKey = cfgApiKey.hasAttribute('readonly')
+    ? '__unchanged__'
+    : cfgApiKey.value;
+  try {
+    const r = await fetch('/api/config', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({model, api_key: apiKey, base_url: baseUrl}),
+    });
+    if (!r.ok) throw new Error('POST /api/config failed: ' + r.status);
+    cfgApiKey.value = '';
+    cfgApiKey.setAttribute('readonly', '');
+    closeConfigPage();
+  } catch (e) {
+    cfgMsg.textContent = '保存失败: ' + e.message;
+    cfgMsg.classList.add('error');
+  }
+}
+
+document.getElementById('config-btn').addEventListener('click', openConfigPage);
+document.getElementById('config-close-btn').addEventListener('click', closeConfigPage);
+document.getElementById('cfg-cancel').addEventListener('click', closeConfigPage);
+document.getElementById('cfg-save').addEventListener('click', saveConfig);
+document.getElementById('cfg-api-key-edit').addEventListener('click', () => {
+  cfgApiKey.removeAttribute('readonly');
+  cfgApiKey.value = '';
+  cfgApiKey.focus();
+  cfgApiKey.placeholder = '输入新的 api_key';
+});
 
 // ========== 启动 ==========
 loadSessions();
