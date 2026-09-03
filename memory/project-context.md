@@ -75,7 +75,17 @@
 | writing-plans Plan 1 | ✅ 完成（docs/superpowers/plans/2026-08-21-plan-1-python-mvp.md）|
 | Plan 1 实现 | ✅ 完成（19 个 task 全部实现,94 个测试通过,端到端闭环验证）|
 | Plan 1 增量:本地 Repo 支持改造 | ✅ 完成（2026-08-21,108 测试,已 push origin/main）|
-| Plan 2-6 | ⏳ 待启动 |
+| coding agent 重构(删 doc 遗留 + 加 Edit/Write/Bash 工具) | ✅ 完成(2026-08-31)|
+| Web UI(Inkwell 设计 + 会话标题自动生成) | ✅ 完成(commit `180b18c`)|
+| 持久 shell + 动态 cwd + PermissionManager | ✅ 完成(commit `e552540`,`60b80d0`)|
+| token 用量统计 + 本地 Web UI | ✅ 完成(commit `f6e23c5`)|
+| tool_calls OpenAI 标准 schema + ctx 实例支持多轮 + reset | ✅ 完成(commit `f4a9d3f`)|
+| session 持久化(ConversationStore + meta.json + resume) | ✅ 完成(2026-09-02)|
+| Plan 1:Vue 脚手架 | ✅ 完成(2026-09-03,commit `eac3752`→`e02850a`)|
+| Plan 2:Sidebar + 会话 CRUD + 空状态首页 | ✅ 完成(commit `9494647`)|
+| Plan 3:SSE 流式对话 + 消息列表 + 斜杠命令 | ✅ 完成(commit `1469dc2`)|
+| Plan 4:Vue 版 ConfigModal 表单 | ✅ 完成(commit `6dd3825`)|
+| Plan 5:Playwright e2e 验收 | ✅ 完成(2026-09-03,5.1-5.3 通过,5.4 跳过)|
 
 ## Plan 1 实现总结
 
@@ -118,8 +128,10 @@ taisang ask "<问题>" --repo <local_repo_path>
 
 ## 下一步
 
-- **当前**:泰哥要真实 LLM 闭环测试(预计 `taisang index D:/GoProject/wwBuy` + ask)
-- 测试通过后可选:启动 Plan 2(多语言扩展)、Plan 3(评测体系)、或处理 lessons-learned 高优技术债
+- **当前**:Plan 1-5 全部完成,Vue 前端 + 后端 + SSE + 会话持久化端到端打通
+- 真实 LLM 闭环测试(配 Kimi-K2.6 或其他 OpenAI 兼容 endpoint,验证 tool_call / ToolCard / ConfirmCard 渲染)
+- push 到 origin/main(本地 ahead 12 commits)
+- 启动 Plan 6(未定主题,候选:多语言扩展 / 评测体系 / 性能优化 / 构建产物拆包降低 chunk size)
 
 ## 相关文件
 
