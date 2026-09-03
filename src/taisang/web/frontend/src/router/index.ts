@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import ChatView from '@/views/ChatView.vue'
+
+const ChatView = () => import('@/views/ChatView.vue')
 
 const router = createRouter({
   history: createWebHistory(),

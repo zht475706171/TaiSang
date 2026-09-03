@@ -12,6 +12,15 @@ export default defineConfig({
     outDir: '../static',
     emptyOutDir: false,
     assetsDir: 'assets',
+    chunkSizeWarningLimit: 1500,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'tdesign': ['tdesign-vue-next', 'tdesign-icons-vue-next'],
+          'vue-vendor': ['vue', 'vue-router', 'pinia'],
+        },
+      },
+    },
   },
   server: {
     port: 5173,
