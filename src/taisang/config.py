@@ -1,6 +1,7 @@
-"""LLM endpoint 配置加载。
+"""LLM endpoint 配置加载 + 保存。
 
-优先级: 环境变量 > ~/.taisang/settings.json > 默认值。
+优先级: 文件(~/.taisang/settings.json) > env > 默认值。
+前端写入后文件是真相源,env 仅在文件字段缺失时 fallback。
 单一 LLM 配置(summarizer / agent 全用同一个模型)。
 """
 
@@ -29,15 +30,20 @@ def _load_settings_file() -> dict:
     p = _settings_path()
     if not p.exists():
         return {}
-    return json.loads(p.read_text(encoding="utf-8"))
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        # 损坏文件当空处理,fallback 到 env/默认
+        return {}
 
 
 def load_config() -> LLMConfig:
-    """加载 LLM 配置。env 覆盖文件,文件覆盖默认值。"""
+    """加载 LLM 配置。文件 > env > 默认。env 仅在文件字段缺失时 fallback。"""
     file_cfg = _load_settings_file().get("llm", {})
-    base_url = os.environ.get("TAISANG_LLM_BASE_URL", file_cfg.get("base_url"))
-    api_key = os.environ.get("TAISANG_LLM_API_KEY", file_cfg.get("api_key"))
-    model = os.environ.get("TAISANG_LLM_MODEL", file_cfg.get("model"))
+    # 文件优先,文件没的字段才看 env
+    base_url = file_cfg.get("base_url") or os.environ.get("TAISANG_LLM_BASE_URL")
+    api_key = file_cfg.get("api_key") or os.environ.get("TAISANG_LLM_API_KEY")
+    model = file_cfg.get("model") or os.environ.get("TAISANG_LLM_MODEL")
     config_data = {
         "base_url": base_url,
         "api_key": api_key,
@@ -46,3 +52,25 @@ def load_config() -> LLMConfig:
     # Drop None values so Pydantic field defaults apply
     config_data = {k: v for k, v in config_data.items() if v is not None}
     return LLMConfig(**config_data)
+
+
+def save_config(cfg: LLMConfig) -> None:
+    """原子写 ~/.taisang/settings.json 的 llm 字段。保留其它字段。权限 600。"""
+    p = _settings_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    existing = _load_settings_file()
+    existing["llm"] = cfg.model_dump()
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+    try:
+        os.chmod(tmp, 0o600)
+    except OSError:
+        pass  # Windows 无 chmod,跳过
+    os.replace(tmp, p)
+
+
+def mask_api_key(key: str) -> str:
+    """api_key 打码:前 3 + *** + 后 4,短于 8 字符全 ***。"""
+    if len(key) <= 8:
+        return "***"
+    return f"{key[:3]}***{key[-4:]}"
