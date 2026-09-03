@@ -9,6 +9,15 @@
       </div>
     </header>
 
+    <div
+      v-if="currentSession && connectionState !== 'connected'"
+      class="connection-bar"
+      :class="connectionState"
+    >
+      <span v-if="connectionState === 'reconnecting'">连接断开,正在重连...</span>
+      <span v-else-if="connectionState === 'failed'">连接失败,请刷新页面</span>
+    </div>
+
     <div class="chat-body">
       <EmptyState v-if="!messages.length" @send="handleEmptySend" />
       <MessageList
@@ -44,7 +53,7 @@ const currentSession = computed(
 
 // useChatStream 需要一个 ref,用 toRef 把 computed 转 ref
 const sessionIdRef = toRef(currentId)
-const { messages, thinking, send, loadHistory, openEventStream, closeEventStream, answerConfirm } =
+const { messages, thinking, connectionState, send, loadHistory, openEventStream, closeEventStream, answerConfirm } =
   useChatStream(sessionIdRef, () => store.fetchSessions())
 
 watch(
@@ -163,5 +172,21 @@ async function handleDebug() {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+}
+.connection-bar {
+  padding: 8px 24px;
+  font-size: 13px;
+  text-align: center;
+  font-family: var(--app-font-mono);
+}
+.connection-bar.reconnecting {
+  background: #fff3e0;
+  color: #b25803;
+  border-bottom: 1px solid #ffcc80;
+}
+.connection-bar.failed {
+  background: #fde7e7;
+  color: #c0392b;
+  border-bottom: 1px solid #f5b7b1;
 }
 </style>
