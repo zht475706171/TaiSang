@@ -1,1 +1,0 @@
-import{_ as o,c as s,a,o as c}from"./index-BMQTzsOO.js";const n={},t={class:"home-placeholder"};function r(l,e){return c(),s("div",t,[...e[0]||(e[0]=[a("h1",null,"TaiSang Vue",-1),a("p",null,"脚手架就位,等待 Plan 2 实现 Sidebar + 空状态首页",-1)])])}const _=o(n,[["render",r],["__scopeId","data-v-b671b9dc"]]);export{_ as default};
