@@ -2,7 +2,7 @@
   <div class="chat-view">
     <header v-if="currentSession" class="topbar">
       <span class="label">session</span>
-      <h1 class="title">{{ currentSession.title }}</h1>
+      <h1 class="title">{{ currentSession.title || currentSession.id }}</h1>
       <div class="actions">
         <t-button variant="text" size="small" @click="handleReset">/reset</t-button>
         <t-button variant="text" size="small" @click="handleDebug">/debug</t-button>
@@ -11,10 +11,12 @@
 
     <div class="chat-body">
       <EmptyState v-if="!currentSession" @send="handleSendNew" />
-      <div v-else class="messages-placeholder">
-        <p>消息列表将在 Plan 3 实现</p>
-        <p class="hint">当前会话:{{ currentSession.title }}</p>
-      </div>
+      <MessageList
+        v-else
+        :messages="messages"
+        :thinking="thinking"
+        @answer="handleAnswer"
+      />
     </div>
 
     <MessageInput v-if="currentSession" @send="handleSend" />
@@ -22,26 +24,40 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, watch, toRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import EmptyState from '@/components/EmptyState.vue'
+import MessageList from '@/components/MessageList.vue'
 import MessageInput from '@/components/MessageInput.vue'
 import { useSessionStore } from '@/stores/session'
 import { resetSession, setDebug } from '@/api/session'
+import { useChatStream } from '@/composables/useChatStream'
 
 const route = useRoute()
 const router = useRouter()
 const store = useSessionStore()
 
 const currentId = computed(() => (route.params.id as string) ?? null)
-const currentSession = computed(() =>
-  store.sessions.find((s) => s.id === currentId.value) ?? null,
+const currentSession = computed(
+  () => store.sessions.find((s) => s.id === currentId.value) ?? null,
 )
+
+// useChatStream 需要一个 ref,用 toRef 把 computed 转 ref
+const sessionIdRef = toRef(currentId)
+const { messages, thinking, send, loadHistory, openEventStream, closeEventStream, answerConfirm } =
+  useChatStream(sessionIdRef, () => store.fetchSessions())
 
 watch(
   currentId,
-  (id) => {
+  async (id) => {
     store.select(id)
+    if (id) {
+      await loadHistory(id)
+      openEventStream(id)
+    } else {
+      closeEventStream()
+      messages.value = []
+    }
   },
   { immediate: true },
 )
@@ -50,17 +66,45 @@ async function handleSendNew(query: string) {
   const id = await store.createNew()
   store.select(id)
   router.push(`/chat/${id}`)
-  // Plan 3 才真正发消息,这里先跳转
-  void query
+  // 跳转后 watch 会自动 loadHistory + openEventStream
+  // 等流接上再发消息
+  setTimeout(() => send(query), 100)
 }
 
-async function handleSend(_query: string) {
-  // Plan 3 实现:POST /api/sessions/:id/messages + SSE
+async function handleSend(query: string) {
+  // 斜杠命令
+  if (query.startsWith('/')) {
+    await handleSlash(query)
+    return
+  }
+  await send(query)
+  store.fetchSessions()  // 刷新列表(title 可能变了)
+}
+
+async function handleSlash(cmd: string) {
+  const parts = cmd.slice(1).split(/\s+/)
+  const name = parts[0]
+  if (name === 'reset' && currentId.value) {
+    await resetSession(currentId.value)
+    messages.value = []
+  } else if (name === 'debug' && currentId.value) {
+    await setDebug(currentId.value, true)
+  } else if (name === 'clear') {
+    messages.value = []
+  } else {
+    // 未知命令当普通消息发
+    await send(cmd)
+  }
+}
+
+async function handleAnswer(token: string, approve: boolean) {
+  await answerConfirm(token, approve)
 }
 
 async function handleReset() {
   if (!currentId.value) return
   await resetSession(currentId.value)
+  messages.value = []
 }
 
 async function handleDebug() {
@@ -109,18 +153,5 @@ async function handleDebug() {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-}
-.messages-placeholder {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  color: var(--td-text-color-placeholder);
-  font-size: 14px;
-  gap: 8px;
-}
-.messages-placeholder .hint {
-  font-size: 12px;
 }
 </style>
