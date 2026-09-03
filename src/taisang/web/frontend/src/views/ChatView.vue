@@ -10,7 +10,7 @@
     </header>
 
     <div class="chat-body">
-      <EmptyState v-if="!currentSession" @send="handleSendNew" />
+      <EmptyState v-if="!messages.length" @send="handleEmptySend" />
       <MessageList
         v-else
         :messages="messages"
@@ -19,7 +19,7 @@
       />
     </div>
 
-    <MessageInput v-if="currentSession" @send="handleSend" />
+    <MessageInput v-if="currentSession && messages.length" @send="handleSend" />
   </div>
 </template>
 
@@ -69,6 +69,16 @@ async function handleSendNew(query: string) {
   // 跳转后 watch 会自动 loadHistory + openEventStream
   // 等流接上再发消息
   setTimeout(() => send(query), 100)
+}
+
+// EmptyState 发送:有会话直接发,无会话先创建再发
+async function handleEmptySend(query: string) {
+  if (currentId.value) {
+    await send(query)
+    store.fetchSessions()
+  } else {
+    await handleSendNew(query)
+  }
 }
 
 async function handleSend(query: string) {
