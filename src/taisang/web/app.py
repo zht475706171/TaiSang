@@ -12,6 +12,8 @@
 - GET  /api/sessions/{id}/events   → SSE 流
 - POST /api/sessions/{id}/confirm/{token} → {approve: bool} 回应确认
 - POST /api/sessions/{id}/permission/{token} → {approve: bool} 回应权限请求
+- GET  /api/config           → 取 LLM 配置(api_key 打码)
+- POST /api/config           → 保存 LLM 配置 + 立即应用到所有 session
 
 run 跑在线程池(AsyncExitStack + run_in_threadpool),on_event 回调把事件
 push 到该会话 EventBroker,SSE 端点从 broker 订阅队列 get + yield。
@@ -33,6 +35,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .session_registry import SessionRegistry
+from ..config import LLMConfig, load_config, mask_api_key, save_config
 
 log = logging.getLogger(__name__)
 
@@ -53,6 +56,12 @@ class DebugReq(BaseModel):
 
 class ConfirmReq(BaseModel):
     approve: bool
+
+
+class ConfigReq(BaseModel):
+    model: str
+    api_key: str
+    base_url: str
 
 
 def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastAPI:
@@ -148,6 +157,33 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
         if sess is None:
             raise HTTPException(404, f"session not found: {session_id}")
         return sess.store.load_all()
+
+    @app.get("/api/config")
+    async def get_config() -> dict:
+        """返回当前 LLM 配置。api_key 打码。"""
+        cfg = load_config()
+        return {
+            "model": cfg.model,
+            "base_url": cfg.base_url,
+            "api_key": mask_api_key(cfg.api_key),
+            "api_key_set": bool(cfg.api_key),
+        }
+
+    @app.post("/api/config")
+    async def save_config_route(req: ConfigReq) -> dict:
+        """保存 LLM 配置 + 立即应用到所有 session。
+
+        api_key = "__unchanged__" 时保留原 api_key(前端 readonly 提交这个 sentinel)。
+        """
+        if req.api_key == "__unchanged__":
+            old_cfg = load_config()
+            api_key = old_cfg.api_key
+        else:
+            api_key = req.api_key
+        cfg = LLMConfig(model=req.model, api_key=api_key, base_url=req.base_url)
+        save_config(cfg)
+        registry.apply_llm_config(cfg)
+        return {"ok": True}
 
     @app.get("/api/sessions/{session_id}/events")
     async def event_stream(session_id: str) -> StreamingResponse:

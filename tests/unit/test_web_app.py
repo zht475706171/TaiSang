@@ -266,3 +266,89 @@ def test_apply_llm_config_skips_mock_sessions(tmp_path, monkeypatch):
     reg.apply_llm_config(LLMConfig(base_url="x", api_key="y", model="z"))
     # 还是 MockLLM,没被替换
     assert isinstance(sess.agent.llm, MockLLM)
+
+
+def test_get_config_returns_masked_api_key(tmp_path, monkeypatch):
+    """GET /api/config 返回 model/base_url + api_key 打码。"""
+    monkeypatch.delenv("TAISANG_MOCK_LLM", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    from taisang.config import LLMConfig, save_config
+    from taisang.web.app import create_app
+
+    save_config(LLMConfig(base_url="https://api.x.com", api_key="sk-abcdefghij1234567", model="m"))
+    app = create_app(tmp_path)
+    client = TestClient(app)
+    r = client.get("/api/config")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["model"] == "m"
+    assert data["base_url"] == "https://api.x.com"
+    assert data["api_key"] == "sk-***4567"  # 打码
+    assert data["api_key_set"] is True
+
+
+def test_post_config_saves_and_applies(tmp_path, monkeypatch):
+    """POST /api/config 写文件 + apply 到所有 session。"""
+    monkeypatch.delenv("TAISANG_MOCK_LLM", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    from taisang.web.app import create_app
+
+    app = create_app(tmp_path)
+    client = TestClient(app)
+    r = client.post("/api/config", json={
+        "model": "new-model",
+        "api_key": "sk-newkey1234567890",
+        "base_url": "https://api.new.com",
+    })
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+    # 文件被写
+    import json
+    p = tmp_path / ".taisang" / "settings.json"
+    data = json.loads(p.read_text(encoding="utf-8"))
+    assert data["llm"]["model"] == "new-model"
+    assert data["llm"]["base_url"] == "https://api.new.com"
+    assert data["llm"]["api_key"] == "sk-newkey1234567890"
+
+
+def test_post_config_empty_api_key_allowed(tmp_path, monkeypatch):
+    """POST /api/config 空 api_key 允许保存(本地 endpoint 如 ollama 不需要 key)。"""
+    monkeypatch.delenv("TAISANG_MOCK_LLM", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    from taisang.web.app import create_app
+
+    app = create_app(tmp_path)
+    client = TestClient(app)
+    r = client.post("/api/config", json={
+        "model": "m",
+        "api_key": "",
+        "base_url": "http://localhost:11434/v1",
+    })
+    assert r.status_code == 200
+
+
+def test_post_config_unchanged_api_key_keeps_old(tmp_path, monkeypatch):
+    """POST /api/config api_key='__unchanged__' 时保留原 api_key。"""
+    monkeypatch.delenv("TAISANG_MOCK_LLM", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    from taisang.config import LLMConfig, save_config
+    from taisang.web.app import create_app
+
+    save_config(LLMConfig(base_url="https://api.x.com", api_key="sk-original123456789", model="m"))
+    app = create_app(tmp_path)
+    client = TestClient(app)
+    r = client.post("/api/config", json={
+        "model": "new-m",
+        "api_key": "__unchanged__",
+        "base_url": "https://api.new.com",
+    })
+    assert r.status_code == 200
+    import json
+    p = tmp_path / ".taisang" / "settings.json"
+    data = json.loads(p.read_text(encoding="utf-8"))
+    assert data["llm"]["api_key"] == "sk-original123456789"  # 保留
+    assert data["llm"]["model"] == "new-m"  # 改了
