@@ -3,7 +3,7 @@
     <h1 class="title">开始对话</h1>
     <p class="subtitle">输入问题,Enter 发送</p>
     <div class="input-wrap">
-      <MessageInput placeholder="输入问题,Enter 发送..." @send="handleSend" />
+      <MessageInput placeholder="输入问题,Enter 发送..." autofocus @send="handleSend" />
     </div>
   </div>
 </template>

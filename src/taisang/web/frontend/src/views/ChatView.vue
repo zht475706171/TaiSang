@@ -4,8 +4,8 @@
       <span class="label">session</span>
       <h1 class="title">{{ currentSession.title || currentSession.id }}</h1>
       <div class="actions">
-        <t-button variant="text" size="small" @click="handleReset">/reset</t-button>
-        <t-button variant="text" size="small" @click="handleDebug">/debug</t-button>
+        <t-button variant="text" size="small" aria-label="重置会话(/reset)" @click="handleReset">/reset</t-button>
+        <t-button variant="text" size="small" aria-label="切换 debug 模式(/debug)" @click="handleDebug">/debug</t-button>
       </div>
     </header>
 
@@ -28,7 +28,7 @@
       />
     </div>
 
-    <MessageInput v-if="currentSession && messages.length" @send="handleSend" />
+    <MessageInput v-if="currentSession && messages.length" autofocus @send="handleSend" />
   </div>
 </template>
 

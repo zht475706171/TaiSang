@@ -2,7 +2,11 @@
   <div
     class="session-item"
     :class="{ active }"
+    role="button"
+    tabindex="0"
+    :aria-label="`会话: ${session.title || session.id}`"
     @click="emit('select')"
+    @keydown.enter.prevent="emit('select')"
   >
     <div class="session-content">
       <div class="session-title">{{ session.title }}</div>
@@ -15,6 +19,7 @@
     <button
       class="delete-btn"
       title="删除会话"
+      aria-label="删除会话"
       @click.stop="emit('delete')"
     >
       <t-icon name="close" />

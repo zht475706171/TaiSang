@@ -8,7 +8,12 @@
     </div>
 
     <div class="new-session-wrap">
-      <t-button block theme="primary" @click="handleNewSession">
+      <t-button
+        block
+        theme="primary"
+        aria-label="新建对话(Cmd/Ctrl+K)"
+        @click="emit('new-session')"
+      >
         <template #icon>
           <t-icon name="add" />
         </template>
@@ -31,7 +36,12 @@
     </div>
 
     <div class="sidebar-footer">
-      <t-button block variant="text" @click="emit('open-config')">
+      <t-button
+        block
+        variant="text"
+        aria-label="LLM 配置(Cmd/Ctrl+,)"
+        @click="emit('open-config')"
+      >
         <template #icon>
           <t-icon name="setting" />
         </template>
@@ -46,15 +56,9 @@ import { useRouter } from 'vue-router'
 import SessionItem from './SessionItem.vue'
 import { useSessionStore } from '@/stores/session'
 
-const emit = defineEmits<{ 'open-config': [] }>()
+const emit = defineEmits<{ 'open-config': []; 'new-session': [] }>()
 const router = useRouter()
 const store = useSessionStore()
-
-async function handleNewSession() {
-  const id = await store.createNew()
-  store.select(id)
-  router.push(`/chat/${id}`)
-}
 
 function handleSelect(id: string) {
   store.select(id)

@@ -7,6 +7,7 @@
         class="query-textarea"
         :placeholder="placeholder"
         rows="1"
+        aria-label="输入消息,Enter 发送,Shift+Enter 换行"
         @keydown="handleKeydown"
         @input="autoResize"
       ></textarea>
@@ -21,15 +22,22 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick } from 'vue'
+import { ref, nextTick, onMounted } from 'vue'
 
-withDefaults(defineProps<{ placeholder?: string }>(), {
+const props = withDefaults(defineProps<{ placeholder?: string; autofocus?: boolean }>(), {
   placeholder: '输入问题,Enter 发送,Shift+Enter 换行...',
+  autofocus: false,
 })
 
 const emit = defineEmits<{ send: [query: string] }>()
 const text = ref('')
 const taRef = ref<HTMLTextAreaElement | null>(null)
+
+onMounted(() => {
+  if (props.autofocus && taRef.value) {
+    taRef.value.focus()
+  }
+})
 
 function autoResize() {
   const el = taRef.value
