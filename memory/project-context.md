@@ -86,6 +86,10 @@
 | Plan 3:SSE 流式对话 + 消息列表 + 斜杠命令 | ✅ 完成(commit `1469dc2`)|
 | Plan 4:Vue 版 ConfigModal 表单 | ✅ 完成(commit `6dd3825`)|
 | Plan 5:Playwright e2e 验收 | ✅ 完成(2026-09-03,5.1-5.3 通过,5.4 跳过)|
+| Plan 6:构建优化(Vite manualChunks) | ✅ 完成(2026-09-03)|
+| Plan 7:SSE 断连重连 + 错误处理 | ✅ 完成(2026-09-03)|
+| Plan 8:键盘快捷键 + 可访问性 | ✅ 完成(2026-09-03)|
+| Plan 9:Playwright e2e 增强 | ✅ 完成(2026-09-03,9.1-9.4 全通过)|
 
 ## Plan 1 实现总结
 
