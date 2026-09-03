@@ -222,3 +222,47 @@ def test_autocompact_writes_boundary_and_resume_gets_compacted(tmp_path, monkeyp
     # 压缩前的 old message 1/2 是独立 user 消息,截断后不该作为独立消息存在
     assert "old message 1" not in user_contents
     assert "old message 2" not in user_contents
+
+
+def test_apply_llm_config_replaces_all_non_mock_sessions(tmp_path, monkeypatch):
+    """apply_llm_config 重建所有非 MockLLM session 的 LLMClient。"""
+    monkeypatch.setenv("TAISANG_MOCK_LLM", "1")  # 让 reg.create() 走 MockLLM
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    from taisang.web.session_registry import SessionRegistry
+    from taisang.config import LLMConfig
+    from taisang.llm_client import LLMClient
+
+    reg = SessionRegistry(tmp_path)
+    sid1 = reg.create(title="")
+    sid2 = reg.create(title="")
+    sess1 = reg.get_or_load(sid1)
+    sess2 = reg.get_or_load(sid2)
+    # 构造时是 MockLLM,手动换成真 LLMClient 模拟生产
+    old_cfg = LLMConfig(base_url="https://old", api_key="sk-old1234567890", model="old-m")
+    sess1.agent.llm = LLMClient(old_cfg)
+    sess2.agent.llm = LLMClient(old_cfg)
+
+    new_cfg = LLMConfig(base_url="https://new", api_key="sk-new1234567890", model="new-m")
+    reg.apply_llm_config(new_cfg)
+
+    for sess in [sess1, sess2]:
+        assert isinstance(sess.agent.llm, LLMClient)
+        assert sess.agent.llm.model == "new-m"
+        assert sess.agent.llm.cfg.base_url == "https://new"
+
+
+def test_apply_llm_config_skips_mock_sessions(tmp_path, monkeypatch):
+    """apply_llm_config 跳过 MockLLM 实例(测试场景不替换)。"""
+    monkeypatch.setenv("TAISANG_MOCK_LLM", "1")
+    from taisang.web.session_registry import SessionRegistry
+    from taisang.config import LLMConfig
+    from taisang.llm_client import MockLLM
+
+    reg = SessionRegistry(tmp_path)
+    sid = reg.create(title="")
+    sess = reg.get_or_load(sid)
+    assert isinstance(sess.agent.llm, MockLLM)
+    reg.apply_llm_config(LLMConfig(base_url="x", api_key="y", model="z"))
+    # 还是 MockLLM,没被替换
+    assert isinstance(sess.agent.llm, MockLLM)

@@ -24,7 +24,7 @@ from pathlib import Path
 
 from ..agent_core.permission import WebPermissionManager
 from ..agent_core.service import AgentService
-from ..config import load_config
+from ..config import LLMConfig, load_config
 from ..llm_client import LLMClient, MockLLM
 from ..session_memory.service import SessionMemoryService
 from ..storage.conversation_store import ConversationStore
@@ -271,6 +271,20 @@ class SessionRegistry:
             return False
         sess.agent.set_debug(on)
         return True
+
+    def apply_llm_config(self, cfg: LLMConfig) -> None:
+        """所有内存 session 的 LLMClient 用新 cfg 重建。立即生效。
+
+        MockLLM 实例跳过(测试场景)。
+        正在跑的 run 持有 sess.lock,run 内部用旧 llm 跑完当前 LLM 调用;
+        下一次 LLM 调用用新 llm —— 这是可接受的边界(model 中途切换)。
+        """
+        with self._lock:
+            sessions = list(self._sessions.values())
+        for sess in sessions:
+            if isinstance(sess.agent.llm, MockLLM):
+                continue
+            sess.agent.llm = LLMClient(cfg)
 
 
 def _relative_time(seconds: float) -> str:
