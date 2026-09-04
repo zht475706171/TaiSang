@@ -160,6 +160,8 @@ class AgentService:
             shell=self.shell,
             confirmer=self.confirmer,
             permission=self.permission,
+            skills=self.skills,
+            ctx=self.ctx,
         )
         observations_dir = PathManager.observations_dir(self.source_root)
         transcript_path = self.source_root / ".taisang" / "sessions" / "current.jsonl"

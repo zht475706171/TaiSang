@@ -588,6 +588,8 @@ class ToolRegistry:
         permission: PermissionManager | None = None,
         bash_timeout: int = 30,
         observations_dir: Path | None = None,
+        skills: list | None = None,
+        ctx=None,
     ) -> None:
         if confirmer is None:
             confirmer = AutoDenyConfirmer()
@@ -619,6 +621,11 @@ class ToolRegistry:
         }
         if self._bash is not None:
             self._tools[BashTool.name] = self._bash
+        # SkillTool:LLM 调用 skill 工具,把 SKILL.md 正文注入 ctx。
+        # 局部导入避免循环引用(skill_tool.py 从 tools.py 导入 _BaseTool)。
+        if skills:
+            from .skill_tool import SkillTool
+            self._tools[SkillTool.name] = SkillTool(skills=skills, ctx=ctx)
 
     def _sync_cwd(self) -> None:
         """从 shell 拿当前 cwd,同步到所有文件工具。Bash cd 后文件工具跟随。"""

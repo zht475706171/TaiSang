@@ -60,3 +60,22 @@ def test_args_passed_through():
     tool.run({"skill": "r", "args": "fix bug #123"})
     injected = [m["content"] for m in ctx.messages() if m["role"] == "user"][-1]
     assert "fix bug #123" in injected
+
+
+def test_tool_registry_registers_skill_tool():
+    from taisang.agent_core.tools import ToolRegistry
+    s = Skill(name="x", description="d", when_to_use="", allowed_tools=None,
+              dir_path=Path("."), content="body", source="user")
+    reg = ToolRegistry(cwd=Path("."), skills=[s], ctx=None)
+    schemas = reg.schemas()
+    names = [sch["name"] for sch in schemas]
+    assert "skill" in names
+
+
+def test_tool_registry_without_skills_no_skill_tool():
+    """向后兼容:不传 skills 时 ToolRegistry 不注册 SkillTool。"""
+    from taisang.agent_core.tools import ToolRegistry
+    reg = ToolRegistry(cwd=Path("."))
+    schemas = reg.schemas()
+    names = [sch["name"] for sch in schemas]
+    assert "skill" not in names
