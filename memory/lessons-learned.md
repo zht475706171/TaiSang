@@ -310,3 +310,21 @@ extend-exclude = "tests/fixtures"
    - 教训:实例属性 vs 局部变量的边界——跨方法调用需要保留的状态必须放实例属性;reset 要分清"短期对话"和"长期笔记"两层记忆
 3. **`_try_autocompact`/`_recent_text` 参数从 `ctx` 改 `self.ctx`**
    - 判断:无测试直接调这两个私有方法(grep 确认),直接删参数用 self.ctx 更简洁;若测试需 mock ctx 再考虑保留参数
+### 会话删除竞态 — writer 写已删目录炸 Errno 2(2026-09-04)
+
+**问题**:用户删除会话时,后台 agent run 线程还在跑,`on_append` 回调继续写 `conversation.jsonl`,但 `delete()` 已把目录 rmtree 掉 → `FileNotFoundError [Errno 2]` → 被_run except 捕获推 `run_error` 事件 → 用户在前端看到"agent run failed"误导性错误。
+
+**根因**:`SessionRegistry.delete()` 只 pop 内存 + rmtree 磁盘,没等在跑的 run 释放 `sess.lock`。
+
+**解法**(两层加固):
+1. `delete(session_id, timeout=5)` 先 pop 内存(挡新 run)→ `sess.lock.acquire(timeout=5)` 等在跑的 run 结束 → 再 rmtree;超时返回 False,路由查仍存在则 409 busy
+2. `ConversationStore.append()` 写前 `self.session_dir.mkdir(parents=True, exist_ok=True)` 自愈(外部删目录/手动清理也能恢复,不抛 Errno 2)
+
+**前端**:`Sidebar.handleDelete` try/catch,失败 alert"会话正在运行,请等当前回复结束后再删";`apiDelete` 对非 2xx 抛错(request.ts 原本就抛)。
+
+**教训**:
+- 任何"删除会写文件的对象"都要考虑并发 writer——先停 writer 再删盘,或让 writer 自愈
+- 后台 run 线程的生命周期比用户请求长,删除类操作必须持锁等待
+- `shutil.rmtree(ignore_errors=True)` 不够,它只忽略 rmtree 自己的错,不管后续 writer
+- 测试复现方法:单独线程持 `sess.lock` 循环写 jsonl,主线程 delete,断言 writer 线程 errors 列表为空
+- 幂等性:delete 不存在的会话返回 True(前端照常移除),run 卡死才返回 False → 路由二次查 get_or_load 区分 404 vs 409
