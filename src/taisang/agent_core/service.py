@@ -310,6 +310,11 @@ class AgentService:
                 self.ctx.append_tool_result(observation, name=name, tool_call_id=tc["id"])
                 self._tool_calls_since_last_extract += 1
 
+            # SKILL.md 注入必须排在全部 tool_result 之后(OpenAI 协议要求
+            # assistant(tool_calls) 后紧跟 tool 消息,user 注入放最后),由
+            # SkillTool 的 pending 队列延迟到这里统一 flush。
+            registry.flush_skill_injections()
+
             # session memory post-sampling(update 分支):
             # 工具执行完,此时本轮 resp 一定有 tool_calls(无 tool_calls 已在上面的 return 分支)。
             # 传 last_turn_has_tool_calls=True,走 update 触发分支(tokens + tool_calls 双满足)。

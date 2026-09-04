@@ -2,8 +2,12 @@
 
 LLM 调用本工具来"打开"一个 skill。本工具不做真正的执行,只负责把
 SKILL.md 的正文(做变量替换 + allowed_tools 提示 + 用户参数段)作为
-一条 user 消息追加到 ContextManager,然后返回一个 tool_result,让
-LLM 继续往下走、按照注入的 SKILL.md 内容去调其它工具。
+一条 user 消息注入 ContextManager,然后 LLM 继续往下走、按照注入的
+SKILL.md 内容去调其它工具。
+
+注入时机:run() 只把正文放进 pending 队列,等主循环把本轮全部 tool_result
+append 完后调 flush() 才真正 append_user。OpenAI 协议要求
+assistant(tool_calls) 后紧跟 tool 消息,user 注入必须排在 tool_result 之后。
 
 设计要点:
 - 权限:v1 全部自动允许,不调 confirmer(skill 本身只是文本注入,无副作用)。
@@ -17,8 +21,6 @@ LLM 继续往下走、按照注入的 SKILL.md 内容去调其它工具。
 """
 
 from __future__ import annotations
-
-from pathlib import Path
 
 from ..skills.types import Skill
 from .tools import _BaseTool
@@ -38,11 +40,12 @@ class SkillTool(_BaseTool):
         """初始化。
 
         skills:可用 skill 列表(loader 产出)。内部按 name 建字典便于按名查找。
-        ctx:ContextManager 实例,用于 append_user 注入 SKILL.md 正文。
-            v1 立即注入;None 时(测试场景)跳过注入只返回结果。
+        ctx:ContextManager 实例,flush() 时 append_user 注入 SKILL.md 正文。
+            None 时(测试场景)注入内容滞留 pending 队列,不报错。
         """
         self.skills = {s.name: s for s in skills}
-        self.ctx = ctx  # ContextManager,用于 append_user 注入 SKILL.md
+        self.ctx = ctx  # ContextManager,flush() 时 append_user 注入 SKILL.md
+        self.pending: list[str] = []  # 待注入正文,等 tool_result 写完再 flush
 
     def schema(self) -> dict:
         """返回 OpenAI function schema。"""
@@ -63,7 +66,12 @@ class SkillTool(_BaseTool):
         }
 
     def run(self, args: dict) -> dict:
-        """执行 skill 调用:查表 -> 校验 disabled -> 注入正文 -> 返回 tool_result。
+        """执行 skill 调用:查表 -> 校验 disabled -> 正文入队 -> 返回 tool_result。
+
+        正文不立即 append_user,先进 pending 队列,由 AgentService 主循环在本轮
+        全部 tool_result 写完后调 flush() 注入。OpenAI 协议要求
+        assistant(tool_calls) 后紧跟 tool 消息,user 注入必须排在 tool_result
+        之后,严格 provider 才不会 400。
 
         args:
           - skill: skill 名称(必填)
@@ -72,7 +80,7 @@ class SkillTool(_BaseTool):
         返回:
           - {"error": "skill not found"} — 名称不在已注册 skill 表
           - {"error": "skill disabled"} — skill 被 disabled 标记
-          - {"ok": True, "injected": True, "skill": name} — 注入成功
+          - {"ok": True, "injected": True, "skill": name} — 正文已入队
         """
         name = args.get("skill", "")
         skill = self.skills.get(name)
@@ -81,9 +89,21 @@ class SkillTool(_BaseTool):
         if skill.disabled:
             return {"error": "skill disabled"}
         content = self._inject(skill, args.get("args", ""))
-        if self.ctx is not None:
-            self.ctx.append_user(content)
+        self.pending.append(content)
         return {"ok": True, "injected": True, "skill": name}
+
+    def flush(self) -> None:
+        """把 pending 队列里的 SKILL.md 正文依次 append_user 注入 ctx 并清空。
+
+        AgentService 在本轮所有 tool_result append 完之后调用,保证消息序
+        assistant(tool_calls) → tool → user(SKILL.md) 符合 OpenAI 协议。
+        """
+        if self.ctx is None:
+            self.pending.clear()
+            return
+        for content in self.pending:
+            self.ctx.append_user(content)
+        self.pending.clear()
 
     def _inject(self, skill: Skill, args: str) -> str:
         """构造注入到 ctx 的 SKILL.md 正文。

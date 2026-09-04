@@ -83,3 +83,36 @@ def test_reload_skills(tmp_path, monkeypatch):
     resp = client.post("/api/skills/reload")
     assert resp.status_code == 200
     assert resp.json()["ok"] is True
+
+
+def test_session_registry_agent_applies_disabled_state(tmp_path, monkeypatch):
+    """skills_state.json 的 disabled 状态要传导到 session_registry 建的 agent。
+
+    toggle 只写 state 文件;若 _build_session 加载 skill 时不应用 state,
+    用户在 UI 关掉的 skill 在 agent 里照样可用(bug)。
+    """
+    monkeypatch.setenv("TAISANG_MOCK_LLM", "1")
+    user_dir = tmp_path / "skills"
+    (user_dir / "commit").mkdir(parents=True)
+    (user_dir / "commit" / "SKILL.md").write_text(
+        "---\ndescription: 生成 commit\n---\nbody", encoding="utf-8"
+    )
+    settings = tmp_path / "settings.json"
+    settings.write_text(
+        f'{{"skills": {{"user_dirs": ["{user_dir.as_posix()}"]}}}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("taisang.config._settings_path", lambda: settings)
+    state_file = tmp_path / "skills_state.json"
+    state_file.write_text('{"commit": true}', encoding="utf-8")
+    monkeypatch.setattr("taisang.web.skills_api._STATE_FILE", state_file)
+
+    from taisang.web.session_registry import SessionRegistry
+
+    reg = SessionRegistry(tmp_path)
+    sess = reg.get_or_load(reg.create(title=""))
+    commit = next(s for s in sess.agent.skills if s.name == "commit")
+    assert commit.disabled is True
+    # disabled skill 不进 system prompt 清单
+    sys_msgs = [m["content"] for m in sess.agent.ctx.messages() if m["role"] == "system"]
+    assert all("commit" not in c for c in sys_msgs if "可用 Skills" in c)

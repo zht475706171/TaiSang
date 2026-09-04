@@ -69,6 +69,20 @@ def test_agent_loop_invokes_skill_and_injects(tmp_path):
     assert answer.complete is True
     assert answer.text == "已提交"
 
+    # 5) 消息序严格遵守 OpenAI 协议:assistant(tool_calls) → tool → user(SKILL.md)。
+    #    user 注入必须在 tool_result 之后,严格 provider 才不会 400。
+    seq = [
+        (m["role"], m.get("tool_calls") is not None)
+        for m in svc.ctx.messages()
+    ]
+    idx_assistant_tc = next(i for i, (r, has_tc) in enumerate(seq) if r == "assistant" and has_tc)
+    idx_tool = next(i for i, (r, _) in enumerate(seq) if r == "tool")
+    idx_injected_user = next(
+        i for i, m in enumerate(svc.ctx.messages())
+        if m["role"] == "user" and "# Skill: commit" in m.get("content", "")
+    )
+    assert idx_assistant_tc < idx_tool < idx_injected_user
+
 
 def test_agent_loop_disabled_skill_returns_error_observation(tmp_path):
     """disabled skill:SkillTool 返回 error observation,LLM 拿到错误继续。"""

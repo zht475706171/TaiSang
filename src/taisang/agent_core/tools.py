@@ -640,6 +640,16 @@ class ToolRegistry:
     def schemas(self) -> list[dict]:
         return [t.schema() for t in self._tools.values()]
 
+    def flush_skill_injections(self) -> None:
+        """触发 SkillTool 的 pending 注入(若有注册)。
+
+        AgentService 在本轮全部 tool_result append 完之后调用,保证
+        SKILL.md 的 user 注入排在 tool 消息之后,符合 OpenAI 协议。
+        """
+        tool = self._tools.get("skill")
+        if tool is not None:
+            tool.flush()
+
     def call(self, name: str, args: dict) -> dict:
         tool = self._tools.get(name)
         if not tool:

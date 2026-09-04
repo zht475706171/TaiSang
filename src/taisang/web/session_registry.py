@@ -25,13 +25,13 @@ from pathlib import Path
 
 from ..agent_core.permission import WebPermissionManager
 from ..agent_core.service import AgentService
-from ..config import LLMConfig, load_config, load_skills_config
+from ..config import LLMConfig, load_config
 from ..llm_client import LLMClient, MockLLM
 from ..session_memory.service import SessionMemoryService
-from ..skills.loader import load_skills
 from ..storage.conversation_store import ConversationStore
 from ..storage.paths import PathManager
 from .confirm import WebConfirmer
+from .skills_api import load_skills_with_state
 from .sse import EventBroker
 
 
@@ -91,10 +91,10 @@ class SessionRegistry:
         # 自己创建笔记。否则笔记一开始就存在,init 分支永远走不到,
         # 直接走 update 分支(5000 token)门槛太低。extract worker 里有 ensure_file。
         # Skill 加载:user_dirs(~/.taisang/skills 默认)+ project_dirs(配置的)
-        # 再拼上 source_root/.taisang/skills(项目级,自动,不用用户配)
-        skills_cfg = load_skills_config()
-        project_dirs = list(skills_cfg.project_dirs) + [self.source_root / ".taisang" / "skills"]
-        skills = load_skills(user_dirs=skills_cfg.user_dirs, project_dirs=project_dirs)
+        # 再拼上 source_root/.taisang/skills(项目级,自动,不用用户配)。
+        # 用 skills_api 的共享 helper:同时应用 skills_state.json 的 disabled
+        # 状态,保证 UI 上的开关对新会话的 agent 生效。
+        skills = load_skills_with_state(self.source_root)
         agent = AgentService(
             llm=llm,
             source_root=self.source_root,

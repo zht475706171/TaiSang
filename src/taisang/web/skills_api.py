@@ -43,8 +43,12 @@ def _save_disabled_state(state: dict[str, bool]) -> None:
     os.replace(tmp, _STATE_FILE)
 
 
-def _load_all_skills(source_root: Path) -> list[Skill]:
-    """加载所有 skill(user + project),应用 disabled 状态。"""
+def load_skills_with_state(source_root: Path) -> list[Skill]:
+    """加载所有 skill(user + project),应用 skills_state.json 的 disabled 状态。
+
+    本模块的 list/toggle 路由和 session_registry._build_session 共用,
+    保证 UI 上的开关和新会话里的 agent 看到同一份状态。
+    """
     cfg = load_skills_config()
     project_dirs = list(cfg.project_dirs) + [source_root / ".taisang" / "skills"]
     skills = load_skills(user_dirs=cfg.user_dirs, project_dirs=project_dirs)
@@ -60,7 +64,7 @@ def register_skills_routes(app, source_root: Path) -> None:
     @app.get("/api/skills")
     async def list_skills() -> dict:
         """列出所有 skill(name/description/when_to_use/source/allowed_tools/disabled)。"""
-        skills = _load_all_skills(source_root)
+        skills = load_skills_with_state(source_root)
         return {"skills": [
             {
                 "name": s.name,
@@ -81,7 +85,7 @@ def register_skills_routes(app, source_root: Path) -> None:
     @app.post("/api/skills/{name}/toggle")
     async def toggle_skill(name: str) -> dict:
         """切换 skill 的 disabled 状态,持久化到 skills_state.json。"""
-        skills = _load_all_skills(source_root)
+        skills = load_skills_with_state(source_root)
         if not any(s.name == name for s in skills):
             raise HTTPException(404, "skill not found")
         state = _load_disabled_state()

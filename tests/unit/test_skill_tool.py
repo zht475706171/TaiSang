@@ -18,7 +18,8 @@ def test_disabled_skill_returns_error():
     assert result["error"] == "skill disabled"
 
 
-def test_normal_call_injects_user_message():
+def test_normal_call_injects_user_message_on_flush():
+    """run() 只入队,flush() 才 append_user(延迟注入保证消息序)。"""
     s = Skill(name="commit", description="d", when_to_use="",
               allowed_tools=None, dir_path=Path("."), content="调用 git commit", source="user")
     ctx = ContextManager()
@@ -26,8 +27,23 @@ def test_normal_call_injects_user_message():
     result = tool.run({"skill": "commit"})
     assert result["ok"] is True
     assert result["injected"] is True
+    # run 后未 flush:ctx 还没有注入
+    assert not [m for m in ctx.messages() if m["role"] == "user"]
+    tool.flush()
     msgs = ctx.messages()
     assert any("调用 git commit" in m.get("content", "") for m in msgs if m["role"] == "user")
+
+
+def test_run_without_flush_keeps_pending():
+    """ctx 为 None 时 run 正常,pending 滞留不报错,flush 清空。"""
+    s = Skill(name="x", description="d", when_to_use="",
+              allowed_tools=None, dir_path=Path("."), content="body", source="user")
+    tool = SkillTool(skills=[s], ctx=None)
+    result = tool.run({"skill": "x"})
+    assert result["ok"] is True
+    assert len(tool.pending) == 1
+    tool.flush()  # ctx=None,清空不报错
+    assert tool.pending == []
 
 
 def test_skill_dir_substitution():
@@ -36,6 +52,7 @@ def test_skill_dir_substitution():
     ctx = ContextManager()
     tool = SkillTool(skills=[s], ctx=ctx)
     tool.run({"skill": "r"})
+    tool.flush()
     msgs = ctx.messages()
     injected = [m["content"] for m in msgs if m["role"] == "user"][-1]
     assert "C:/some/dir/a.txt" in injected
@@ -48,6 +65,7 @@ def test_allowed_tools_hint():
     ctx = ContextManager()
     tool = SkillTool(skills=[s], ctx=ctx)
     tool.run({"skill": "r"})
+    tool.flush()
     injected = [m["content"] for m in ctx.messages() if m["role"] == "user"][-1]
     assert "只允许使用以下工具: Bash, Read" in injected
 
@@ -58,6 +76,7 @@ def test_args_passed_through():
     ctx = ContextManager()
     tool = SkillTool(skills=[s], ctx=ctx)
     tool.run({"skill": "r", "args": "fix bug #123"})
+    tool.flush()
     injected = [m["content"] for m in ctx.messages() if m["role"] == "user"][-1]
     assert "fix bug #123" in injected
 
