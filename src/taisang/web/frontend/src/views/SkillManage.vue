@@ -2,18 +2,36 @@
   <div class="skill-manage">
     <div class="page-header">
       <h2 class="page-title">Skill 管理</h2>
-      <t-button variant="outline" aria-label="重载 skills" @click="reload">
-        <template #icon>
-          <t-icon name="refresh" />
-        </template>
-        重载
-      </t-button>
+      <div class="header-actions">
+        <t-button variant="outline" aria-label="导入 skill" @click="fileInput?.click()">
+          <template #icon>
+            <t-icon name="upload" />
+          </template>
+          导入 Skill
+        </t-button>
+        <t-button variant="outline" aria-label="重载 skills" @click="reload">
+          <template #icon>
+            <t-icon name="refresh" />
+          </template>
+          重载
+        </t-button>
+      </div>
     </div>
+    <input
+      ref="fileInput"
+      type="file"
+      accept=".md,.zip"
+      style="display: none"
+      @change="onImportFile"
+    />
 
     <t-table row-key="name" :data="skills" :columns="columns" :loading="loading">
       <template #source="{ row }">
-        <t-tag :theme="row.source === 'project' ? 'primary' : 'default'" size="small">
-          {{ row.source === 'project' ? '项目' : '用户' }}
+        <t-tag
+          :theme="row.source === 'project' ? 'primary' : row.source === 'system' ? 'warning' : 'default'"
+          size="small"
+        >
+          {{ row.source === 'project' ? '项目' : row.source === 'system' ? '内置' : '用户' }}
         </t-tag>
       </template>
       <template #allowed_tools="{ row }">
@@ -23,11 +41,22 @@
       <template #enabled="{ row }">
         <t-switch :value="!row.disabled" @change="() => toggle(row.name)" />
       </template>
+      <template #op="{ row }">
+        <t-button
+          v-if="row.source !== 'system'"
+          variant="text"
+          theme="danger"
+          size="small"
+          @click="confirmDelete(row.name)"
+        >
+          删除
+        </t-button>
+        <span v-else class="dim">-</span>
+      </template>
       <template #empty>
         <div class="empty-tip">
-          暂无 skill。在 <code>~/.taisang/skills/&lt;name&gt;/SKILL.md</code> 或
-          <code>&lt;repo&gt;/.taisang/skills/&lt;name&gt;/SKILL.md</code> 放置 SKILL.md
-          后点重载。
+          暂无自定义 skill。点右上角"导入 Skill"上传 .md 或 .zip,
+          或手动放置到 <code>~/.taisang/skills/&lt;name&gt;/SKILL.md</code>。
         </div>
       </template>
     </t-table>
@@ -36,26 +65,28 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { MessagePlugin } from 'tdesign-vue-next'
+import { MessagePlugin, DialogPlugin } from 'tdesign-vue-next'
 
 interface SkillRow {
   name: string
   description: string
   when_to_use: string
-  source: 'user' | 'project'
+  source: 'user' | 'project' | 'system'
   allowed_tools: string[] | null
   disabled: boolean
 }
 
 const skills = ref<SkillRow[]>([])
 const loading = ref(false)
+const fileInput = ref<HTMLInputElement>()
 
 const columns = [
-  { colKey: 'name', title: '名称', width: 160 },
+  { colKey: 'name', title: '名称', width: 140 },
   { colKey: 'description', title: '描述', ellipsis: true },
-  { colKey: 'source', title: '来源', width: 90, cell: 'source' },
-  { colKey: 'allowed_tools', title: '工具限制', width: 140, cell: 'allowed_tools' },
-  { colKey: 'enabled', title: '启用', width: 80, cell: 'enabled' },
+  { colKey: 'source', title: '来源', width: 80, cell: 'source' },
+  { colKey: 'allowed_tools', title: '工具限制', width: 130, cell: 'allowed_tools' },
+  { colKey: 'enabled', title: '启用', width: 70, cell: 'enabled' },
+  { colKey: 'op', title: '操作', width: 70, cell: 'op' },
 ]
 
 async function fetchSkills() {
@@ -90,6 +121,74 @@ async function reload() {
   }
 }
 
+async function onImportFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  const ok = await doImport(file, false)
+  if (ok) {
+    await fetchSkills()
+    MessagePlugin.success(`已导入 ${file.name}`)
+  }
+  input.value = ''
+}
+
+async function doImport(file: File, overwrite: boolean): Promise<boolean> {
+  const fd = new FormData()
+  fd.append('file', file)
+  const r = await fetch(`/api/skills/import?overwrite=${overwrite}`, {
+    method: 'POST',
+    body: fd,
+  })
+  if (r.status === 409) {
+    const confirmed = await new Promise<boolean>((resolve) => {
+      const dialog = DialogPlugin.confirm({
+        header: 'Skill 已存在',
+        body: '同名 skill 已存在,是否覆盖?',
+        confirmBtn: '覆盖',
+        cancelBtn: '取消',
+        onConfirm: () => {
+          dialog.destroy()
+          resolve(true)
+        },
+        onClose: () => {
+          dialog.destroy()
+          resolve(false)
+        },
+      })
+    })
+    if (confirmed) return doImport(file, true)
+    return false
+  }
+  if (!r.ok) {
+    const data = (await r.json().catch(() => ({}))) as { detail?: string }
+    MessagePlugin.error(data.detail ?? '导入失败')
+    return false
+  }
+  return true
+}
+
+function confirmDelete(name: string) {
+  const dialog = DialogPlugin.confirm({
+    header: '删除 skill',
+    body: `确定删除 "${name}"?该操作不可恢复。`,
+    confirmBtn: '删除',
+    cancelBtn: '取消',
+    theme: 'danger',
+    onConfirm: async () => {
+      dialog.destroy()
+      const r = await fetch(`/api/skills/${name}`, { method: 'DELETE' })
+      if (r.ok) {
+        await fetchSkills()
+        MessagePlugin.success('已删除')
+      } else {
+        const data = (await r.json().catch(() => ({}))) as { detail?: string }
+        MessagePlugin.error(data.detail ?? '删除失败')
+      }
+    },
+  })
+}
+
 onMounted(fetchSkills)
 </script>
 
@@ -110,6 +209,10 @@ onMounted(fetchSkills)
   font-size: 20px;
   font-weight: 600;
   margin: 0;
+}
+.header-actions {
+  display: flex;
+  gap: 8px;
 }
 .dim {
   color: var(--td-text-color-placeholder);
