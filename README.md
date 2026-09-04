@@ -2,7 +2,87 @@
 
 > 简化版 Claude Code / Trae —— 一个能读写、修改、调试代码的交互式 coding agent。
 
-**当前状态:v0.1(重构后首版,REPL + Web UI 双入口)**
+**当前状态:v0.1(REPL + Web UI 双入口,带 Skill 系统)**
+
+## 功能
+
+### ✅ 已实现
+
+**Agent 核心**
+- 单 agent 主循环:LLM ↔ 6 个工具(Read / Grep / Glob / Edit / Write / Bash),直到产出最终答案
+- Bash 用持久 shell,cd 跨调用保留;危险命令**黑名单**拦截(rm -rf /, mkfs, 强推 main, fork bomb 等)
+- 文件工具相对/绝对路径、offset/limit 分页读、自动跟随 Bash cd 后的 cwd
+- 上下文管理三道闸:`apply-tool-result-budget` 落盘超大 tool_result → `autocompact` LLM 摘要 → `session memory` 长效笔记(autocompact 触发时零 LLM 注入)
+- 工具确认:Web 端 Edit/Write 改文件前弹卡片,CLI 端 y/n 确认
+- 权限模型:WebPermissionManager,首次访问新目录问用户批准,批准后该目录树放行
+- 调试模式:`/debug` 打印完整 messages + 工具 observation;`/reset` 清对话上下文(保留 session memory)
+- Token 用量:每轮 + session 累计
+
+**Skill 系统(渐进披露)**
+- `SKILL.md` 目录格式,frontmatter 字段:`name` / `description` / `when_to_use` / `allowed_tools`
+- 三源加载,优先级 `project > user > system`:
+  - `project`:`<repo>/.taisang/skills/`(自动)
+  - `user`:`~/.taisang/skills/`(settings.json 可配 user_dirs)
+  - `system`:包内 `taisang/skills/builtin/`,含 `commit` 和 `review` 两个内置 skill
+- 加载机制:启动时全量读入内存(只 meta + 全文),SYSTEM_PROMPT 只注入轻量清单(每条 ≤250 字符、总预算 2000 字符,超限降级到只列名字)
+- LLM 调 `skill` 工具时,SKILL.md 全文(替换 `${TAISANG_SKILL_DIR}` + `allowed_tools` 提示段 + 用户参数段)作为 user 消息注入
+- **前端 Skill 管理页** (`/skills`):表格、来源标签(项目/用户/内置)、启用开关、重载、**导入**(MD 单文件 / zip 目录形式)+ 覆盖确认(同名 409 → confirm → `?overwrite=true`)、**删除**(内置不可删,顺带清 disabled 状态记录)
+- 安全:frontmatter name 字符集校验(`/^[A-Za-z0-9][A-Za-z0-9_-]*$/` 防目录穿越)+ zip-slip 拦截(拒绝绝对路径/`..`/反斜杠/前缀外成员)+ 10MB 上限
+
+**Web UI** (Vue 3.5 + Vite + TDesign)
+- 多会话列表(Sidebar) / 中对话流(ChatView) / 底一体式输入框(Claude 风格)
+- 工具卡片可折叠 / Markdown 渲染 / 代码高亮
+- SSE 实时事件流(8 种 AgentEvent)
+- LLM 配置页(`/settings`):model / api_key(打码)/ base_url,保存后立即应用到所有活跃 session(MockLLM 实例除外)
+- SPA history 路由:`/chat/:id`、`/skills` 深链刷新不 404
+- Sidebar 入口:新对话、Skill 管理(active)、MCP 管理(占位)
+
+**CLI** (`taisang chat`)
+- REPL 交互
+- `/exit` / `/reset` / `/debug`
+
+**LLM**
+- 任意 OpenAI 兼容 endpoint(DeepSeek / Kimi / OpenAI / 自部署 ollama 都 OK)
+- 实时切换:UI 保存 LLM 配置后所有 session 立刻换成新 client
+- MockLLM(测试用,`TAISANG_MOCK_LLM=1`)
+
+### 🚧 待实现
+
+按需求强度排序:
+
+**高频 / 跨项目**
+- **多 agent / subagent 调度**:无 orchestrator、无 Task 工具(不能 agent-as-a-tool、不能并行/串行 team)
+- **MCP 客户端**:Sidebar 那个 server 图标是占位;不支持接入第三方 MCP server 的 tool/resource/prompt(stdio/sse/http 传输都没有)
+- **流式 LLM 响应**:当前等完整 response 才一次性给前端(SSE 是事件层,不是 token 流)
+- **多 skill 批量导入**:importer 现在一个 zip 一个 skill;扩展后可一次导入 N 个(像 superpowers plugin 那样)
+
+**claude-code plugin 概念**(全部未实现)
+- Commands(slash command,如 `/commit`)
+- Agents(子 agent 类型定义)
+- Hooks(PreToolUse / PostToolUse / SessionStart 等)
+- Plugin 清单解析(plugin.json + marketplace)
+
+**Skill 相关**
+- 运行时 SKILL.md 修改生效:会话期间改文件不会生效,必须新开会话(loader 无 mtime 监听)
+- frontmatter 高级字段:`version` / `model` / `context:fork` / `agent` / `paths` / `argument-hint` 等 v1 静默忽略
+- fork 执行模式:只 inline;claude-code 支持把 skill 放到子 agent 里跑
+- 条件 paths / deny 规则 / 硬拦 allowed_tools:v1 全部自动允许 + 提示
+- skill 描述超 250 字符的完整渲染:被 listing 预算截断,只能调工具看完整
+
+**Web UI**
+- Sidebar "MCP 管理" 入口点击无反应
+- 暗色主题 / 主题切换
+- 移动端适配
+- Web 端断线重连(EventSource 断了不会自动续)
+
+**Agent 行为**
+- TodoWrite / 任务列表:无任务追踪 UI
+- 图片 / 多模态输入:只支持文本
+- Resume 中断的会话:进程死了会话就死
+- Skill 全文驻内存:几十个无压力,几百个浪费 RAM(v2 改 lazy read)
+
+**工程**
+- 国际化:UI 文本写死中文
 
 ## Quick Start
 
@@ -36,15 +116,15 @@ taisang web --repo .
 - REPL 交互,输入自然语言目标 → agent 调工具查/改/跑代码
 - `/exit` 退出,`/reset` 清上下文(session memory 笔记保留),`/debug` 切调试输出
 - Edit/Write 改文件前弹 y/n 确认
-- Bash 只跑白名单命令(git/python/pytest/ruff/black/ls/cat 等),限定当前目录
+- Bash 用持久 shell,cd 跨调用保留;危险命令黑名单(rm -rf /, mkfs, 强推 main, fork bomb 等)直接拒
 
 ### Web UI(`taisang web`)
-- 豆包风格:左会话列表 / 中对话流 / 底输入框
+- Vue 3.5 + Vite + TDesign 实现的 SPA:左会话列表 / 中对话流 / 底一体式输入框(Claude 风格)
 - Markdown 渲染 + 代码高亮 + 工具卡片可折叠
 - 多会话隔离,会话标题从首条消息自动生成
 - 异步文件确认(改文件时弹卡片,允许/拒绝)
 - `/reset` `/debug` 按钮,token 用量底部小字
-- 原生 JS + SSE,无前端构建工具
+- SSE 实时事件流 + SPA history 路由(`/chat/:id`、`/skills` 深链刷新不 404)
 
 ## 工具集
 
@@ -55,7 +135,7 @@ taisang web --repo .
 | Glob | 文件名匹配 | 100 硬切 |
 | Edit | old_string → new_string 改文件(用户确认) | — |
 | Write | 创建/覆盖文件(用户确认) | — |
-| Bash | 跑 shell 命令(白名单 + cwd 限定) | 30000 字符 + 超长落盘 |
+| Bash | 跑 shell 命令(持久 shell + 危险命令黑名单) | 30000 字符 + 超长落盘 |
 
 ## 上下文管理(长对话三道机制)
 
@@ -72,7 +152,7 @@ taisang web --repo .
 ## 测试
 
 ```bash
-pytest tests/ -q       # 124 passed
+pytest tests/ -q       # 248 passed
 ruff check src/ tests/ # 全绿
 black --check src/ tests/ # 全绿
 ```
