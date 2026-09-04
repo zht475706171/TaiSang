@@ -21,7 +21,7 @@
     </div>
 
     <nav class="nav-menu" aria-label="管理入口">
-      <div class="menu-item">
+      <div class="menu-item" @click="router.push('/skills')">
         <t-icon name="code" class="menu-icon" />
         <span class="menu-title">Skill 管理</span>
       </div>
