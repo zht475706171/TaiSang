@@ -9,6 +9,8 @@ from .types import Skill
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n?---\s*\n(.*)$", re.DOTALL)
 
+BUILTIN_SKILLS_DIR = Path(__file__).parent / "builtin"
+
 
 def _parse_skill_md(path: Path, source: str) -> Skill | None:
     try:
@@ -56,9 +58,25 @@ def _parse_skill_md(path: Path, source: str) -> Skill | None:
     )
 
 
-def load_skills(user_dirs: list[Path], project_dirs: list[Path]) -> list[Skill]:
+def load_skills(
+    user_dirs: list[Path],
+    project_dirs: list[Path],
+    system_dirs: list[Path] | None = None,
+) -> list[Skill]:
+    """扫描三源 skill 目录,返回去重后的 Skill 列表。
+
+    优先级(同名覆盖):project > user > system。
+    system_dirs 默认取包内 builtin/ 目录(内置 skill,不可删除)。
+    """
+    if system_dirs is None:
+        system_dirs = [BUILTIN_SKILLS_DIR]
     by_name: dict[str, Skill] = {}
-    for source, dirs in [("user", user_dirs), ("project", project_dirs)]:
+    # 顺序即优先级:后面的源覆盖前面的
+    for source, dirs in [
+        ("system", system_dirs),
+        ("user", user_dirs),
+        ("project", project_dirs),
+    ]:
         for d in dirs:
             if not d.is_dir():
                 continue

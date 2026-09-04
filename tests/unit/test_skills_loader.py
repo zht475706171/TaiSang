@@ -19,7 +19,7 @@ def test_load_from_user_dir(tmp_path):
         "---\n"
         "调用 git commit……\n",
     )
-    skills = load_skills(user_dirs=[user_dir], project_dirs=[])
+    skills = load_skills(user_dirs=[user_dir], project_dirs=[], system_dirs=[])
     assert len(skills) == 1
     s = skills[0]
     assert s.name == "commit"
@@ -38,7 +38,7 @@ def test_project_overrides_user_same_name(tmp_path):
             d / "commit" / "SKILL.md",
             f"---\ndescription: {d.name}版\n---\n{d.name}内容\n",
         )
-    skills = load_skills(user_dirs=[user_dir], project_dirs=[proj_dir])
+    skills = load_skills(user_dirs=[user_dir], project_dirs=[proj_dir], system_dirs=[])
     assert len(skills) == 1
     assert skills[0].source == "project"
     assert skills[0].description == "proj版"
@@ -47,28 +47,28 @@ def test_project_overrides_user_same_name(tmp_path):
 def test_missing_description_falls_back_to_first_paragraph(tmp_path):
     d = tmp_path / "user"
     _write(d / "x" / "SKILL.md", "---\n---\n第一段\n\n第二段\n")
-    skills = load_skills(user_dirs=[d], project_dirs=[])
+    skills = load_skills(user_dirs=[d], project_dirs=[], system_dirs=[])
     assert skills[0].description == "第一段"
 
 
 def test_broken_frontmatter_skipped(tmp_path):
     d = tmp_path / "user"
     _write(d / "bad" / "SKILL.md", "---\nname: [unclosed\n---\nbody\n")
-    skills = load_skills(user_dirs=[d], project_dirs=[])
+    skills = load_skills(user_dirs=[d], project_dirs=[], system_dirs=[])
     assert len(skills) == 0
 
 
 def test_allowed_tools_parsed(tmp_path):
     d = tmp_path / "user"
     _write(d / "r" / "SKILL.md", "---\nallowed_tools: [Bash, Read]\n---\nbody\n")
-    skills = load_skills(user_dirs=[d], project_dirs=[])
+    skills = load_skills(user_dirs=[d], project_dirs=[], system_dirs=[])
     assert skills[0].allowed_tools == ["Bash", "Read"]
 
 
 def test_no_frontmatter_uses_first_paragraph(tmp_path):
     d = tmp_path / "user"
     _write(d / "plain" / "SKILL.md", "纯正文首段\n\n次段")
-    skills = load_skills(user_dirs=[d], project_dirs=[])
+    skills = load_skills(user_dirs=[d], project_dirs=[], system_dirs=[])
     assert skills[0].name == "plain"
     assert skills[0].description == "纯正文首段"
 
@@ -76,6 +76,31 @@ def test_no_frontmatter_uses_first_paragraph(tmp_path):
 def test_load_from_project_dir(tmp_path):
     proj = tmp_path / "proj"
     _write(proj / "test" / "SKILL.md", "---\n---\nbody")
-    skills = load_skills(user_dirs=[], project_dirs=[proj])
+    skills = load_skills(user_dirs=[], project_dirs=[proj], system_dirs=[])
     assert len(skills) == 1
     assert skills[0].source == "project"
+
+
+def test_builtin_system_skills_loaded_by_default():
+    """不传 system_dirs 时,默认加载包内 builtin 目录,source=system。"""
+    skills = load_skills(user_dirs=[], project_dirs=[])
+    names = {s.name for s in skills}
+    assert "commit" in names
+    assert "review" in names
+    assert all(s.source == "system" for s in skills)
+
+
+def test_user_overrides_system_same_name(tmp_path):
+    """同名时 user 覆盖 system。"""
+    d = tmp_path / "skills"
+    _write(d / "commit" / "SKILL.md", "---\nname: commit\ndescription: user version\n---\nuser body")
+    skills = load_skills(user_dirs=[d], project_dirs=[])
+    commit = next(s for s in skills if s.name == "commit")
+    assert commit.source == "user"
+    assert commit.description == "user version"
+
+
+def test_system_dirs_empty_disables_builtin():
+    """显式传 system_dirs=[] 时不加载内置(测试隔离用)。"""
+    skills = load_skills(user_dirs=[], project_dirs=[], system_dirs=[])
+    assert skills == []
