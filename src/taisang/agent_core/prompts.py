@@ -29,3 +29,14 @@ SYSTEM_PROMPT = """你是一个 coding agent,跟用户对话,帮助用户读写�
 
 语言:跟用户同语言(中文或英文)。
 """
+
+SKILLS_SECTION_HEADER = """
+
+## 可用 Skills
+"""
+
+def build_system_prompt(skills_section: str = "") -> str:
+    """组装完整 system prompt:基础 SYSTEM_PROMPT + (可选)skills 清单段。"""
+    if not skills_section:
+        return SYSTEM_PROMPT
+    return SYSTEM_PROMPT + SKILLS_SECTION_HEADER + "\n" + skills_section + "\n"

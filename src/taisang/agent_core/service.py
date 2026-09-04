@@ -35,8 +35,10 @@ from .events import (
     AgentEvent,
 )
 from .permission import AutoApprovePermissionManager, PermissionManager
-from .prompts import SYSTEM_PROMPT
+from .prompts import SYSTEM_PROMPT, build_system_prompt
 from .tools import ToolRegistry
+from ..skills.listing import format_skill_listing
+from ..skills.types import Skill
 
 log = logging.getLogger(__name__)
 
@@ -78,6 +80,7 @@ class AgentService:
         permission: PermissionManager | None = None,
         allow_dirs: list[Path] | None = None,
         on_append: "Callable[[dict], None] | None" = None,
+        skills: list[Skill] | None = None,
     ) -> None:
         self.llm = llm
         self.source_root = source_root
@@ -107,7 +110,9 @@ class AgentService:
         # 每次 run() 只 append_user(query),不重建 ctx,REPL 多轮对话才能看到上一轮。
         # on_append 透传给 ContextManager:每条 append 触发回调(ConversationStore 落盘)。
         self.ctx = ContextManager(token_budget=self.token_budget, on_append=on_append)
-        self.ctx.append_system(SYSTEM_PROMPT)
+        self.skills = skills or []
+        skills_section = format_skill_listing(self.skills)
+        self.ctx.append_system(build_system_prompt(skills_section))
         # session memory post-sampling 计数器:跨 run() 累计工具调用次数。
         self._tool_calls_since_last_extract = 0
         # token 用量累计:跨 run() 累加,reset() 清零。结构同 LLMResponse.usage。
@@ -128,7 +133,8 @@ class AgentService:
         """
         on_append = self.ctx.on_append  # 保留原 on_append(reset 不丢持久化回调)
         self.ctx = ContextManager(token_budget=self.token_budget, on_append=on_append)
-        self.ctx.append_system(SYSTEM_PROMPT)
+        skills_section = format_skill_listing(self.skills)
+        self.ctx.append_system(build_system_prompt(skills_section))
         self.compaction_state = ContentReplacementState()
         self._tool_calls_since_last_extract = 0
         self._session_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
