@@ -183,6 +183,22 @@ def test_get_messages_unknown_session_404(tmp_path, monkeypatch):
     assert r.status_code == 404
 
 
+def test_spa_fallback_serves_index_html(client):
+    """SPA 深链(/skills、/chat/xxx)GET 返回 index.html,前端路由接管。"""
+    r = client.get("/skills")
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
+    r2 = client.get("/chat/abc123")
+    assert r2.status_code == 200
+    assert "text/html" in r2.headers["content-type"]
+
+
+def test_spa_fallback_unknown_api_404(client):
+    """未知 /api 路径仍 404 JSON,不回 HTML。"""
+    r = client.get("/api/nonexistent")
+    assert r.status_code == 404
+
+
 def test_autocompact_writes_boundary_and_resume_gets_compacted(tmp_path, monkeypatch):
     """autocompact 触发后,jsonl 里有 [compacted via ...] boundary record;
     新建 registry(模拟重启)后 get_or_load 灌回的是截断到最后一个 boundary 后的

@@ -238,6 +238,20 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
     from .skills_api import register_skills_routes
     register_skills_routes(app, source_root)
 
+    @app.get("/{full_path:path}")
+    async def spa_fallback(full_path: str) -> FileResponse:
+        """SPA fallback:非 /api、非 /static 的未知 GET 路径回 index.html。
+
+        前端用 history 路由(/chat/:id、/skills),刷新或直链时服务端必须回
+        index.html 让 vue-router 接管,否则 404。api/static 前缀仍走 404。
+        """
+        if full_path.startswith(("api/", "static/")):
+            raise HTTPException(404, "not found")
+        idx = _STATIC_DIR / "index.html"
+        if not idx.exists():
+            raise HTTPException(404, "index.html not found")
+        return FileResponse(str(idx))
+
     return app
 
 
