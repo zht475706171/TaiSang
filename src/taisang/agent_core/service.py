@@ -200,8 +200,10 @@ class AgentService:
             except LLMProtocolError as e:
                 self._emit_usage_report(_emit)
                 log.warning("LLM protocol error at step %d: %s", steps, e)
+                text = f"(LLM 协议错误: {e})"
+                _emit(AgentEvent(type=FINAL_ANSWER, payload={"text": text}))
                 return Answer(
-                    text=f"(LLM 协议错误: {e})",
+                    text=text,
                     citations=[],
                     complete=False,
                     steps_used=steps,
@@ -209,8 +211,10 @@ class AgentService:
             except LLMTransientError as e:
                 self._emit_usage_report(_emit)
                 log.warning("LLM transient error at step %d: %s", steps, e)
+                text = f"(LLM 调用失败: {e})"
+                _emit(AgentEvent(type=FINAL_ANSWER, payload={"text": text}))
                 return Answer(
-                    text=f"(LLM 调用失败: {e})",
+                    text=text,
                     citations=[],
                     complete=False,
                     steps_used=steps,
@@ -218,8 +222,10 @@ class AgentService:
             except LLMError as e:
                 self._emit_usage_report(_emit)
                 log.warning("LLM error at step %d: %s", steps, e)
+                text = f"(LLM 错误: {e})"
+                _emit(AgentEvent(type=FINAL_ANSWER, payload={"text": text}))
                 return Answer(
-                    text=f"(LLM 错误: {e})",
+                    text=text,
                     citations=[],
                     complete=False,
                     steps_used=steps,

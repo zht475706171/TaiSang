@@ -132,6 +132,59 @@ def test_agent_llm_protocol_error_terminates(tmp_path):
     assert ans.steps_used == 1
 
 
+def test_agent_llm_protocol_error_emits_final_answer(tmp_path):
+    """LLM 抛 LLMProtocolError 时,Agent 必须 emit FINAL_ANSWER 事件,前端能拿到错误回执。"""
+    from taisang.agent_core.events import FINAL_ANSWER
+    from taisang.llm_errors import LLMProtocolError
+
+    class BoomLLM:
+        def chat(self, messages, tools):
+            raise LLMProtocolError("malformed")
+
+    service = AgentService(llm=BoomLLM(), source_root=tmp_path, confirmer=AutoApproveConfirmer())
+    events: list = []
+    service.run("q", on_event=lambda e: events.append(e))
+    final = [e for e in events if e.type == FINAL_ANSWER]
+    assert len(final) == 1, "异常路径必须 emit FINAL_ANSWER,前端才能显示错误"
+    assert "LLM 协议错误" in final[0].payload["text"]
+
+
+def test_agent_llm_transient_error_emits_final_answer(tmp_path):
+    """LLM 抛 LLMTransientError(限流/网络)时,Agent 必须 emit FINAL_ANSWER。"""
+    from taisang.agent_core.events import FINAL_ANSWER
+    from taisang.llm_errors import LLMTransientError
+
+    class BoomLLM:
+        def chat(self, messages, tools):
+            raise LLMTransientError("429 rate-limited")
+
+    service = AgentService(llm=BoomLLM(), source_root=tmp_path, confirmer=AutoApproveConfirmer())
+    events: list = []
+    service.run("q", on_event=lambda e: events.append(e))
+    final = [e for e in events if e.type == FINAL_ANSWER]
+    assert len(final) == 1
+    assert "LLM 调用失败" in final[0].payload["text"]
+    assert "rate-limited" in final[0].payload["text"]
+
+
+def test_agent_llm_error_emits_final_answer(tmp_path):
+    """LLM 抛通用 LLMError 时,Agent 必须 emit FINAL_ANSWER。"""
+    from taisang.agent_core.events import FINAL_ANSWER
+    from taisang.llm_errors import LLMError
+
+    class BoomLLM:
+        def chat(self, messages, tools):
+            raise LLMError("unknown llm failure")
+
+    service = AgentService(llm=BoomLLM(), source_root=tmp_path, confirmer=AutoApproveConfirmer())
+    events: list = []
+    service.run("q", on_event=lambda e: events.append(e))
+    final = [e for e in events if e.type == FINAL_ANSWER]
+    assert len(final) == 1
+    assert "LLM 错误" in final[0].payload["text"]
+    assert "unknown llm failure" in final[0].payload["text"]
+
+
 def test_agent_multi_turn_remembers_previous_query(tmp_path):
     """REPL 多轮对话:第 2 轮 run() 应看到第 1 轮的 user/assistant/tool 消息(短期记忆)。
 
