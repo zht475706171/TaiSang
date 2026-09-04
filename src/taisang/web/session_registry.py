@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import threading
 import time
 import uuid
@@ -245,17 +246,25 @@ class SessionRegistry:
             "updated_at": sess.updated_at,
         })
 
-    def delete(self, session_id: str) -> bool:
-        """删会话:内存移除 + 磁盘目录删除。返回是否删过。"""
+    def delete(self, session_id: str, timeout: float = 5.0) -> bool:
+        """删会话:内存移除 → 等在跑的 run 结束 → 磁盘目录删除。
+
+        先 pop 内存(get_or_load 找不到,新 run 进不来);但已在跑的 run
+        还持着 sess.lock,直接 rmtree 会让它的 on_append 写已删目录炸
+        Errno 2,故等锁释放再删盘。等不到(run 卡死)返回 False,磁盘
+        保留,前端提示稍后再删。
+        """
         with self._lock:
-            existed = self._sessions.pop(session_id, None) is not None
+            sess = self._sessions.pop(session_id, None)
+        if sess is not None:
+            if not sess.lock.acquire(timeout=timeout):
+                return False
+            sess.lock.release()
         sess_dir = self.source_root / ".taisang" / "sessions" / session_id
         if sess_dir.is_dir():
-            import shutil
-
             shutil.rmtree(sess_dir, ignore_errors=True)
-            existed = True
-        return existed
+            return True
+        return sess is not None
 
     def reset(self, session_id: str) -> bool:
         """重置会话上下文(AgentService.reset)。返回会话是否存在。"""

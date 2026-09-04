@@ -34,6 +34,8 @@ class ConversationStore:
 
         单行 write 在 POSIX 上原子,崩溃最多丢最后一行。
         """
+        # 目录可能已删(会话删除竞态/外部清理),写前自愈
+        self.session_dir.mkdir(parents=True, exist_ok=True)
         line = json.dumps(record, ensure_ascii=False) + "\n"
         with open(self.jsonl_path, "a", encoding="utf-8") as f:
             f.write(line)

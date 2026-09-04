@@ -93,7 +93,12 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
     @app.delete("/api/sessions/{session_id}")
     async def delete_session(session_id: str) -> dict:
         ok = registry.delete(session_id)
-        return {"deleted": ok}
+        if not ok:
+            # delete 返回 False 两种情况:run 卡死超时 / 会话本就不存在。
+            # 再查一次:还在 → 409 busy;没了 → 幂等成功(前端照常移除)。
+            if registry.get_or_load(session_id) is not None:
+                raise HTTPException(409, "session busy: run still active, try again later")
+        return {"deleted": True}
 
     @app.post("/api/sessions/{session_id}/reset")
     async def reset_session(session_id: str) -> dict:

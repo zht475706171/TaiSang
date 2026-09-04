@@ -1,5 +1,8 @@
 """测试 SessionRegistry: create/list/delete/reset/get_or_load,用 MockLLM。"""
 
+import threading
+import time
+
 import pytest
 
 from taisang.web.session_registry import SessionRegistry
@@ -61,6 +64,73 @@ def test_delete_removes_memory_and_disk(tmp_path, mock_env):
     assert reg.get_or_load(sid) is None
     assert not (tmp_path / ".taisang" / "sessions" / sid).exists()
     assert sid not in {it["id"] for it in reg.list_all()}
+
+
+def test_delete_waits_for_active_run(tmp_path, mock_env):
+    """run 持锁期间 delete:等锁释放后再删盘,返回 True(不与写盘竞争)。"""
+    reg = SessionRegistry(tmp_path)
+    sid = reg.create("会话")
+    sess = reg.get_or_load(sid)
+
+    holding = threading.Event()
+
+    def hold_lock():
+        with sess.lock:
+            holding.set()
+            time.sleep(0.5)  # 模拟 run 进行中
+
+    t = threading.Thread(target=hold_lock)
+    t.start()
+    assert holding.wait(timeout=2)
+
+    ok = reg.delete(sid)
+    t.join(timeout=2)
+    assert ok is True
+    assert not t.is_alive()  # delete 等过 run
+    assert not (tmp_path / ".taisang" / "sessions" / sid).exists()
+
+
+def test_delete_times_out_when_run_stuck(tmp_path, mock_env):
+    """run 卡死不放锁:delete 超时返回 False,磁盘保留(稍后可再删)。"""
+    reg = SessionRegistry(tmp_path)
+    sid = reg.create("会话")
+    sess = reg.get_or_load(sid)
+    assert sess.lock.acquire()  # 模拟卡死的 run
+
+    try:
+        ok = reg.delete(sid, timeout=0.2)
+        assert ok is False
+        assert (tmp_path / ".taisang" / "sessions" / sid).exists()
+    finally:
+        sess.lock.release()
+
+
+def test_delete_during_run_writer_never_crashes(tmp_path, mock_env):
+    """复现线上 bug:run 线程持续写 jsonl 期间 delete,writer 不得抛 Errno 2。"""
+    reg = SessionRegistry(tmp_path)
+    sid = reg.create("会话")
+    sess = reg.get_or_load(sid)
+    errors: list[Exception] = []
+
+    def writer():
+        with sess.lock:
+            try:
+                for _ in range(20):
+                    sess.store.append(
+                        {"type": "user", "role": "user", "content": "x", "uuid": "u", "timestamp": 1.0}
+                    )
+                    time.sleep(0.02)
+            except Exception as e:  # noqa: BLE001
+                errors.append(e)
+
+    t = threading.Thread(target=writer)
+    t.start()
+    time.sleep(0.05)  # 让 writer 先跑几轮
+
+    ok = reg.delete(sid)
+    t.join(timeout=3)
+    assert ok is True
+    assert errors == []
 
 
 def test_reset_clears_context(tmp_path, mock_env):

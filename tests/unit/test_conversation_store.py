@@ -80,3 +80,16 @@ def test_load_meta_corrupt_returns_none(store: ConversationStore) -> None:
     """meta.json 损坏时 load_meta 返回 None(不抛异常)。"""
     store.meta_path.write_text("{not json", encoding="utf-8")
     assert store.load_meta() is None
+
+
+def test_append_recreates_deleted_session_dir(store: ConversationStore) -> None:
+    """目录被外部删除(会话删除竞态/手动清理)后 append 自愈,不抛 Errno 2。"""
+    import shutil
+
+    store.append({"type": "user", "role": "user", "content": "first", "uuid": "u1", "timestamp": 1.0})
+    shutil.rmtree(store.session_dir)
+    # 修复前:FileNotFoundError [Errno 2]
+    store.append({"type": "user", "role": "user", "content": "second", "uuid": "u2", "timestamp": 2.0})
+    loaded = store.load_all()
+    assert len(loaded) == 1
+    assert loaded[0]["content"] == "second"
