@@ -235,6 +235,9 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
             raise HTTPException(404, "permission token not found or expired")
         return {"resolved": True}
 
+    from .skills_api import register_skills_routes
+    register_skills_routes(app, source_root)
+
     return app
 
 
