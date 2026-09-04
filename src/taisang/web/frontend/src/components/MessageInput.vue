@@ -11,11 +11,16 @@
         @keydown="handleKeydown"
         @input="autoResize"
       ></textarea>
-      <t-button theme="primary" :disabled="!text.trim()" @click="handleSend">
+      <t-button
+        shape="circle"
+        theme="primary"
+        aria-label="发送"
+        :disabled="!text.trim()"
+        @click="handleSend"
+      >
         <template #icon>
           <t-icon name="send" />
         </template>
-        发送
       </t-button>
     </div>
   </div>
@@ -64,24 +69,30 @@ function handleSend() {
 
 <style scoped>
 .message-input {
-  padding: 12px 24px 20px;
-  background: var(--td-bg-color-container);
-  border-top: 1px solid var(--td-component-stroke);
+  padding: 0 24px 20px;
 }
+/* 一体化输入行:大圆角容器,textarea 与圆形发送按钮同体 */
 .input-row {
   display: flex;
   gap: 8px;
   align-items: flex-end;
   max-width: 800px;
   margin: 0 auto;
+  padding: 8px 8px 8px 16px;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 14px;
+  background: var(--td-bg-color-container);
+  transition: border-color 0.15s;
+}
+.input-row:focus-within {
+  border-color: var(--td-brand-color);
 }
 .query-textarea {
   flex: 1;
   resize: none;
-  padding: 8px 12px;
-  border: 1px solid var(--td-component-stroke);
-  border-radius: 6px;
-  background: var(--td-bg-color-container);
+  border: none;
+  background: transparent;
+  padding: 7px 0;
   color: var(--td-text-color-primary);
   font-family: var(--app-font-family);
   font-size: 14px;
@@ -90,10 +101,6 @@ function handleSend() {
   max-height: 200px;
   overflow-y: auto;
   outline: none;
-  transition: border-color 0.15s;
-}
-.query-textarea:focus {
-  border-color: var(--td-brand-color);
 }
 .query-textarea::placeholder {
   color: var(--td-text-color-placeholder);

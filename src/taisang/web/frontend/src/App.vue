@@ -19,10 +19,9 @@ const configOpen = ref(false)
 const store = useSessionStore()
 const router = useRouter()
 
-async function handleNewSession() {
-  const id = await store.createNew()
-  store.select(id)
-  router.push(`/chat/${id}`)
+function handleNewSession() {
+  // 不预创建 session:进首页草稿态,首条消息发出才建会话(handleEmptySend)
+  router.push('/')
 }
 
 function handleGlobalKeydown(e: KeyboardEvent) {

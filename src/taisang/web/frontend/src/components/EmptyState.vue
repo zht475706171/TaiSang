@@ -1,7 +1,9 @@
 <template>
   <div class="empty-state">
-    <h1 class="title">开始对话</h1>
-    <p class="subtitle">输入问题,Enter 发送</p>
+    <p class="subtitle">
+      你好，我是TaiSang。<br />
+      你的私人agent，有什么可以帮助你的吗？
+    </p>
     <div class="input-wrap">
       <MessageInput placeholder="输入问题,Enter 发送..." autofocus @send="handleSend" />
     </div>
@@ -28,15 +30,12 @@ function handleSend(q: string) {
   padding: 24px;
   gap: 8px;
 }
-.title {
+.subtitle {
   font-size: 28px;
   font-weight: 600;
   color: var(--td-brand-color);
-  margin: 0;
-}
-.subtitle {
-  font-size: 14px;
-  color: var(--td-text-color-placeholder);
+  line-height: 1.4;
+  text-align: center;
   margin: 0 0 24px;
 }
 .input-wrap {
@@ -44,7 +43,6 @@ function handleSend(q: string) {
   max-width: 800px;
 }
 .input-wrap :deep(.message-input) {
-  border-top: none;
   padding: 0;
 }
 </style>
