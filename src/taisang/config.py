@@ -74,3 +74,26 @@ def mask_api_key(key: str) -> str:
     if len(key) <= 8:
         return "***"
     return f"{key[:3]}***{key[-4:]}"
+
+
+class SkillsConfig(BaseModel):
+    """Skill 加载配置。"""
+
+    user_dirs: list[Path] = []      # 用户级 skill 目录,默认 ~/.taisang/skills
+    project_dirs: list[Path] = []   # 项目级 skill 目录,默认空(运行时补 source_root/.taisang/skills)
+
+
+def load_skills_config() -> SkillsConfig:
+    """加载 skills 配置。文件 ~/.taisang/settings.json 的 skills 字段 > 默认值。
+
+    user_dirs 默认 ~/.taisang/skills。project_dirs 默认空(由 SessionRegistry 运行时
+    拼上 source_root/.taisang/skills,这样不用每个项目都在 settings.json 配)。
+    """
+    file_cfg = _load_settings_file().get("skills", {})
+    user_dirs = file_cfg.get("user_dirs")
+    if user_dirs is None:
+        user_dirs = [Path.home() / ".taisang" / "skills"]
+    else:
+        user_dirs = [Path(d) for d in user_dirs]
+    project_dirs = [Path(d) for d in file_cfg.get("project_dirs", [])]
+    return SkillsConfig(user_dirs=user_dirs, project_dirs=project_dirs)

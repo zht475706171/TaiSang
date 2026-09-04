@@ -71,3 +71,11 @@ def test_no_frontmatter_uses_first_paragraph(tmp_path):
     skills = load_skills(user_dirs=[d], project_dirs=[])
     assert skills[0].name == "plain"
     assert skills[0].description == "纯正文首段"
+
+
+def test_load_from_project_dir(tmp_path):
+    proj = tmp_path / "proj"
+    _write(proj / "test" / "SKILL.md", "---\n---\nbody")
+    skills = load_skills(user_dirs=[], project_dirs=[proj])
+    assert len(skills) == 1
+    assert skills[0].source == "project"
