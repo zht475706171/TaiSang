@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { McpServer, McpServerInfo } from '@/api/mcp'
+import type { McpServer, McpServerInfo, ImportBatchResult } from '@/api/mcp'
 import {
   listMcpServers,
   addMcpServer,
@@ -9,6 +9,8 @@ import {
   toggleMcpServer,
   reconnectMcpServer,
   getMcpServerInfo,
+  importCliMcp,
+  importBatchMcp,
 } from '@/api/mcp'
 
 export const useMcpStore = defineStore('mcp', () => {
@@ -20,13 +22,12 @@ export const useMcpStore = defineStore('mcp', () => {
     loading.value = true
     try {
       servers.value = await listMcpServers()
-      // 并行拉取每个 server 的详细信息(tools/resources/prompts/status)
       await Promise.all(
         servers.value.map(async (s) => {
           try {
             serverInfos.value[s.name] = await getMcpServerInfo(s.name)
           } catch {
-            // 忽略单个 server 的错误,其他 server 仍能展示
+            // 忽略单个 server 的错误
           }
         }),
       )
@@ -64,6 +65,18 @@ export const useMcpStore = defineStore('mcp', () => {
     return res
   }
 
+  async function importCli(line: string) {
+    const res = await importCliMcp(line)
+    await fetchServers()
+    return res
+  }
+
+  async function importBatch(text: string): Promise<ImportBatchResult> {
+    const res = await importBatchMcp(text)
+    await fetchServers()
+    return res
+  }
+
   return {
     servers,
     serverInfos,
@@ -74,5 +87,7 @@ export const useMcpStore = defineStore('mcp', () => {
     removeServer,
     toggleServer,
     reconnectServer,
+    importCli,
+    importBatch,
   }
 })
