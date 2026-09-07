@@ -8,7 +8,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ValidationError
 
-from ..mcp.importer import McpImportError, McpParseError, McpValidationError, parse_cli, parse_json
+from ..mcp.importer import McpParseError, McpValidationError, parse_cli, parse_json
 from ..mcp.manager import MCPManager
 from ..mcp.types import McpServerConfig
 
@@ -204,7 +204,7 @@ async def import_batch(req: ImportBatchIn) -> dict:
                 mgr.add_server(cfg)
                 await mgr.connect_server(cfg.name)
                 added.append(cfg.name)
-        except (McpImportError, ValueError, Exception) as e:
+        except ValueError as e:
             failed.append({"name": cfg.name, "error": str(e)})
 
     return {"added": added, "updated": updated, "failed": failed}
