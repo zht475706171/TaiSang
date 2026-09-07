@@ -29,6 +29,10 @@
         <t-icon name="server" class="menu-icon" />
         <span class="menu-title">MCP 管理</span>
       </div>
+      <div class="menu-item" @click="router.push('/prompts')">
+        <t-icon name="edit-1" class="menu-icon" />
+        <span class="menu-title">Prompt 管理</span>
+      </div>
     </nav>
 
     <!-- 唯一滚动区:历史会话 -->
