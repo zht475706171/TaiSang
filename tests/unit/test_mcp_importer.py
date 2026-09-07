@@ -93,3 +93,9 @@ def test_parse_cli_transport_in_middle():
     assert cfg.transport == "stdio"
     assert cfg.command == "npx"
     assert cfg.args == ["-y", "server"]
+
+
+def test_parse_cli_transport_no_value():
+    """--transport flag 缺值 → McpParseError。"""
+    with pytest.raises(McpParseError, match="requires a value"):
+        parse_cli("foo --transport")
