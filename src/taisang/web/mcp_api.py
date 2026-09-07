@@ -8,7 +8,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ValidationError
 
-from ..mcp.importer import McpImportError, McpParseError, McpValidationError, parse_cli
+from ..mcp.importer import McpParseError, McpValidationError, parse_cli
 from ..mcp.manager import MCPManager
 from ..mcp.types import McpServerConfig
 
