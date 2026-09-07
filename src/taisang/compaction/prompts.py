@@ -30,7 +30,7 @@ DEFAULT_AUTOCOMPACT_PROMPT = (
     NO_TOOLS_PREAMBLE
     + "\n\n"
     + BASE_COMPACT_PROMPT
-    + "\n\n对话内容:\n{conversation}\n\n"
+    + "\n\n对话内容:\n\n{conversation}\n\n"
     + NO_TOOLS_TRAILER
 )
 

@@ -69,6 +69,17 @@ def test_get_autocompact_prompt_default(tmp_settings):
     assert "{conversation}" not in result
 
 
+def test_get_autocompact_prompt_default_equivalent_to_legacy_join(tmp_settings):
+    """默认 prompt 必须严格等价于 autocompact.py 旧拼接逻辑(5 段 \\n\\n join)。
+
+    防止 DEFAULT_AUTOCOMPACT_PROMPT 拼接细节 regression(曾有 bug:少一个 \\n)。
+    """
+    legacy = "\n\n".join(
+        [NO_TOOLS_PREAMBLE, BASE_COMPACT_PROMPT, "对话内容:", "CONV_TEXT", NO_TOOLS_TRAILER]
+    )
+    assert get_autocompact_prompt("CONV_TEXT") == legacy
+
+
 def test_get_autocompact_prompt_custom(tmp_settings):
     """自定义时用 value,替换 {conversation}。"""
     save_prompt_override("autocompact_prompt", "前缀\n{conversation}\n后缀")
