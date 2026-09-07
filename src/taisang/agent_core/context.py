@@ -84,6 +84,17 @@ class ContextManager:
         if self.on_append:
             self.on_append(msg)
 
+    def replace_system_prompt(self, text: str) -> None:
+        """原地替换第一个 system 消息的 content。
+
+        无 system 消息时 no-op(不主动插入)。
+        用于 prompt 配置变更后广播到活跃 session。
+        """
+        for msg in self._messages:
+            if msg["role"] == "system":
+                msg["content"] = text
+                break
+
     def append_user(self, text: str) -> None:
         msg = {"role": "user", "content": text}
         self._messages.append(msg)

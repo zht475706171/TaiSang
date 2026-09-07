@@ -185,3 +185,36 @@ def test_load_from_records_dedupes_repeated_system():
     roles = [m["role"] for m in ctx.messages()]
     assert roles.count("user") == 2
     assert roles.count("assistant") == 1
+
+
+def test_replace_system_prompt_updates_messages_zero():
+    """replace_system_prompt 原地替换 messages[0] 的 content(若存在 system 消息)。"""
+    ctx = ContextManager()
+    ctx.append_system("原 system")
+    ctx.append_user("hi")
+    ctx.replace_system_prompt("新 system")
+    msgs = ctx.messages()
+    assert msgs[0]["role"] == "system"
+    assert msgs[0]["content"] == "新 system"
+    assert msgs[1]["content"] == "hi"  # 其他消息不变
+
+
+def test_replace_system_prompt_no_system_does_nothing():
+    """没有 system 消息时 no-op(不插入)。"""
+    ctx = ContextManager()
+    ctx.append_user("hi")
+    ctx.replace_system_prompt("新 system")
+    msgs = ctx.messages()
+    assert len(msgs) == 1
+    assert msgs[0]["role"] == "user"
+
+
+def test_replace_system_prompt_replaces_only_first():
+    """只替换第一个 system 消息(去重后通常只有一个)。"""
+    ctx = ContextManager()
+    ctx.append_system("原 system 1")
+    ctx.append_system("原 system 2")  # 罕见,但测一下只换第一个
+    ctx.replace_system_prompt("新 system")
+    msgs = ctx.messages()
+    assert msgs[0]["content"] == "新 system"
+    assert msgs[1]["content"] == "原 system 2"
