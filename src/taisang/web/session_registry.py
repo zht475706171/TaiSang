@@ -310,6 +310,34 @@ class SessionRegistry:
                 continue
             sess.agent.llm = LLMClient(cfg)
 
+    def apply_prompts_config(self, key: str) -> None:
+        """改 prompt 后广播到所有内存 session。
+
+        - key == "system_prompt":
+            重新调 build_system_prompt(skills_section, mcp_section),
+            替换每个 session 的 ctx 第一条 system 消息的 content。
+            skills/mcp 段从该 session 现有 agent 取,不丢。
+        - 其他 key(autocompact / session_memory_*):
+            触发时才读 config,不需要 broadcast,直接返回。
+        - 正在跑的 run 持有 sess.lock,等它跑完下一次 LLM 调用自然用新 system
+          —— 与 apply_llm_config 同语义。
+        - MockLLM session 也替换 system prompt(与 llm 类型无关)。
+        """
+        if key != "system_prompt":
+            return
+        with self._lock:
+            sessions = list(self._sessions.values())
+        for sess in sessions:
+            agent = sess.agent
+            # 重新组装 system prompt,保留 skills/mcp 段(与 service.__init__/reset 同逻辑)
+            from ..skills.listing import format_skill_listing
+            from ..agent_core.prompts import build_system_prompt, format_mcp_section
+
+            skills_section = format_skill_listing(agent.skills)
+            mcp_section = format_mcp_section(agent._mcp_manager) if getattr(agent, "_mcp_manager", None) else ""
+            new_system = build_system_prompt(skills_section, mcp_section)
+            agent.ctx.replace_system_prompt(new_system)
+
 
 def _relative_time(seconds: float) -> str:
     """秒数 → 相对时间字符串(英文短形式,git commit 风格)。"""
