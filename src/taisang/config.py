@@ -97,3 +97,111 @@ def load_skills_config() -> SkillsConfig:
         user_dirs = [Path(d) for d in user_dirs]
     project_dirs = [Path(d) for d in file_cfg.get("project_dirs", [])]
     return SkillsConfig(user_dirs=user_dirs, project_dirs=project_dirs)
+
+
+# === Prompts 配置 ===
+
+PROMPT_KEYS = frozenset(
+    {
+        "system_prompt",
+        "autocompact_prompt",
+        "session_memory_template",
+        "session_memory_update_prompt",
+    }
+)
+
+_PROMPT_MAX_BYTES = 50 * 1024
+
+
+class PromptOverride(BaseModel):
+    """单个 prompt 的覆盖配置。
+
+    use_default=true 时运行时读代码常量,value 忽略;
+    use_default=false 时运行时读 value。
+    """
+
+    value: str = ""
+    use_default: bool = True
+
+
+class PromptsConfig(BaseModel):
+    """四份 prompt 的覆盖配置。"""
+
+    system_prompt: PromptOverride = PromptOverride()
+    autocompact_prompt: PromptOverride = PromptOverride()
+    session_memory_template: PromptOverride = PromptOverride()
+    session_memory_update_prompt: PromptOverride = PromptOverride()
+
+
+def load_prompts() -> PromptsConfig:
+    """加载 prompts 配置。settings.json 的 prompts 字段 > 默认(全 use_default=true)。
+
+    损坏文件 fallback 到默认(复用 _load_settings_file 的容错)。
+    """
+    raw = _load_settings_file().get("prompts", {})
+    if not isinstance(raw, dict):
+        return PromptsConfig()
+    # 逐字段构造,容忍部分缺失
+    data = {}
+    for key in PROMPT_KEYS:
+        item = raw.get(key)
+        if isinstance(item, dict):
+            data[key] = PromptOverride(
+                value=str(item.get("value", "")),
+                use_default=bool(item.get("use_default", True)),
+            )
+        # 缺失的 key 用默认 PromptOverride(不写进 data,让 Pydantic 填默认)
+    return PromptsConfig(**data)
+
+
+def _save_prompts_section(prompts_dict: dict) -> None:
+    """原子写 settings.json 的 prompts 字段,保留 llm/skills 等其他字段。权限 600。"""
+    p = _settings_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    existing = _load_settings_file()
+    existing["prompts"] = prompts_dict
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+    try:
+        os.chmod(tmp, 0o600)
+    except OSError:
+        pass  # Windows 无 chmod
+    os.replace(tmp, p)
+
+
+def _validate_prompt_value(value: str) -> None:
+    if not value:
+        raise ValueError("prompt 不能为空")
+    if len(value.encode("utf-8")) > _PROMPT_MAX_BYTES:
+        raise ValueError(f"prompt 过长(>{_PROMPT_MAX_BYTES // 1024}KB)")
+
+
+def save_prompt_override(key: str, value: str) -> PromptsConfig:
+    """保存单个 prompt 覆盖:use_default=false + 写 value。返回最新完整 config。
+
+    校验:key 合法、value 非空且 ≤ 50KB。
+    """
+    if key not in PROMPT_KEYS:
+        raise ValueError(f"非法 key: {key}")
+    _validate_prompt_value(value)
+    cfg = load_prompts()
+    override = PromptOverride(value=value, use_default=False)
+    setattr(cfg, key, override)
+    raw = {
+        k: getattr(cfg, k).model_dump() for k in PROMPT_KEYS
+    }
+    _save_prompts_section(raw)
+    return cfg
+
+
+def reset_prompt_override(key: str) -> PromptsConfig:
+    """恢复单个 prompt 为默认:use_default=true + 清空 value。返回最新完整 config。"""
+    if key not in PROMPT_KEYS:
+        raise ValueError(f"非法 key: {key}")
+    cfg = load_prompts()
+    setattr(cfg, key, PromptOverride())
+    raw = {
+        k: getattr(cfg, k).model_dump() for k in PROMPT_KEYS
+    }
+    _save_prompts_section(raw)
+    return cfg
