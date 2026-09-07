@@ -25,7 +25,7 @@
         <t-icon name="code" class="menu-icon" />
         <span class="menu-title">Skill 管理</span>
       </div>
-      <div class="menu-item">
+      <div class="menu-item" @click="router.push('/mcp')">
         <t-icon name="server" class="menu-icon" />
         <span class="menu-title">MCP 管理</span>
       </div>
@@ -122,7 +122,7 @@ async function handleDelete(id: string) {
 .new-session-wrap {
   padding: 8px 12px 12px;
 }
-/* 固定区:管理入口(skill/mcp 页面暂未实现,仅占位),底部分隔线隔开滚动区 */
+/* 固定区:管理入口(skill/mcp 页面跳转),底部分隔线隔开滚动区 */
 .nav-menu {
   padding: 0 8px 8px;
   border-bottom: 1px solid var(--td-component-stroke);

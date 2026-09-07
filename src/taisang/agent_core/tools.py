@@ -590,6 +590,7 @@ class ToolRegistry:
         observations_dir: Path | None = None,
         skills: list | None = None,
         ctx=None,
+        mcp_manager=None,
     ) -> None:
         if confirmer is None:
             confirmer = AutoDenyConfirmer()
@@ -626,6 +627,19 @@ class ToolRegistry:
         if skills:
             from .skill_tool import SkillTool
             self._tools[SkillTool.name] = SkillTool(skills=skills, ctx=ctx)
+        # MCP 工具:动态注册(仅在传入 mcp_manager 时)。
+        # 局部导入避免循环引用(mcp.tool 从 tools.py 导入 _BaseTool)。
+        if mcp_manager:
+            from ..mcp.tool import McpPromptTool, McpResourceTool, MCPTool
+            for mcp_tool in mcp_manager.get_all_mcp_tools():
+                self._tools[mcp_tool["name"]] = MCPTool(
+                    server_name=mcp_tool["server"],
+                    tool_info=mcp_tool["tool_info"],
+                    manager=mcp_manager,
+                )
+            # 伪工具:读取 MCP 资源 / 获取 MCP prompt(无连接 server 时调用会返回错误)
+            self._tools["mcp_resource"] = McpResourceTool(mcp_manager)
+            self._tools["mcp_prompt"] = McpPromptTool(mcp_manager)
 
     def _sync_cwd(self) -> None:
         """从 shell 拿当前 cwd,同步到所有文件工具。Bash cd 后文件工具跟随。"""

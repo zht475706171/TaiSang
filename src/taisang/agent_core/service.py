@@ -19,6 +19,8 @@ from pathlib import Path
 from ..compaction.tool_result_budget import ContentReplacementState, enforce_budget
 from ..llm_client import LLMClient, MockLLM
 from ..llm_errors import LLMError, LLMProtocolError, LLMTransientError
+from ..skills.listing import format_skill_listing
+from ..skills.types import Skill
 from ..storage.paths import PathManager
 from ..types import Answer, Citation
 from .context import ContextManager
@@ -35,10 +37,8 @@ from .events import (
     AgentEvent,
 )
 from .permission import AutoApprovePermissionManager, PermissionManager
-from .prompts import SYSTEM_PROMPT, build_system_prompt
+from .prompts import build_system_prompt, format_mcp_section
 from .tools import ToolRegistry
-from ..skills.listing import format_skill_listing
-from ..skills.types import Skill
 
 log = logging.getLogger(__name__)
 
@@ -79,8 +79,9 @@ class AgentService:
         debug: bool = False,
         permission: PermissionManager | None = None,
         allow_dirs: list[Path] | None = None,
-        on_append: "Callable[[dict], None] | None" = None,
+        on_append: Callable[[dict], None] | None = None,
         skills: list[Skill] | None = None,
+        mcp_manager=None,
     ) -> None:
         self.llm = llm
         self.source_root = source_root
@@ -111,8 +112,10 @@ class AgentService:
         # on_append 透传给 ContextManager:每条 append 触发回调(ConversationStore 落盘)。
         self.ctx = ContextManager(token_budget=self.token_budget, on_append=on_append)
         self.skills = skills or []
+        self._mcp_manager = mcp_manager
         skills_section = format_skill_listing(self.skills)
-        self.ctx.append_system(build_system_prompt(skills_section))
+        mcp_section = format_mcp_section(mcp_manager) if mcp_manager else ""
+        self.ctx.append_system(build_system_prompt(skills_section, mcp_section))
         # session memory post-sampling 计数器:跨 run() 累计工具调用次数。
         self._tool_calls_since_last_extract = 0
         # token 用量累计:跨 run() 累加,reset() 清零。结构同 LLMResponse.usage。
@@ -134,7 +137,8 @@ class AgentService:
         on_append = self.ctx.on_append  # 保留原 on_append(reset 不丢持久化回调)
         self.ctx = ContextManager(token_budget=self.token_budget, on_append=on_append)
         skills_section = format_skill_listing(self.skills)
-        self.ctx.append_system(build_system_prompt(skills_section))
+        mcp_section = format_mcp_section(self._mcp_manager) if self._mcp_manager else ""
+        self.ctx.append_system(build_system_prompt(skills_section, mcp_section))
         self.compaction_state = ContentReplacementState()
         self._tool_calls_since_last_extract = 0
         self._session_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
@@ -162,6 +166,7 @@ class AgentService:
             permission=self.permission,
             skills=self.skills,
             ctx=self.ctx,
+            mcp_manager=self._mcp_manager,
         )
         observations_dir = PathManager.observations_dir(self.source_root)
         transcript_path = self.source_root / ".taisang" / "sessions" / "current.jsonl"

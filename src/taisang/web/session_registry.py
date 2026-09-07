@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import shutil
 import threading
@@ -31,6 +32,7 @@ from ..session_memory.service import SessionMemoryService
 from ..storage.conversation_store import ConversationStore
 from ..storage.paths import PathManager
 from .confirm import WebConfirmer
+from .mcp_api import get_mcp_manager
 from .skills_api import load_skills_with_state
 from .sse import EventBroker
 
@@ -59,6 +61,11 @@ class SessionRegistry:
         self.allow_dirs = allow_dirs or []
         self._sessions: dict[str, _Session] = {}
         self._lock = threading.Lock()
+        # MCPManager:进程级单例,启动时连接所有 enabled server。
+        # 无 enabled server 时 connect_all 是 no-op;连接失败的 server 标 failed 不阻塞。
+        # 用 mcp_api.get_mcp_manager() 拿模块级单例,保证 API 路由和 agent 用同一个 manager。
+        self._mcp_manager = get_mcp_manager()
+        asyncio.run(self._mcp_manager.connect_all())
 
     def _make_llm(self) -> LLMClient | MockLLM:
         """同 cli/main.py._make_llm:env 控制 MockLLM,否则真 LLM。"""
@@ -104,6 +111,7 @@ class SessionRegistry:
             allow_dirs=[self.source_root] + self.allow_dirs,
             on_append=store.append,
             skills=skills,
+            mcp_manager=self._mcp_manager,
         )
         return _Session(
             session_id=session_id,

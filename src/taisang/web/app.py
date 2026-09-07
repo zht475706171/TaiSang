@@ -34,8 +34,8 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .session_registry import SessionRegistry
 from ..config import LLMConfig, load_config, mask_api_key, save_config
+from .session_registry import SessionRegistry
 
 log = logging.getLogger(__name__)
 
@@ -237,6 +237,9 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
 
     from .skills_api import register_skills_routes
     register_skills_routes(app, source_root)
+
+    from .mcp_api import router as mcp_router
+    app.include_router(mcp_router)
 
     @app.get("/{full_path:path}")
     async def spa_fallback(full_path: str) -> FileResponse:

@@ -35,8 +35,61 @@ SKILLS_SECTION_HEADER = """
 ## 可用 Skills
 """
 
-def build_system_prompt(skills_section: str = "") -> str:
-    """组装完整 system prompt:基础 SYSTEM_PROMPT + (可选)skills 清单段。"""
-    if not skills_section:
-        return SYSTEM_PROMPT
-    return SYSTEM_PROMPT + SKILLS_SECTION_HEADER + "\n" + skills_section + "\n"
+MCP_SECTION_HEADER = """
+
+## MCP 服务器
+"""
+
+
+def build_system_prompt(skills_section: str = "", mcp_section: str = "") -> str:
+    """组装完整 system prompt:基础 SYSTEM_PROMPT + (可选)skills 清单段 + (可选)MCP 能力段。"""
+    prompt = SYSTEM_PROMPT
+    if skills_section:
+        prompt += SKILLS_SECTION_HEADER + "\n" + skills_section + "\n"
+    if mcp_section:
+        prompt += MCP_SECTION_HEADER + "\n" + mcp_section + "\n"
+    return prompt
+
+
+def format_mcp_section(manager) -> str:
+    """格式化 MCP 能力段,注入 system prompt。
+
+    仅列出已 connected 的 server 的 tools/resources/prompts。
+    无 connected server 时返回空串(不注入段)。
+    """
+    if not manager:
+        return ""
+    infos = manager.list_server_info()
+    connected = [i for i in infos if i.status == "connected"]
+    if not connected:
+        return ""
+
+    lines: list[str] = []
+    all_tools = manager.get_all_mcp_tools()
+    if all_tools:
+        lines.append("### 可用 MCP 工具")
+        for t in all_tools:
+            tool = t["tool_info"]
+            lines.append(f"- {t['name']}: {tool.description}")
+        lines.append("")
+
+    all_resources = manager.get_all_mcp_resources()
+    if all_resources:
+        lines.append("### 可用 MCP 资源")
+        for r in all_resources:
+            res = r["resource"]
+            lines.append(f"- {r['server']}: {res.uri} - {res.name}")
+        lines.append("")
+
+    all_prompts = manager.get_all_mcp_prompts()
+    if all_prompts:
+        lines.append("### 可用 MCP 提示")
+        for p in all_prompts:
+            prompt = p["prompt"]
+            lines.append(f"- {p['server']}: {prompt.name} - {prompt.description}")
+        lines.append("")
+
+    lines.append("调 MCP 工具: 直接用 mcp__<server>__<tool> 工具名")
+    lines.append("读 MCP 资源: 调 mcp_resource(server, uri)")
+    lines.append("用 MCP 提示: 调 mcp_prompt(server, name)")
+    return "\n".join(lines)

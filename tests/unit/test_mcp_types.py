@@ -1,12 +1,11 @@
 # tests/unit/test_mcp_types.py
 """MCP 数据模型测试。"""
-from pathlib import Path
 from taisang.mcp.types import (
-    McpServerConfig,
-    McpToolInfo,
-    McpResourceInfo,
     McpPromptInfo,
+    McpResourceInfo,
+    McpServerConfig,
     McpServerInfo,
+    McpToolInfo,
 )
 
 
@@ -48,7 +47,12 @@ def test_mcp_tool_info():
 
 
 def test_mcp_resource_info():
-    info = McpResourceInfo(uri="file:///README.md", name="readme", description="README", mime_type="text/markdown")
+    info = McpResourceInfo(
+        uri="file:///README.md",
+        name="readme",
+        description="README",
+        mime_type="text/markdown",
+    )
     assert info.uri == "file:///README.md"
     assert info.mime_type == "text/markdown"
 
