@@ -241,3 +241,25 @@ def test_parse_json_taisang_entry_missing_name():
     text = '{"servers": [{"transport": "stdio", "command": "npx"}]}'
     with pytest.raises(McpValidationError, match="name"):
         parse_json(text)
+
+
+def test_parse_json_name_wins_over_servers():
+    """顶层同时有 name 和 servers,优先按单对象解析(name 分支先于 servers 分支)。"""
+    text = '{"name": "single", "transport": "stdio", "command": "npx", "servers": []}'
+    configs = parse_json(text)
+    assert len(configs) == 1
+    assert configs[0].name == "single"
+
+
+def test_parse_json_claude_code_entry_not_object():
+    """mcpServers.<name> 值不是 object → McpParseError。"""
+    text = '{"mcpServers": {"fs": "not an object"}}'
+    with pytest.raises(McpParseError, match="mcpServers.fs"):
+        parse_json(text)
+
+
+def test_parse_json_taisang_entry_missing_command():
+    """TaiSang 格式 stdio 但缺 command → McpValidationError(parse-time)。"""
+    text = '{"servers": [{"name": "fs", "transport": "stdio"}]}'
+    with pytest.raises(McpValidationError, match="command"):
+        parse_json(text)

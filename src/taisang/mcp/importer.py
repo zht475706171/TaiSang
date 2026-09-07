@@ -4,7 +4,9 @@
 """
 from __future__ import annotations
 
+import json
 import re
+from typing import Any
 
 from pydantic import ValidationError
 
@@ -104,10 +106,6 @@ def _looks_like_url(token: str) -> bool:
     return bool(_URL_RE.match(token))
 
 
-import json
-from typing import Any
-
-
 def parse_json(text: str) -> list[McpServerConfig]:
     """解析 JSON 文本 → McpServerConfig 列表。
 
@@ -181,6 +179,8 @@ def _taisang_entry_to_config(entry: Any) -> McpServerConfig:
     """TaiSang 扩展格式单 entry → McpServerConfig。"""
     if not isinstance(entry, dict):
         raise McpParseError(f"server entry must be an object, got {type(entry).__name__}")
+    if entry.get("transport", "stdio") == "stdio" and not entry.get("command"):
+        raise McpValidationError("stdio transport requires a command")
     try:
         return McpServerConfig(**entry)
     except ValidationError as e:
