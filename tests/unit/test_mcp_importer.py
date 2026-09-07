@@ -6,6 +6,7 @@ from taisang.mcp.importer import (
     McpParseError,
     McpValidationError,
     parse_cli,
+    parse_json,
 )
 
 
@@ -99,3 +100,144 @@ def test_parse_cli_transport_no_value():
     """--transport flag 缺值 → McpParseError。"""
     with pytest.raises(McpParseError, match="requires a value"):
         parse_cli("foo --transport")
+
+
+# ── JSON 四种格式 ──────────────────────────────────────
+
+def test_parse_json_claude_code_format_stdio():
+    text = """
+    {
+      "mcpServers": {
+        "filesystem": {
+          "command": "npx",
+          "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+        }
+      }
+    }
+    """
+    configs = parse_json(text)
+    assert len(configs) == 1
+    assert configs[0].name == "filesystem"
+    assert configs[0].transport == "stdio"
+    assert configs[0].command == "npx"
+    assert configs[0].args == ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+
+
+def test_parse_json_claude_code_format_auto_sse():
+    """claude-code 格式里没有 transport,有 url 自动判 sse。"""
+    text = """
+    {
+      "mcpServers": {
+        "search": {
+          "url": "https://example.com/sse"
+        }
+      }
+    }
+    """
+    configs = parse_json(text)
+    assert len(configs) == 1
+    assert configs[0].name == "search"
+    assert configs[0].transport == "sse"
+    assert configs[0].url == "https://example.com/sse"
+
+
+def test_parse_json_claude_code_format_multiple():
+    text = """
+    {
+      "mcpServers": {
+        "fs": {"command": "npx", "args": ["-y", "srv"]},
+        "search": {"url": "https://example.com/sse"}
+      }
+    }
+    """
+    configs = parse_json(text)
+    assert len(configs) == 2
+    names = {c.name for c in configs}
+    assert names == {"fs", "search"}
+
+
+def test_parse_json_claude_code_format_with_env():
+    text = """
+    {
+      "mcpServers": {
+        "fs": {"command": "npx", "args": ["srv"], "env": {"NODE_ENV": "production"}}
+      }
+    }
+    """
+    configs = parse_json(text)
+    assert configs[0].env == {"NODE_ENV": "production"}
+
+
+def test_parse_json_taisang_single_object():
+    text = """
+    {
+      "name": "search",
+      "transport": "sse",
+      "url": "https://example.com/sse"
+    }
+    """
+    configs = parse_json(text)
+    assert len(configs) == 1
+    assert configs[0].name == "search"
+    assert configs[0].transport == "sse"
+
+
+def test_parse_json_taisang_servers_key():
+    text = """
+    {
+      "servers": [
+        {"name": "fs", "transport": "stdio", "command": "npx"},
+        {"name": "search", "transport": "sse", "url": "https://example.com/sse"}
+      ]
+    }
+    """
+    configs = parse_json(text)
+    assert len(configs) == 2
+    assert configs[0].name == "fs"
+    assert configs[1].name == "search"
+
+
+def test_parse_json_taisang_bare_array():
+    text = """
+    [
+      {"name": "fs", "transport": "stdio", "command": "npx"}
+    ]
+    """
+    configs = parse_json(text)
+    assert len(configs) == 1
+    assert configs[0].name == "fs"
+
+
+def test_parse_json_invalid_json():
+    with pytest.raises(McpParseError, match="invalid JSON"):
+        parse_json("not json at all")
+
+
+def test_parse_json_unknown_format():
+    """顶层 dict 但没 mcpServers/servers/name。"""
+    with pytest.raises(McpParseError, match="unknown JSON format"):
+        parse_json('{"foo": "bar"}')
+
+
+def test_parse_json_empty_mcp_servers():
+    text = '{"mcpServers": {}}'
+    configs = parse_json(text)
+    assert configs == []
+
+
+def test_parse_json_mcp_servers_value_not_object():
+    with pytest.raises(McpParseError, match="mcpServers"):
+        parse_json('{"mcpServers": []}')
+
+
+def test_parse_json_claude_code_entry_missing_command():
+    """claude-code 格式里 stdio 但没 command → McpValidationError。"""
+    text = '{"mcpServers": {"fs": {"args": ["foo"]}}}'
+    with pytest.raises(McpValidationError, match="command"):
+        parse_json(text)
+
+
+def test_parse_json_taisang_entry_missing_name():
+    text = '{"servers": [{"transport": "stdio", "command": "npx"}]}'
+    with pytest.raises(McpValidationError, match="name"):
+        parse_json(text)

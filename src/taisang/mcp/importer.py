@@ -102,3 +102,86 @@ def parse_cli(line: str) -> McpServerConfig:
 def _looks_like_url(token: str) -> bool:
     """粗判 token 是否为 url(用于 sse 模式下区分 name 缺失 vs url 缺失)。"""
     return bool(_URL_RE.match(token))
+
+
+import json
+from typing import Any
+
+
+def parse_json(text: str) -> list[McpServerConfig]:
+    """解析 JSON 文本 → McpServerConfig 列表。
+
+    支持四种顶层格式:
+        1. claude-code 格式:  {"mcpServers": {name: {command, args, env}}}
+           (没 transport,有 url 自动判 sse,否则 stdio)
+        2. TaiSang 单对象:    {"name": "...", "transport": "...", ...}
+        3. TaiSang 数组:      {"servers": [McpServerConfig, ...]}
+        4. TaiSang 裸数组:    [McpServerConfig, ...]
+    """
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise McpParseError(f"invalid JSON: {e}") from e
+
+    return _parse_json_data(data)
+
+
+def _parse_json_data(data: Any) -> list[McpServerConfig]:
+    # 1. claude-code 格式
+    if isinstance(data, dict) and "mcpServers" in data:
+        servers = data["mcpServers"]
+        if not isinstance(servers, dict):
+            raise McpParseError(f"mcpServers must be an object, got {type(servers).__name__}")
+        return [_claude_code_entry_to_config(name, val) for name, val in servers.items()]
+
+    # 2. TaiSang 单对象
+    if isinstance(data, dict) and "name" in data:
+        return [_taisang_entry_to_config(data)]
+
+    # 3. TaiSang {servers: [...]}
+    if isinstance(data, dict) and "servers" in data:
+        servers = data["servers"]
+        if not isinstance(servers, list):
+            raise McpParseError(f"servers must be an array, got {type(servers).__name__}")
+        return [_taisang_entry_to_config(e) for e in servers]
+
+    # 4. 裸数组
+    if isinstance(data, list):
+        return [_taisang_entry_to_config(e) for e in data]
+
+    # 其他
+    raise McpParseError("unknown JSON format: expected mcpServers/servers/name/array")
+
+
+def _claude_code_entry_to_config(name: str, entry: Any) -> McpServerConfig:
+    """claude-code 格式单个 entry → McpServerConfig。
+
+    entry 里没 transport,靠 url 字段推断。其余字段透传。
+    """
+    if not isinstance(entry, dict):
+        raise McpParseError(f"mcpServers.{name} must be an object, got {type(entry).__name__}")
+    if not _NAME_RE.match(name):
+        raise McpValidationError(f"invalid name: {name!r}")
+
+    data = dict(entry)
+    data["name"] = name
+    if "transport" not in data:
+        data["transport"] = "sse" if "url" in data else "stdio"
+
+    if data["transport"] == "stdio" and not data.get("command"):
+        raise McpValidationError("stdio transport requires a command")
+
+    try:
+        return McpServerConfig(**data)
+    except ValidationError as e:
+        raise McpValidationError(str(e)) from e
+
+
+def _taisang_entry_to_config(entry: Any) -> McpServerConfig:
+    """TaiSang 扩展格式单 entry → McpServerConfig。"""
+    if not isinstance(entry, dict):
+        raise McpParseError(f"server entry must be an object, got {type(entry).__name__}")
+    try:
+        return McpServerConfig(**entry)
+    except ValidationError as e:
+        raise McpValidationError(str(e)) from e
