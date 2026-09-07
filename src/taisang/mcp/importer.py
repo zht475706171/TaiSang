@@ -185,3 +185,19 @@ def _taisang_entry_to_config(entry: Any) -> McpServerConfig:
         return McpServerConfig(**entry)
     except ValidationError as e:
         raise McpValidationError(str(e)) from e
+
+
+def parse_mcp_json_file(content: bytes, max_size: int = 1_000_000) -> list[McpServerConfig]:
+    """解析上传文件 bytes → McpServerConfig 列表。
+
+    - 超限 → McpImportError
+    - 非 UTF-8 → McpParseError
+    - 解析复用 parse_json
+    """
+    if len(content) > max_size:
+        raise McpImportError(f"file too large: {len(content)} bytes (max {max_size})")
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise McpParseError(f"file is not UTF-8: {e}") from e
+    return parse_json(text)

@@ -263,3 +263,50 @@ def test_parse_json_taisang_entry_missing_command():
     text = '{"servers": [{"name": "fs", "transport": "stdio"}]}'
     with pytest.raises(McpValidationError, match="command"):
         parse_json(text)
+
+
+# ── 文件解析(超限保护) ──────────────────────────────────
+
+from taisang.mcp.importer import parse_mcp_json_file
+
+
+def test_parse_file_basic():
+    content = b'{"mcpServers": {"fs": {"command": "npx", "args": ["srv"]}}}'
+    configs = parse_mcp_json_file(content)
+    assert len(configs) == 1
+    assert configs[0].name == "fs"
+
+
+def test_parse_file_taisang_format():
+    content = b'{"servers": [{"name": "fs", "transport": "stdio", "command": "npx"}]}'
+    configs = parse_mcp_json_file(content)
+    assert len(configs) == 1
+    assert configs[0].name == "fs"
+
+
+def test_parse_file_too_large():
+    """超限报 McpImportError。"""
+    big = b"x" * (1_000_000 + 1)
+    with pytest.raises(McpImportError, match="too large"):
+        parse_mcp_json_file(big)
+
+
+def test_parse_file_non_utf8():
+    """非 UTF-8 报 McpParseError。"""
+    with pytest.raises(McpParseError):
+        parse_mcp_json_file(b"\xff\xfe not utf8")
+
+
+def test_parse_file_invalid_json():
+    with pytest.raises(McpParseError, match="invalid JSON"):
+        parse_mcp_json_file(b"not json")
+
+
+def test_parse_file_custom_max_size():
+    """可自定义上限。"""
+    content = b'{"mcpServers": {"fs": {"command": "npx"}}}'
+    # 默认上限通过
+    parse_mcp_json_file(content)
+    # 设个极小上限触发拒绝
+    with pytest.raises(McpImportError, match="too large"):
+        parse_mcp_json_file(content, max_size=10)
