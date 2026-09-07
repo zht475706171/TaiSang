@@ -170,28 +170,31 @@ def _save_prompts_section(prompts_dict: dict) -> None:
 
 
 def _validate_prompt_value(value: str) -> None:
+    """校验单 prompt 文本:非空且 UTF-8 字节数 ≤ 50KB(单 prompt 文本上限,非整个文件大小)。"""
     if not value:
         raise ValueError("prompt 不能为空")
     if len(value.encode("utf-8")) > _PROMPT_MAX_BYTES:
         raise ValueError(f"prompt 过长(>{_PROMPT_MAX_BYTES // 1024}KB)")
 
 
+def _persist_prompts(cfg: PromptsConfig) -> PromptsConfig:
+    """把 PromptsConfig 序列化 + 原子写盘。返回 cfg(便于链式返回)。"""
+    raw = {k: getattr(cfg, k).model_dump() for k in PROMPT_KEYS}
+    _save_prompts_section(raw)
+    return cfg
+
+
 def save_prompt_override(key: str, value: str) -> PromptsConfig:
     """保存单个 prompt 覆盖:use_default=false + 写 value。返回最新完整 config。
 
-    校验:key 合法、value 非空且 ≤ 50KB。
+    校验:key 合法、value 非空且单文本 UTF-8 字节数 ≤ 50KB。
     """
     if key not in PROMPT_KEYS:
         raise ValueError(f"非法 key: {key}")
     _validate_prompt_value(value)
     cfg = load_prompts()
-    override = PromptOverride(value=value, use_default=False)
-    setattr(cfg, key, override)
-    raw = {
-        k: getattr(cfg, k).model_dump() for k in PROMPT_KEYS
-    }
-    _save_prompts_section(raw)
-    return cfg
+    setattr(cfg, key, PromptOverride(value=value, use_default=False))
+    return _persist_prompts(cfg)
 
 
 def reset_prompt_override(key: str) -> PromptsConfig:
@@ -200,8 +203,4 @@ def reset_prompt_override(key: str) -> PromptsConfig:
         raise ValueError(f"非法 key: {key}")
     cfg = load_prompts()
     setattr(cfg, key, PromptOverride())
-    raw = {
-        k: getattr(cfg, k).model_dump() for k in PROMPT_KEYS
-    }
-    _save_prompts_section(raw)
-    return cfg
+    return _persist_prompts(cfg)

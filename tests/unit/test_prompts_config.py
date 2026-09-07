@@ -92,5 +92,6 @@ def test_save_invalid_key_raises(tmp_settings):
 
 
 def test_reset_invalid_key_raises(tmp_settings):
+    """非法 key → ValueError。"""
     with pytest.raises(ValueError, match="非法 key"):
         reset_prompt_override("nonexistent_key")
