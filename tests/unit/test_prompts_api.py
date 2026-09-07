@@ -127,6 +127,11 @@ def test_put_system_prompt_broadcasts_to_active_session(client, app, tmp_path):
     new_system = sess.agent.ctx.messages()[0]["content"]
     assert new_system != original_system
     assert new_system.startswith("全新 system prompt")
+    # skills/mcp 段必须保留(apply_prompts_config 的核心契约:不丢动态段)
+    # original_system 含 skills 段头(SKILLS_SECTION_HEADER = "## 可用 Skills"),
+    # broadcast 后 new_system 也应含同段头(因为该 session 的 agent.skills 不变)
+    assert "## 可用 Skills" in new_system
+    assert "## 可用 Skills" in original_system  # 前置:测试环境确实有 skills 段
 
 
 def test_put_autocompact_does_not_broadcast(client, app, tmp_path):
@@ -155,4 +160,7 @@ def test_reset_system_prompt_broadcasts_default(client, app, tmp_path):
     client.post("/api/prompts/reset", json={"key": "system_prompt"})
     # 恢复为默认 SYSTEM_PROMPT
     from taisang.agent_core.prompts import SYSTEM_PROMPT
-    assert sess.agent.ctx.messages()[0]["content"].startswith(SYSTEM_PROMPT)
+    new_system = sess.agent.ctx.messages()[0]["content"]
+    assert new_system.startswith(SYSTEM_PROMPT)
+    # skills/mcp 段必须保留(reset 也走 apply_prompts_config,不能丢动态段)
+    assert "## 可用 Skills" in new_system
