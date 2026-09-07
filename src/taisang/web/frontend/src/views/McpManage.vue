@@ -88,30 +88,130 @@
     </div>
 
     <t-dialog v-model:visible="showDialog" :header="editing ? '编辑服务器' : '添加服务器'" @confirm="onSubmit">
-      <t-form ref="formRef" :data="formData" :rules="formRules" label-width="80px">
-        <t-form-item label="名称" name="name">
-          <t-input v-model="formData.name" placeholder="如 filesystem" :disabled="editing" />
-        </t-form-item>
-        <t-form-item label="传输方式" name="transport">
-          <t-select v-model="formData.transport">
-            <t-option value="stdio" label="stdio (本地子进程)" />
-            <t-option value="sse" label="SSE (远程 HTTP)" />
-          </t-select>
-        </t-form-item>
-        <template v-if="formData.transport === 'stdio'">
-          <t-form-item label="命令" name="command">
-            <t-input v-model="formData.command" placeholder="如 npx" />
+      <!-- 编辑模式:只显示手动填写 Tab -->
+      <div v-if="editing" class="form-section">
+        <t-form ref="formRef" :data="formData" :rules="formRules" label-width="80px">
+          <t-form-item label="名称" name="name">
+            <t-input v-model="formData.name" placeholder="如 filesystem" disabled />
           </t-form-item>
-          <t-form-item label="参数" name="argsText">
-            <t-textarea v-model="formData.argsText" placeholder="每行一个参数" :autosize="{ minRows: 2 }" />
+          <t-form-item label="传输方式" name="transport">
+            <t-select v-model="formData.transport">
+              <t-option value="stdio" label="stdio (本地子进程)" />
+              <t-option value="sse" label="SSE (远程 HTTP)" />
+            </t-select>
           </t-form-item>
-        </template>
-        <template v-else>
-          <t-form-item label="URL" name="url">
-            <t-input v-model="formData.url" placeholder="https://example.com/sse" />
-          </t-form-item>
-        </template>
-      </t-form>
+          <template v-if="formData.transport === 'stdio'">
+            <t-form-item label="命令" name="command">
+              <t-input v-model="formData.command" placeholder="如 npx" />
+            </t-form-item>
+            <t-form-item label="参数" name="argsText">
+              <t-textarea v-model="formData.argsText" placeholder="每行一个参数" :autosize="{ minRows: 2 }" />
+            </t-form-item>
+          </template>
+          <template v-else>
+            <t-form-item label="URL" name="url">
+              <t-input v-model="formData.url" placeholder="https://example.com/sse" />
+            </t-form-item>
+          </template>
+        </t-form>
+      </div>
+
+      <!-- 添加模式:4 Tab -->
+      <div v-else>
+        <t-tabs v-model="activeTab">
+          <t-tab-panel value="manual" label="手动填写">
+            <t-form ref="formRef" :data="formData" :rules="formRules" label-width="80px">
+              <t-form-item label="名称" name="name">
+                <t-input v-model="formData.name" placeholder="如 filesystem" />
+              </t-form-item>
+              <t-form-item label="传输方式" name="transport">
+                <t-select v-model="formData.transport">
+                  <t-option value="stdio" label="stdio (本地子进程)" />
+                  <t-option value="sse" label="SSE (远程 HTTP)" />
+                </t-select>
+              </t-form-item>
+              <template v-if="formData.transport === 'stdio'">
+                <t-form-item label="命令" name="command">
+                  <t-input v-model="formData.command" placeholder="如 npx" />
+                </t-form-item>
+                <t-form-item label="参数" name="argsText">
+                  <t-textarea v-model="formData.argsText" placeholder="每行一个参数" :autosize="{ minRows: 2 }" />
+                </t-form-item>
+              </template>
+              <template v-else>
+                <t-form-item label="URL" name="url">
+                  <t-input v-model="formData.url" placeholder="https://example.com/sse" />
+                </t-form-item>
+              </template>
+            </t-form>
+          </t-tab-panel>
+
+          <t-tab-panel value="cli" label="CLI 一行">
+            <div class="example-block">
+              <div class="example-title">示例</div>
+              <pre class="example-code"><code># stdio(本地子进程)
+filesystem npx -y @modelcontextprotocol/server-filesystem /tmp
+
+# sse(远程 HTTP)
+search --transport sse https://example.com/sse</code></pre>
+            </div>
+            <t-textarea
+              v-model="cliInput"
+              placeholder="filesystem npx -y @modelcontextprotocol/server-filesystem /tmp"
+              :autosize="{ minRows: 2 }"
+            />
+          </t-tab-panel>
+
+          <t-tab-panel value="json" label="粘贴 JSON">
+            <div class="example-block">
+              <div class="example-title">示例</div>
+              <pre class="example-code"><code>// claude-code 格式
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    }
+  }
+}
+
+// TaiSang 扩展(可含 SSE)
+{
+  "servers": [
+    {"name": "search", "transport": "sse", "url": "https://example.com/sse"}
+  ]
+}</code></pre>
+            </div>
+            <t-textarea
+              v-model="jsonInput"
+              placeholder='{"mcpServers": {...}}'
+              :autosize="{ minRows: 6 }"
+            />
+          </t-tab-panel>
+
+          <t-tab-panel value="file" label="上传文件">
+            <div class="example-block">
+              <div class="example-title">示例 .mcp.json</div>
+              <pre class="example-code"><code>{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    }
+  }
+}</code></pre>
+            </div>
+            <input
+              ref="fileInputRef"
+              type="file"
+              accept=".json,.mcp.json"
+              class="file-input"
+              @change="onFileSelect"
+            />
+            <div v-if="fileName" class="file-name">已选:{{ fileName }}</div>
+          </t-tab-panel>
+        </t-tabs>
+      </div>
     </t-dialog>
   </div>
 </template>
@@ -128,6 +228,12 @@ const mcpStore = useMcpStore()
 const showDialog = ref(false)
 const editing = ref(false)
 const formRef = ref<FormInstanceFunctions>()
+const activeTab = ref<'manual' | 'cli' | 'json' | 'file'>('manual')
+const cliInput = ref('')
+const jsonInput = ref('')
+const fileContent = ref('')
+const fileName = ref('')
+const fileInputRef = ref<HTMLInputElement>()
 
 const formData = reactive({
   name: '',
@@ -177,7 +283,12 @@ function statusLabel(name: string): string {
 
 function openAdd() {
   editing.value = false
+  activeTab.value = 'manual'
   Object.assign(formData, { name: '', transport: 'stdio', command: '', argsText: '', url: '' })
+  cliInput.value = ''
+  jsonInput.value = ''
+  fileContent.value = ''
+  fileName.value = ''
   showDialog.value = true
 }
 
@@ -194,6 +305,24 @@ function openEdit(server: McpServer) {
 }
 
 async function onSubmit() {
+  if (editing.value) {
+    await submitManual()
+    return
+  }
+
+  // 添加模式:根据 activeTab 分发
+  if (activeTab.value === 'manual') {
+    await submitManual()
+  } else if (activeTab.value === 'cli') {
+    await submitCli()
+  } else if (activeTab.value === 'json') {
+    await submitJson(jsonInput.value)
+  } else if (activeTab.value === 'file') {
+    await submitJson(fileContent.value)
+  }
+}
+
+async function submitManual() {
   const valid = await formRef.value?.validate?.()
   if (valid !== true) return
 
@@ -220,6 +349,61 @@ async function onSubmit() {
   } catch (e) {
     MessagePlugin.error(`保存失败: ${e}`)
   }
+}
+
+async function submitCli() {
+  if (!cliInput.value.trim()) {
+    MessagePlugin.warning('请输入 CLI 命令')
+    return
+  }
+  try {
+    await mcpStore.importCli(cliInput.value.trim())
+    MessagePlugin.success('已添加')
+    showDialog.value = false
+  } catch (e) {
+    MessagePlugin.error(`添加失败: ${e}`)
+  }
+}
+
+async function submitJson(text: string) {
+  if (!text.trim()) {
+    MessagePlugin.warning('请提供 JSON 配置')
+    return
+  }
+  try {
+    const result = await mcpStore.importBatch(text)
+    const parts: string[] = []
+    if (result.added.length) parts.push(`新增 ${result.added.length}`)
+    if (result.updated.length) parts.push(`更新 ${result.updated.length}`)
+    if (result.failed.length) parts.push(`失败 ${result.failed.length}`)
+    MessagePlugin.success(`导入完成:${parts.join('、')}`)
+    if (result.failed.length) {
+      console.warn('Import failures:', result.failed)
+    }
+    showDialog.value = false
+  } catch (e) {
+    MessagePlugin.error(`导入失败: ${e}`)
+  }
+}
+
+function onFileSelect(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  if (file.size > 1_000_000) {
+    MessagePlugin.error('文件超过 1MB 上限')
+    input.value = ''
+    return
+  }
+  fileName.value = file.name
+  const reader = new FileReader()
+  reader.onload = () => {
+    fileContent.value = String(reader.result || '')
+  }
+  reader.onerror = () => {
+    MessagePlugin.error('读取文件失败')
+  }
+  reader.readAsText(file)
 }
 
 async function onToggle(name: string, enabled: boolean) {
@@ -334,5 +518,34 @@ onMounted(() => mcpStore.fetchServers())
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.example-block {
+  margin-bottom: 12px;
+}
+.example-title {
+  font-size: 12px;
+  color: var(--td-text-color-secondary);
+  margin-bottom: 4px;
+}
+.example-code {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--td-bg-color-component);
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--td-text-color-primary);
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  white-space: pre;
+  overflow-x: auto;
+  max-height: 200px;
+}
+.file-input {
+  font-size: 13px;
+}
+.file-name {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--td-text-color-secondary);
 }
 </style>
