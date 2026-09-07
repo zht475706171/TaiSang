@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 
 from ..llm_client import LLMClient, MockLLM
-from .prompts import BASE_COMPACT_PROMPT, NO_TOOLS_PREAMBLE, NO_TOOLS_TRAILER
+from .prompts import get_autocompact_prompt
 
 # 熔断器:后续接入 agent loop 时启用,连续失败 N 次后停止 autocompact 重试。
 MAX_CONSECUTIVE_FAILURES = 3
@@ -30,17 +30,9 @@ def autocompact(
     4. 构造新 messages:[boundaryMarker, summaryUserMessage]
     5. transcript 路径提示加到 summary 末尾(供后续 read 回查)
     """
-    # 1. 拼 prompt
+    # 1. 拼 prompt(读 config,支持用户自定义)
     conversation_text = _messages_to_text(messages)
-    full_prompt = "\n\n".join(
-        [
-            NO_TOOLS_PREAMBLE,
-            BASE_COMPACT_PROMPT,
-            "对话内容:",
-            conversation_text,
-            NO_TOOLS_TRAILER,
-        ]
-    )
+    full_prompt = get_autocompact_prompt(conversation_text)
     # 2. 调 LLM(不带 tools)
     resp = llm.chat(
         messages=[

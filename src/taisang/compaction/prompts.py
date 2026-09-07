@@ -24,3 +24,25 @@ BASE_COMPACT_PROMPT = """你的任务是创建一份到目前为止对话的详�
 
 NO_TOOLS_TRAILER = """提醒:不要调用任何工具。只用纯文本回复——
 一个 <analysis> 块跟着一个 <summary> 块。"""
+
+
+DEFAULT_AUTOCOMPACT_PROMPT = (
+    NO_TOOLS_PREAMBLE
+    + "\n\n"
+    + BASE_COMPACT_PROMPT
+    + "\n\n对话内容:\n{conversation}\n\n"
+    + NO_TOOLS_TRAILER
+)
+
+
+def get_autocompact_prompt(conversation_text: str) -> str:
+    """返回 autocompact 完整 prompt:config 自定义 > 默认三段拼接。
+
+    用户自定义文本必须含 {conversation} 占位符(保存时已校验)。
+    运行时把 {conversation} 替换为对话文本。
+    """
+    from ..config import load_prompts
+
+    override = load_prompts().autocompact_prompt
+    template = DEFAULT_AUTOCOMPACT_PROMPT if override.use_default or not override.value else override.value
+    return template.format(conversation=conversation_text)

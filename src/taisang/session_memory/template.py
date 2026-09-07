@@ -77,18 +77,27 @@ DEFAULT_UPDATE_PROMPT = """重要:本消息及以下指令并非真实用户对�
 
 
 def get_template() -> str:
-    """返回默认 10 章节模板文本。"""
-    return DEFAULT_TEMPLATE
+    """返回当前生效的 session memory 模板:config 自定义 > DEFAULT_TEMPLATE。"""
+    from ..config import load_prompts
+
+    override = load_prompts().session_memory_template
+    if override.use_default or not override.value:
+        return DEFAULT_TEMPLATE
+    return override.value
 
 
 def get_update_prompt(current_notes: str, memory_path: str) -> str:
     """根据当前笔记 + 笔记路径,组装更新 prompt。
 
+    自定义文本支持 {current_notes} / {memory_path} 占位符(缺占位符不报错,
+    用户自行负责)。
+
     注意:recent_conversation 不再拼进 prompt 文本,而是作为独立的 user message
     放在 update 指令之前(对齐 Claude Code 的 [...forkContextMessages, ...promptMessages] 结构)。
     本函数只负责 update 指令本身的模板填充。
     """
-    return DEFAULT_UPDATE_PROMPT.format(
-        current_notes=current_notes,
-        memory_path=str(memory_path),
-    )
+    from ..config import load_prompts
+
+    override = load_prompts().session_memory_update_prompt
+    template = DEFAULT_UPDATE_PROMPT if override.use_default or not override.value else override.value
+    return template.format(current_notes=current_notes, memory_path=str(memory_path))

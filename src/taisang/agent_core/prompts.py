@@ -41,9 +41,19 @@ MCP_SECTION_HEADER = """
 """
 
 
+def get_system_prompt() -> str:
+    """返回当前生效的主 system prompt:config 自定义 > 代码常量 SYSTEM_PROMPT。"""
+    from ..config import load_prompts
+
+    override = load_prompts().system_prompt
+    if override.use_default or not override.value:
+        return SYSTEM_PROMPT
+    return override.value
+
+
 def build_system_prompt(skills_section: str = "", mcp_section: str = "") -> str:
-    """组装完整 system prompt:基础 SYSTEM_PROMPT + (可选)skills 清单段 + (可选)MCP 能力段。"""
-    prompt = SYSTEM_PROMPT
+    """组装完整 system prompt:基础 prompt(读 config)+ (可选)skills 清单段 + (可选)MCP 能力段。"""
+    prompt = get_system_prompt()
     if skills_section:
         prompt += SKILLS_SECTION_HEADER + "\n" + skills_section + "\n"
     if mcp_section:
