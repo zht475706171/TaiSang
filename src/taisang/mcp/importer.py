@@ -2,6 +2,7 @@
 
 纯函数,无副作用:把 CLI 一行 / JSON 文本 / 上传文件 解析成 McpServerConfig 列表。
 """
+
 from __future__ import annotations
 
 import json

@@ -1,5 +1,6 @@
 # tests/unit/test_mcp_api.py
 """MCP API 路由测试。"""
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -12,11 +13,13 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("TAISANG_MOCK_LLM", "1")
     # 隔离 MCP state(monkeypatch 自动恢复,比手动 save/restore 更安全)
     import taisang.mcp.manager as mgr_mod
+
     monkeypatch.setattr(mgr_mod, "_STATE_FILE", tmp_path / "mcp_servers.json")
     # 重置 mcp_api 模块级 singleton,确保测试间隔离。
     # 不用 monkeypatch.setattr 是因为 get_mcp_manager() 内部会重新赋值 _manager,
     # monkeypatch 的自动恢复会把它恢复成被改过的值而非 None,反而出问题。
     import taisang.web.mcp_api as api_mod
+
     api_mod._manager = None
     app = create_app(tmp_path)
     yield TestClient(app)
@@ -31,21 +34,27 @@ def test_list_servers_empty(client):
 
 
 def test_add_server(client):
-    r = client.post("/api/mcp/servers", json={
-        "name": "fs",
-        "transport": "stdio",
-        "command": "npx",
-        "args": ["-y", "server"],
-    })
+    r = client.post(
+        "/api/mcp/servers",
+        json={
+            "name": "fs",
+            "transport": "stdio",
+            "command": "npx",
+            "args": ["-y", "server"],
+        },
+    )
     assert r.status_code == 200
     assert r.json()["name"] == "fs"
 
 
 def test_add_server_invalid_transport(client):
-    r = client.post("/api/mcp/servers", json={
-        "name": "bad",
-        "transport": "invalid",
-    })
+    r = client.post(
+        "/api/mcp/servers",
+        json={
+            "name": "bad",
+            "transport": "invalid",
+        },
+    )
     assert r.status_code == 422
 
 
@@ -121,9 +130,12 @@ def test_get_server_info(client):
 
 
 def test_import_cli_stdio(client):
-    r = client.post("/api/mcp/servers/import-cli", json={
-        "line": "filesystem npx -y @modelcontextprotocol/server-filesystem /tmp",
-    })
+    r = client.post(
+        "/api/mcp/servers/import-cli",
+        json={
+            "line": "filesystem npx -y @modelcontextprotocol/server-filesystem /tmp",
+        },
+    )
     assert r.status_code == 200
     info = r.json()
     assert info["name"] == "filesystem"
@@ -131,9 +143,12 @@ def test_import_cli_stdio(client):
 
 
 def test_import_cli_sse(client):
-    r = client.post("/api/mcp/servers/import-cli", json={
-        "line": "search --transport sse https://example.com/sse",
-    })
+    r = client.post(
+        "/api/mcp/servers/import-cli",
+        json={
+            "line": "search --transport sse https://example.com/sse",
+        },
+    )
     assert r.status_code == 200
     info = r.json()
     assert info["name"] == "search"
@@ -143,9 +158,12 @@ def test_import_cli_sse(client):
 def test_import_cli_overwrites_existing(client):
     """同名覆盖:已有 fs,新配置覆盖,状态仍可见。"""
     client.post("/api/mcp/servers", json={"name": "fs", "transport": "stdio", "command": "old"})
-    r = client.post("/api/mcp/servers/import-cli", json={
-        "line": "fs npx -y new-server",
-    })
+    r = client.post(
+        "/api/mcp/servers/import-cli",
+        json={
+            "line": "fs npx -y new-server",
+        },
+    )
     assert r.status_code == 200
     # 配置被覆盖
     cfg = client.get("/api/mcp/servers/fs").json()
@@ -155,9 +173,12 @@ def test_import_cli_overwrites_existing(client):
 
 def test_import_cli_parse_error(client):
     """CLI 语法错 → 422。"""
-    r = client.post("/api/mcp/servers/import-cli", json={
-        "line": "--transport bad https://example.com/sse",
-    })
+    r = client.post(
+        "/api/mcp/servers/import-cli",
+        json={
+            "line": "--transport bad https://example.com/sse",
+        },
+    )
     assert r.status_code == 422
 
 

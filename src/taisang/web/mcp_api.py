@@ -1,5 +1,6 @@
 # src/taisang/web/mcp_api.py
 """MCP 管理 API 路由。"""
+
 from __future__ import annotations
 
 import threading

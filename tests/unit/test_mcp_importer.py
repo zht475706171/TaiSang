@@ -1,4 +1,5 @@
 """MCP 快速添加解析层测试。"""
+
 import pytest
 
 from taisang.mcp.importer import (
@@ -7,6 +8,7 @@ from taisang.mcp.importer import (
     McpValidationError,
     parse_cli,
     parse_json,
+    parse_mcp_json_file,
 )
 
 
@@ -103,6 +105,7 @@ def test_parse_cli_transport_no_value():
 
 
 # ── JSON 四种格式 ──────────────────────────────────────
+
 
 def test_parse_json_claude_code_format_stdio():
     text = """
@@ -266,8 +269,6 @@ def test_parse_json_taisang_entry_missing_command():
 
 
 # ── 文件解析(超限保护) ──────────────────────────────────
-
-from taisang.mcp.importer import parse_mcp_json_file
 
 
 def test_parse_file_basic():
