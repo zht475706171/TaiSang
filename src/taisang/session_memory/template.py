@@ -81,16 +81,15 @@ def get_template() -> str:
     from ..config import load_prompts
 
     override = load_prompts().session_memory_template
-    if override.use_default or not override.value:
-        return DEFAULT_TEMPLATE
-    return override.value
+    return DEFAULT_TEMPLATE if override.use_default or not override.value else override.value
 
 
 def get_update_prompt(current_notes: str, memory_path: str) -> str:
     """根据当前笔记 + 笔记路径,组装更新 prompt。
 
-    自定义文本支持 {current_notes} / {memory_path} 占位符(缺占位符不报错,
-    用户自行负责)。
+    自定义文本应含 {current_notes} / {memory_path} 占位符(缺占位符不报错,
+    用户自行负责)。用 str.replace 而非 str.format,避免用户文本含其他 {xxx}
+    或字面花括号时抛 KeyError。
 
     注意:recent_conversation 不再拼进 prompt 文本,而是作为独立的 user message
     放在 update 指令之前(对齐 Claude Code 的 [...forkContextMessages, ...promptMessages] 结构)。
@@ -100,4 +99,6 @@ def get_update_prompt(current_notes: str, memory_path: str) -> str:
 
     override = load_prompts().session_memory_update_prompt
     template = DEFAULT_UPDATE_PROMPT if override.use_default or not override.value else override.value
-    return template.format(current_notes=current_notes, memory_path=str(memory_path))
+    return (
+        template.replace("{current_notes}", current_notes).replace("{memory_path}", str(memory_path))
+    )

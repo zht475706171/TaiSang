@@ -87,6 +87,18 @@ def test_get_autocompact_prompt_custom(tmp_settings):
     assert result == "前缀\n对话内容\n后缀"
 
 
+def test_get_autocompact_prompt_custom_with_other_braces(tmp_settings):
+    """自定义文本含其他 {xxx} 占位符或字面花括号不崩(str.replace 而非 str.format)。"""
+    save_prompt_override(
+        "autocompact_prompt",
+        '请输出 JSON {"key": "v"} 格式\n{conversation}\n还有 {other}',
+    )
+    result = get_autocompact_prompt("对话")
+    assert '请输出 JSON {"key": "v"} 格式' in result
+    assert "对话" in result
+    assert "{other}" in result  # 未授权占位符原样保留,不抛 KeyError
+
+
 def test_get_template_default(tmp_settings):
     assert get_template() == DEFAULT_TEMPLATE
 
@@ -110,3 +122,16 @@ def test_get_update_prompt_custom(tmp_settings):
     )
     result = get_update_prompt(current_notes="N", memory_path="/p.md")
     assert result == "更新笔记 /p.md\n当前:\nN"
+
+
+def test_get_update_prompt_custom_with_other_braces(tmp_settings):
+    """自定义文本含其他 {xxx} 占位符或字面花括号不崩(str.replace 而非 str.format)。"""
+    save_prompt_override(
+        "session_memory_update_prompt",
+        '格式 {"k": "v"}\n{memory_path}\n{current_notes}\n{other}',
+    )
+    result = get_update_prompt(current_notes="N", memory_path="/p.md")
+    assert '格式 {"k": "v"}' in result
+    assert "/p.md" in result
+    assert "N" in result
+    assert "{other}" in result  # 未授权占位符原样保留,不抛 KeyError

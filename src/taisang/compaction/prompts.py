@@ -38,11 +38,12 @@ DEFAULT_AUTOCOMPACT_PROMPT = (
 def get_autocompact_prompt(conversation_text: str) -> str:
     """返回 autocompact 完整 prompt:config 自定义 > 默认三段拼接。
 
-    用户自定义文本必须含 {conversation} 占位符(保存时已校验)。
-    运行时把 {conversation} 替换为对话文本。
+    用户自定义文本应含 {conversation} 占位符(保存校验在 web 层加入)。
+    运行时把 {conversation} 替换为对话文本;用 str.replace 而非 str.format,
+    避免用户文本含其他 {xxx} 或字面花括号时抛 KeyError。
     """
     from ..config import load_prompts
 
     override = load_prompts().autocompact_prompt
     template = DEFAULT_AUTOCOMPACT_PROMPT if override.use_default or not override.value else override.value
-    return template.format(conversation=conversation_text)
+    return template.replace("{conversation}", conversation_text)

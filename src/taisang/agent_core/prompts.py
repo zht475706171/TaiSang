@@ -46,9 +46,7 @@ def get_system_prompt() -> str:
     from ..config import load_prompts
 
     override = load_prompts().system_prompt
-    if override.use_default or not override.value:
-        return SYSTEM_PROMPT
-    return override.value
+    return SYSTEM_PROMPT if override.use_default or not override.value else override.value
 
 
 def build_system_prompt(skills_section: str = "", mcp_section: str = "") -> str:
