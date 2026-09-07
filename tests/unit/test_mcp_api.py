@@ -118,3 +118,55 @@ def test_get_server_info(client):
     data = r.json()
     assert data["name"] == "fs"
     assert "status" in data
+
+
+def test_import_cli_stdio(client):
+    r = client.post("/api/mcp/servers/import-cli", json={
+        "line": "filesystem npx -y @modelcontextprotocol/server-filesystem /tmp",
+    })
+    assert r.status_code == 200
+    info = r.json()
+    assert info["name"] == "filesystem"
+    assert "status" in info
+
+
+def test_import_cli_sse(client):
+    r = client.post("/api/mcp/servers/import-cli", json={
+        "line": "search --transport sse https://example.com/sse",
+    })
+    assert r.status_code == 200
+    info = r.json()
+    assert info["name"] == "search"
+    assert "status" in info
+
+
+def test_import_cli_overwrites_existing(client):
+    """同名覆盖:已有 fs,新配置覆盖,状态仍可见。"""
+    client.post("/api/mcp/servers", json={"name": "fs", "transport": "stdio", "command": "old"})
+    r = client.post("/api/mcp/servers/import-cli", json={
+        "line": "fs npx -y new-server",
+    })
+    assert r.status_code == 200
+    # 配置被覆盖
+    cfg = client.get("/api/mcp/servers/fs").json()
+    assert cfg["command"] == "npx"
+    assert cfg["args"] == ["-y", "new-server"]
+
+
+def test_import_cli_parse_error(client):
+    """CLI 语法错 → 422。"""
+    r = client.post("/api/mcp/servers/import-cli", json={
+        "line": "--transport bad https://example.com/sse",
+    })
+    assert r.status_code == 422
+
+
+def test_import_cli_empty_line(client):
+    r = client.post("/api/mcp/servers/import-cli", json={"line": "   "})
+    assert r.status_code == 422
+
+
+def test_import_cli_missing_line_field(client):
+    """body 没有 line 字段 → 422(pydantic 校验)。"""
+    r = client.post("/api/mcp/servers/import-cli", json={})
+    assert r.status_code == 422

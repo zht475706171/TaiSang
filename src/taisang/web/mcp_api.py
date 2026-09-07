@@ -8,6 +8,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ValidationError
 
+from ..mcp.importer import McpImportError, McpParseError, McpValidationError, parse_cli
 from ..mcp.manager import MCPManager
 from ..mcp.types import McpServerConfig
 
@@ -144,3 +145,27 @@ async def get_server_info(name: str) -> dict:
     except ValueError as e:
         raise HTTPException(404, str(e)) from e
     return info.model_dump()
+
+
+class ImportCliIn(BaseModel):
+    line: str
+
+
+@router.post("/servers/import-cli")
+async def import_cli(req: ImportCliIn) -> dict:
+    """CLI 一行式导入(单条,同名覆盖)。"""
+    mgr = get_mcp_manager()
+    try:
+        config = parse_cli(req.line)
+    except (McpParseError, McpValidationError) as e:
+        raise HTTPException(422, str(e)) from e
+
+    # 同名覆盖
+    if mgr.get_server(config.name) is not None:
+        mgr.update_server(config.name, config)
+        await mgr.reconnect_server(config.name)
+    else:
+        mgr.add_server(config)
+        await mgr.connect_server(config.name)
+
+    return mgr.get_server_info(config.name).model_dump()
