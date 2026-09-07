@@ -170,3 +170,77 @@ def test_import_cli_missing_line_field(client):
     """body 没有 line 字段 → 422(pydantic 校验)。"""
     r = client.post("/api/mcp/servers/import-cli", json={})
     assert r.status_code == 422
+
+
+def test_import_batch_all_new(client):
+    """批量新增,全部新。"""
+    text = """
+    {
+      "mcpServers": {
+        "fs": {"command": "npx", "args": ["-y", "srv1"]},
+        "fs2": {"command": "npx", "args": ["-y", "srv2"]}
+      }
+    }
+    """
+    r = client.post("/api/mcp/servers/import", json={"text": text})
+    assert r.status_code == 200
+    data = r.json()
+    assert set(data["added"]) == {"fs", "fs2"}
+    assert data["updated"] == []
+    assert data["failed"] == []
+
+
+def test_import_batch_overwrites_existing(client):
+    """部分已存在 → update。"""
+    client.post("/api/mcp/servers", json={"name": "fs", "transport": "stdio", "command": "old"})
+    text = """
+    {
+      "mcpServers": {
+        "fs": {"command": "npx", "args": ["new"]},
+        "fs2": {"command": "npx", "args": ["new2"]}
+      }
+    }
+    """
+    r = client.post("/api/mcp/servers/import", json={"text": text})
+    assert r.status_code == 200
+    data = r.json()
+    assert set(data["added"]) == {"fs2"}
+    assert set(data["updated"]) == {"fs"}
+    assert data["failed"] == []
+    # 验证 fs 被覆盖
+    cfg = client.get("/api/mcp/servers/fs").json()
+    assert cfg["command"] == "npx"
+    assert cfg["args"] == ["new"]
+
+
+def test_import_batch_partial_failure(client):
+    """部分 add_server 失败不影响其他(解析阶段失败整体 422,运行阶段失败进 failed)。"""
+    text = """
+    {
+      "servers": [
+        {"name": "ok", "transport": "stdio", "command": "npx"},
+        {"name": "bad", "transport": "sse"}
+      ]
+    }
+    """
+    r = client.post("/api/mcp/servers/import", json={"text": text})
+    assert r.status_code == 200
+    data = r.json()
+    assert "ok" in data["added"]
+    assert "bad" in [f["name"] for f in data["failed"]]
+
+
+def test_import_batch_parse_error(client):
+    """JSON 语法错整体 → 422。"""
+    r = client.post("/api/mcp/servers/import", json={"text": "not json"})
+    assert r.status_code == 422
+
+
+def test_import_batch_unknown_format(client):
+    r = client.post("/api/mcp/servers/import", json={"text": '{"foo": "bar"}'})
+    assert r.status_code == 422
+
+
+def test_import_batch_empty_text(client):
+    r = client.post("/api/mcp/servers/import", json={"text": ""})
+    assert r.status_code == 422

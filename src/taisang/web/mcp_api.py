@@ -8,7 +8,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ValidationError
 
-from ..mcp.importer import McpParseError, McpValidationError, parse_cli
+from ..mcp.importer import McpImportError, McpParseError, McpValidationError, parse_cli, parse_json
 from ..mcp.manager import MCPManager
 from ..mcp.types import McpServerConfig
 
@@ -169,3 +169,42 @@ async def import_cli(req: ImportCliIn) -> dict:
         await mgr.connect_server(config.name)
 
     return mgr.get_server_info(config.name).model_dump()
+
+
+class ImportBatchIn(BaseModel):
+    text: str
+
+
+@router.post("/servers/import")
+async def import_batch(req: ImportBatchIn) -> dict:
+    """批量导入 JSON 配置(同名覆盖,部分失败不影响其他)。
+
+    返回 {added: [...], updated: [...], failed: [{name, error}]}。
+    """
+    mgr = get_mcp_manager()
+    try:
+        configs = parse_json(req.text)
+    except (McpParseError, McpValidationError) as e:
+        raise HTTPException(422, str(e)) from e
+
+    if not configs:
+        raise HTTPException(422, "no server configurations found in input")
+
+    added: list[str] = []
+    updated: list[str] = []
+    failed: list[dict] = []
+
+    for cfg in configs:
+        try:
+            if mgr.get_server(cfg.name) is not None:
+                mgr.update_server(cfg.name, cfg)
+                await mgr.reconnect_server(cfg.name)
+                updated.append(cfg.name)
+            else:
+                mgr.add_server(cfg)
+                await mgr.connect_server(cfg.name)
+                added.append(cfg.name)
+        except (McpImportError, ValueError, Exception) as e:
+            failed.append({"name": cfg.name, "error": str(e)})
+
+    return {"added": added, "updated": updated, "failed": failed}
