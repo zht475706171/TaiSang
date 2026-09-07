@@ -67,3 +67,17 @@ export function reconnectMcpServer(name: string): Promise<McpServerInfo> {
 export function getMcpServerInfo(name: string): Promise<McpServerInfo> {
   return apiGet<McpServerInfo>(`/api/mcp/servers/${name}/info`)
 }
+
+export interface ImportBatchResult {
+  added: string[]
+  updated: string[]
+  failed: { name: string; error: string }[]
+}
+
+export function importCliMcp(line: string): Promise<McpServerInfo> {
+  return apiPost<McpServerInfo>('/api/mcp/servers/import-cli', { line })
+}
+
+export function importBatchMcp(text: string): Promise<ImportBatchResult> {
+  return apiPost<ImportBatchResult>('/api/mcp/servers/import', { text })
+}
