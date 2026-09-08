@@ -184,13 +184,17 @@ def test_get_messages_unknown_session_404(tmp_path, monkeypatch):
 
 
 def test_spa_fallback_serves_index_html(client):
-    """SPA 深链(/skills、/chat/xxx)GET 返回 index.html,前端路由接管。"""
+    """SPA 深链(/skills、/chat/xxx、/agents)GET 返回 index.html,前端路由接管。"""
     r = client.get("/skills")
     assert r.status_code == 200
     assert "text/html" in r.headers["content-type"]
     r2 = client.get("/chat/abc123")
     assert r2.status_code == 200
     assert "text/html" in r2.headers["content-type"]
+    # Task 16: /agents 深链也走 SPA fallback(不 404)
+    r3 = client.get("/agents")
+    assert r3.status_code == 200
+    assert "text/html" in r3.headers["content-type"]
 
 
 def test_spa_fallback_unknown_api_404(client):
