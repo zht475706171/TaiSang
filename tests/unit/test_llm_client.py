@@ -317,3 +317,133 @@ def test_mock_llm_chat_stream_reasoning_chunks():
     assert reasoning == "thinking process"
     text = "".join(c.text_delta for c in chunks if c.text_delta)
     assert text == "answer"
+
+
+# --- LLMClient.chat_stream(用 fake stream,不依赖真 endpoint)---
+
+from unittest.mock import MagicMock  # noqa: E402
+
+from taisang.config import LLMConfig  # noqa: E402
+from taisang.llm_errors import LLMTransientError  # noqa: E402
+
+
+def _make_fake_chunk(content=None, reasoning_content=None, tool_calls=None, usage=None, has_choices=True):
+    """造一个 fake openai ChatCompletionChunk。"""
+    chunk = MagicMock()
+    if has_choices:
+        choice = MagicMock()
+        delta = MagicMock()
+        delta.content = content
+        delta.reasoning_content = reasoning_content
+        if tool_calls:
+            delta.tool_calls = []
+            for idx, tc in enumerate(tool_calls):
+                tc_mock = MagicMock()
+                tc_mock.index = idx
+                tc_mock.id = tc.get("id")
+                fn_mock = MagicMock()
+                fn_mock.name = tc.get("function", {}).get("name")
+                fn_mock.arguments = tc.get("function", {}).get("arguments")
+                tc_mock.function = fn_mock
+                delta.tool_calls.append(tc_mock)
+        else:
+            delta.tool_calls = None
+        choice.delta = delta
+        chunk.choices = [choice]
+    else:
+        chunk.choices = []
+    chunk.usage = usage
+    return chunk
+
+
+def _make_fake_stream(chunks):
+    return iter(chunks)
+
+
+def _make_llm_client():
+    cfg = LLMConfig(base_url="http://x", api_key="sk-x", model="x")
+    return LLMClient(cfg)
+
+
+def test_llm_client_chat_stream_text_delta():
+    """chat_stream 把 delta.content 作为 text_delta yield。"""
+    import pytest
+
+    client = _make_llm_client()
+    fake_chunks = [
+        _make_fake_chunk(content="hello "),
+        _make_fake_chunk(content="world"),
+        _make_fake_chunk(has_choices=False, usage=MagicMock(prompt_tokens=5, completion_tokens=3, total_tokens=8)),
+    ]
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setattr(client._client.chat.completions, "create", lambda **kw: _make_fake_stream(fake_chunks))
+        chunks = list(client.chat_stream(messages=[{"role": "user", "content": "hi"}], tools=[]))
+    text = "".join(c.text_delta for c in chunks if c.text_delta)
+    assert text == "hello world"
+    assert chunks[-1].is_final is True
+    assert chunks[-1].usage["total_tokens"] == 8
+
+
+def test_llm_client_chat_stream_reasoning_delta():
+    """chat_stream 把 delta.reasoning_content 作为 reasoning_delta yield。"""
+    import pytest
+
+    client = _make_llm_client()
+    fake_chunks = [
+        _make_fake_chunk(reasoning_content="思考"),
+        _make_fake_chunk(reasoning_content="过程"),
+        _make_fake_chunk(has_choices=False, usage=None),
+    ]
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setattr(client._client.chat.completions, "create", lambda **kw: _make_fake_stream(fake_chunks))
+        chunks = list(client.chat_stream(messages=[], tools=[]))
+    reasoning = "".join(c.reasoning_delta for c in chunks if c.reasoning_delta)
+    assert reasoning == "思考过程"
+
+
+def test_llm_client_chat_stream_tool_calls_accumulated():
+    """chat_stream 累积 tool_calls 分片(按 index 拼接 arguments)。"""
+    import pytest
+
+    client = _make_llm_client()
+    fake_chunks = [
+        _make_fake_chunk(tool_calls=[{"id": "tc1", "function": {"name": "read_file", "arguments": '{"path":'}}]),
+        _make_fake_chunk(tool_calls=[{"id": "tc1", "function": {"name": "", "arguments": ' "x.py"}'}}]),
+        _make_fake_chunk(has_choices=False, usage=None),
+    ]
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setattr(client._client.chat.completions, "create", lambda **kw: _make_fake_stream(fake_chunks))
+        chunks = list(client.chat_stream(messages=[], tools=[]))
+    last = chunks[-1]
+    assert last.is_final is True
+    assert len(last.tool_calls) == 1
+    assert last.tool_calls[0]["id"] == "tc1"
+    assert last.tool_calls[0]["function"]["name"] == "read_file"
+    assert last.tool_calls[0]["function"]["arguments"] == '{"path": "x.py"}'
+
+
+def test_llm_client_chat_stream_connection_error_wraps_transient():
+    """chat_stream 创建失败包装 LLMTransientError。"""
+    import pytest
+
+    client = _make_llm_client()
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setattr(client._client.chat.completions, "create", lambda **kw: (_ for _ in ()).throw(Exception("conn refused")))
+        with pytest.raises(LLMTransientError, match="LLM API call failed"):
+            list(client.chat_stream(messages=[], tools=[]))
+
+
+def test_llm_client_chat_stream_mid_failure_wraps_transient():
+    """流中 chunk 失败包装 LLMTransientError。"""
+    import pytest
+
+    client = _make_llm_client()
+
+    def gen():
+        yield _make_fake_chunk(content="partial")
+        raise Exception("mid stream error")
+
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setattr(client._client.chat.completions, "create", lambda **kw: gen())
+        with pytest.raises(LLMTransientError, match="LLM stream failed"):
+            list(client.chat_stream(messages=[], tools=[]))

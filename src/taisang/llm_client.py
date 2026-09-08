@@ -114,6 +114,89 @@ class LLMClient:
                 usage = None
         return LLMResponse(text=msg.content or "", tool_calls=tool_calls, usage=usage)
 
+    def chat_stream(self, messages: list[dict], tools: list[dict]):
+        """发流式 chat completion 请求,返回 StreamChunk 迭代器。
+
+        tools 是工具 schema 列表(OpenAI tool 格式)。
+
+        流式行为:
+        - delta.content → text_delta(答案文本)
+        - delta.reasoning_content → reasoning_delta(Kimi 等思考模型,getattr 兜底)
+        - delta.tool_calls 分片到达,按 index 累积 arguments,最后 chunk 一次给完整 tool_calls
+        - 最后 chunk(chunk.choices 为空)含 usage(需 stream_options include_usage=True)
+
+        Raises:
+            LLMTransientError: 连接失败 / 流中 chunk 失败(统一包装)
+        """
+        from .llm_stream import StreamChunk
+
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "timeout": 60,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }
+        if tools:
+            kwargs["tools"] = [{"type": "function", "function": t} for t in tools]
+        try:
+            stream = self._client.chat.completions.create(**kwargs)
+        except Exception as e:
+            cause = getattr(e, "__cause__", None)
+            cause_repr = repr(cause) if cause else "(none)"
+            log.warning(
+                "LLM chat_stream failed: type=%s msg=%s cause=%s",
+                type(e).__name__, e, cause_repr, exc_info=True,
+            )
+            raise LLMTransientError(f"LLM API call failed: {e}") from e
+
+        acc_tool_calls: dict[int, dict] = {}
+        last_usage = None
+        try:
+            for chunk in stream:
+                if chunk.choices:
+                    delta = chunk.choices[0].delta
+                    text_delta = getattr(delta, "content", None) or ""
+                    reasoning_delta = getattr(delta, "reasoning_content", None) or ""
+                    if delta.tool_calls:
+                        for tc in delta.tool_calls:
+                            idx = tc.index
+                            if idx not in acc_tool_calls:
+                                acc_tool_calls[idx] = {
+                                    "id": "",
+                                    "type": "function",
+                                    "function": {"name": "", "arguments": ""},
+                                }
+                            if tc.id:
+                                acc_tool_calls[idx]["id"] = tc.id
+                            if tc.function:
+                                if tc.function.name:
+                                    acc_tool_calls[idx]["function"]["name"] += tc.function.name
+                                if tc.function.arguments:
+                                    acc_tool_calls[idx]["function"]["arguments"] += tc.function.arguments
+                    if text_delta or reasoning_delta:
+                        yield StreamChunk(text_delta=text_delta, reasoning_delta=reasoning_delta)
+                if chunk.usage:
+                    last_usage = {
+                        "prompt_tokens": getattr(chunk.usage, "prompt_tokens", 0) or 0,
+                        "completion_tokens": getattr(chunk.usage, "completion_tokens", 0) or 0,
+                        "total_tokens": getattr(chunk.usage, "total_tokens", 0) or 0,
+                    }
+        except Exception as e:
+            cause = getattr(e, "__cause__", None)
+            cause_repr = repr(cause) if cause else "(none)"
+            log.warning(
+                "LLM stream chunk failed: type=%s msg=%s cause=%s",
+                type(e).__name__, e, cause_repr, exc_info=True,
+            )
+            raise LLMTransientError(f"LLM stream failed: {e}") from e
+
+        yield StreamChunk(
+            tool_calls=list(acc_tool_calls.values()),
+            usage=last_usage,
+            is_final=True,
+        )
+
 
 class MockLLM:
     """测试用 mock LLM。按调用顺序返回预设响应,记录所有调用。
