@@ -5,14 +5,15 @@
       <div class="page-hint">Prompt 修改全局生效,对所有会话立即应用。</div>
     </div>
 
-    <t-collapse :default-expand-all="true">
-      <t-collapse-panel
-        v-for="p in panels"
-        :key="p.key"
-        :header="p.title"
-      >
-        <template #default>
-          <div class="panel-body">
+    <div class="prompt-editor">
+      <t-tabs v-model="activeKey">
+        <t-tab-panel
+          v-for="p in panels"
+          :key="p.key"
+          :value="p.key"
+          :label="p.title"
+        >
+          <div class="editor-body">
             <div class="panel-toolbar">
               <t-tag
                 :theme="state[p.key].useDefault ? 'default' : 'primary'"
@@ -45,18 +46,17 @@
             <textarea
               v-model="state[p.key].draft"
               class="prompt-textarea"
-              :rows="20"
               spellcheck="false"
             />
           </div>
-        </template>
-      </t-collapse-panel>
-    </t-collapse>
+        </t-tab-panel>
+      </t-tabs>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { reactive, onMounted, onBeforeUnmount } from 'vue'
+import { reactive, ref, onMounted, onBeforeUnmount } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { MessagePlugin } from 'tdesign-vue-next'
 import {
@@ -93,7 +93,7 @@ const panels: PanelMeta[] = [
   },
   {
     key: 'autocompact_prompt',
-    title: 'Autocompact 摘要 Prompt',
+    title: 'Autocompact 摘要',
     confirmText:
       '⚠️ 修改后将立即保存。下次触发上下文压缩时使用新 prompt。\n' +
       '当前进行中的对话不受影响(只有触发 compaction 时才用到)。\n\n' +
@@ -116,6 +116,8 @@ const panels: PanelMeta[] = [
       '注意:自定义文本支持 {current_notes} 和 {memory_path} 占位符(缺了不报错)。\n\n是否继续?',
   },
 ]
+
+const activeKey = ref<PromptKey>('system_prompt')
 
 const state = reactive<Record<PromptKey, PanelState>>({
   system_prompt: { original: '', draft: '', useDefault: true, saving: false, justSaved: false },
@@ -227,9 +229,14 @@ onBeforeUnmount(() => {
   padding: 24px;
   max-width: 1200px;
   margin: 0 auto;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
 }
 .page-header {
   margin-bottom: 16px;
+  flex-shrink: 0;
 }
 .page-title {
   margin: 0 0 4px 0;
@@ -238,15 +245,47 @@ onBeforeUnmount(() => {
   color: var(--td-text-color-placeholder);
   font-size: 13px;
 }
-.panel-body {
+.prompt-editor {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* t-tabs 撑满编辑区 */
+.prompt-editor :deep(.t-tabs) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.prompt-editor :deep(.t-tabs__nav-container) {
+  flex-shrink: 0;
+}
+.prompt-editor :deep(.t-tabs__content) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.prompt-editor :deep(.t-tab-panel) {
+  flex: 1;
+  display: flex;
+}
+.prompt-editor :deep(.t-tab-panel__panel) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.editor-body {
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-height: 0;
 }
 .panel-toolbar {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-shrink: 0;
 }
 .toolbar-spacer {
   flex: 1;
@@ -268,6 +307,7 @@ onBeforeUnmount(() => {
   color: var(--td-success-color);
 }
 .prompt-textarea {
+  flex: 1;
   width: 100%;
   font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   font-size: 13px;
@@ -275,9 +315,10 @@ onBeforeUnmount(() => {
   padding: 12px;
   border: 1px solid var(--td-border-level-2-color);
   border-radius: 4px;
-  resize: vertical;
-  min-height: 300px;
+  resize: none;
+  min-height: 0;
   background: var(--td-bg-color-container);
   color: var(--td-text-color-primary);
+  box-sizing: border-box;
 }
 </style>
