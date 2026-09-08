@@ -28,6 +28,8 @@ from ..agent_core.events import (
     DEBUG_RESPONSE,
     DEBUG_TOOL_RESULT,
     FINAL_ANSWER,
+    LLM_CHUNK,
+    LLM_RETRY,
     LLM_THINKING,
     TOOL_CALL,
     TOOL_RESULT,
@@ -237,14 +239,27 @@ def chat(repo: str, allow_dirs: tuple[str, ...], log_level: str) -> None:
         def _render(evt) -> None:
             if evt.type == LLM_THINKING:
                 click.echo("  [thinking]")
+            elif evt.type == LLM_CHUNK:
+                text_delta = evt.payload.get("text_delta", "")
+                reasoning_delta = evt.payload.get("reasoning_delta", "")
+                if text_delta:
+                    click.echo(text_delta, nl=False)
+                if reasoning_delta:
+                    click.echo(click.style(reasoning_delta, fg="bright_black"), nl=False)
+            elif evt.type == LLM_RETRY:
+                p = evt.payload
+                click.echo(click.style(f"  [重试 {p['attempt']}/{p.get('delay_sec', 0):.1f}s]", fg="yellow"))
             elif evt.type == TOOL_CALL:
                 click.echo(f"  [tool] {evt.payload['name']} {evt.payload['args']}")
             elif evt.type == TOOL_RESULT:
                 p = evt.payload
                 click.echo(f"  [result] {p['name']} ({p['total_bytes']} bytes)")
             elif evt.type == FINAL_ANSWER:
+                # 流式模式下 FINAL_ANSWER 不重复输出全文(已在 LLM_CHUNK 流完了)
+                # 只换行 + 显示 [interrupted] 标记
                 click.echo("")
-                click.echo(evt.payload["text"])
+                if evt.payload.get("interrupted"):
+                    click.echo(click.style("  [interrupted]", fg="yellow"))
             elif evt.type == USAGE_REPORT:
                 _render_usage_report(evt.payload)
             elif evt.type == DEBUG_REQUEST:
@@ -254,7 +269,13 @@ def chat(repo: str, allow_dirs: tuple[str, ...], log_level: str) -> None:
             elif evt.type == DEBUG_TOOL_RESULT:
                 _render_debug_tool_result(evt.payload)
 
-        answer = agent.run(query, on_event=_render)
+        try:
+            answer = agent.run(query, on_event=_render)
+        except KeyboardInterrupt:
+            # Ctrl+C:run() 内部已 catch(set cancel_event + 转 InterruptedError)
+            # 如果穿透到这里,说明 run() 已返回中断 Answer
+            click.echo(click.style("\n  [interrupted]", fg="yellow"))
+            continue
         if not answer.complete:
             click.echo(f"(incomplete: {answer.text})")
 
