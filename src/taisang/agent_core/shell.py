@@ -201,8 +201,12 @@ class PipeShell(PersistentShell):
         """返回当前 cwd state。"""
         return self._cwd
 
-    def run(self, command: str, timeout: int | None = None) -> dict:
-        """跑命令,返回 {ok, output, returncode}。"""
+    def run(self, command: str, timeout: int | None = None, cancel_event=None) -> dict:
+        """跑命令,返回 {ok, output, returncode}。
+
+        cancel_event: threading.Event,set 时 kill shell + 重启 + 返回 interrupted=True。
+        中断检查周期 0.5s(同 _read_until_token 的 line_q.get timeout)。
+        """
         self._ensure_alive()
         timeout = timeout or self._default_timeout
 
@@ -236,9 +240,11 @@ class PipeShell(PersistentShell):
                 self._start()
                 return {"ok": False, "output": f"shell broken: {e}", "returncode": None}
             # 读到哨兵(cd 通常瞬间完成,但用统一的超时读取逻辑)
-            read_result = self._read_until_token(token, timeout)
+            read_result = self._read_until_token(token, timeout, cancel_event)
             if read_result.get("timeout") or read_result.get("shell_died"):
                 return {"ok": False, "output": read_result["output"], "returncode": None}
+            if read_result.get("interrupted"):
+                return {"ok": False, "output": "(interrupted)", "returncode": None, "interrupted": True}
             # cd 成功后更新 Python cwd state
             self._cwd = resolved
             return {"ok": True, "output": "", "returncode": 0}
@@ -257,8 +263,15 @@ class PipeShell(PersistentShell):
             self._start()
             return {"ok": False, "output": f"shell broken: {e}", "returncode": None}
 
-        # 读 stdout 直到哨兵行(带超时)
-        read_result = self._read_until_token(token, timeout)
+        # 读 stdout 直到哨兵行(带超时 + cancel 检查)
+        read_result = self._read_until_token(token, timeout, cancel_event)
+        if read_result.get("interrupted"):
+            return {
+                "ok": False,
+                "output": read_result.get("output", "") + "(interrupted)",
+                "returncode": None,
+                "interrupted": True,
+            }
         if read_result.get("timeout"):
             return {
                 "ok": False,
@@ -274,12 +287,13 @@ class PipeShell(PersistentShell):
             }
         return {"ok": True, "output": read_result["output"], "returncode": None}
 
-    def _read_until_token(self, token: str, timeout: int) -> dict:
-        """读 stdout 直到哨兵行,带超时。返回 {output, timeout, shell_died}。
+    def _read_until_token(self, token: str, timeout: int, cancel_event=None) -> dict:
+        """读 stdout 直到哨兵行,带超时 + cancel。返回 {output, timeout, shell_died, interrupted}。
 
         Windows 管道 readline 阻塞,用后台线程 + Queue 实现超时打断。
         超时:kill shell + 重启 + 返回 timeout=True。
         shell 死:返回 shell_died=True(已重启)。
+        cancel_event set:kill shell + 重启 + 返回 interrupted=True(对标 Claude Code kill 子进程)。
         """
         import queue as _queue
         import threading as _threading
@@ -311,6 +325,17 @@ class PipeShell(PersistentShell):
         deadline = _time.time() + timeout
 
         while _time.time() < deadline:
+            # 中断检查:cancel_event set → kill shell + 重启 + 返回 interrupted
+            if cancel_event is not None and cancel_event.is_set():
+                log.info("shell command interrupted by user, killing shell")
+                self._kill_and_restart()
+                reader_done.wait(timeout=2)
+                return {
+                    "output": "".join(lines),
+                    "timeout": False,
+                    "shell_died": False,
+                    "interrupted": True,
+                }
             try:
                 line = line_q.get(timeout=0.5)
             except _queue.Empty:
@@ -324,16 +349,17 @@ class PipeShell(PersistentShell):
                     "output": "".join(lines) + "(shell died, restarted)",
                     "timeout": False,
                     "shell_died": True,
+                    "interrupted": False,
                 }
             if token in line:
                 reader_done.wait(timeout=2)
-                return {"output": "".join(lines), "timeout": False, "shell_died": False}
+                return {"output": "".join(lines), "timeout": False, "shell_died": False, "interrupted": False}
             lines.append(line)
             total_bytes += len(line.encode("utf-8"))
             if total_bytes > _MAX_READ_BYTES:
                 lines.append(f"\n... [output truncated at {_MAX_READ_BYTES} bytes]")
                 reader_done.wait(timeout=2)
-                return {"output": "".join(lines), "timeout": False, "shell_died": False}
+                return {"output": "".join(lines), "timeout": False, "shell_died": False, "interrupted": False}
 
         # 超时:kill shell + 重启
         log.warning("shell command timeout after %ss", timeout)
@@ -343,6 +369,7 @@ class PipeShell(PersistentShell):
             "output": "".join(lines),
             "timeout": True,
             "shell_died": False,
+            "interrupted": False,
         }
 
     def _kill_and_restart(self) -> None:

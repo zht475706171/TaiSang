@@ -161,3 +161,70 @@ def test_bash_combined_stdout_stderr(tmp_path: Path) -> None:
         assert "e" in result["output"]
     finally:
         shell.close()
+
+
+def test_bash_cancel_kills_shell(tmp_path: Path) -> None:
+    """长跑命令执行中 cancel_event set → kill shell + 重启 + 返回 interrupted=True。
+
+    对标 Claude Code:cancel 时 kill 子进程(SIGTERM),不等跑完。
+    """
+    import threading
+    import time
+
+    tool, shell = _make_tool(tmp_path, timeout=30)
+    try:
+        cancel_event = threading.Event()
+        result_holder = {}
+        def _run():
+            result_holder["result"] = shell.run(
+                'python -c "import time; time.sleep(30)"',
+                timeout=30,
+                cancel_event=cancel_event,
+            )
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        time.sleep(0.5)  # 等命令开始跑
+        cancel_event.set()
+        t.join(timeout=5)
+        assert not t.is_alive(), "shell.run should return after cancel"
+        result = result_holder["result"]
+        assert result["ok"] is False
+        assert result.get("interrupted") is True
+    finally:
+        shell.close()
+
+
+def test_bash_cancel_preserves_cwd(tmp_path: Path) -> None:
+    """cancel 后 shell 重启,cwd 从 Python state 保留,后续命令能用。"""
+    import threading
+    import time
+
+    tool, shell = _make_tool(tmp_path, timeout=30)
+    try:
+        # 先 cd 到子目录
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        shell.run(f"cd {sub}")
+        assert shell.cwd() == sub.resolve()
+        # 跑长命令并 cancel
+        cancel_event = threading.Event()
+        result_holder = {}
+        def _run():
+            result_holder["result"] = shell.run(
+                'python -c "import time; time.sleep(20)"',
+                cancel_event=cancel_event,
+            )
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        time.sleep(0.3)
+        cancel_event.set()
+        t.join(timeout=5)
+        assert result_holder["result"].get("interrupted") is True
+        # cwd 保留
+        assert shell.cwd() == sub.resolve()
+        # 后续命令能跑(shell 已重启)
+        r2 = shell.run("echo alive")
+        assert r2["ok"] is True
+        assert "alive" in r2["output"]
+    finally:
+        shell.close()
