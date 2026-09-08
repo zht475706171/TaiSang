@@ -238,6 +238,9 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
     from .skills_api import register_skills_routes
     register_skills_routes(app, source_root)
 
+    from .agents_api import register_agents_routes
+    register_agents_routes(app, source_root)
+
     from .prompts_api import register_prompts_routes
     register_prompts_routes(app, registry)
 
