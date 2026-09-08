@@ -124,6 +124,9 @@ def test_agent_llm_protocol_error_terminates(tmp_path):
     class BoomLLM:
         def chat(self, messages, tools):
             raise LLMProtocolError("malformed")
+        def chat_stream(self, messages, tools):
+            raise LLMProtocolError("malformed")
+            yield  # unreachable,让函数成为 generator
 
     service = AgentService(llm=BoomLLM(), source_root=tmp_path, confirmer=AutoApproveConfirmer())
     ans = service.run("q")
@@ -140,6 +143,9 @@ def test_agent_llm_protocol_error_emits_final_answer(tmp_path):
     class BoomLLM:
         def chat(self, messages, tools):
             raise LLMProtocolError("malformed")
+        def chat_stream(self, messages, tools):
+            raise LLMProtocolError("malformed")
+            yield
 
     service = AgentService(llm=BoomLLM(), source_root=tmp_path, confirmer=AutoApproveConfirmer())
     events: list = []
@@ -157,6 +163,9 @@ def test_agent_llm_transient_error_emits_final_answer(tmp_path):
     class BoomLLM:
         def chat(self, messages, tools):
             raise LLMTransientError("429 rate-limited")
+        def chat_stream(self, messages, tools):
+            raise LLMTransientError("429 rate-limited")
+            yield
 
     service = AgentService(llm=BoomLLM(), source_root=tmp_path, confirmer=AutoApproveConfirmer())
     events: list = []
@@ -175,6 +184,9 @@ def test_agent_llm_error_emits_final_answer(tmp_path):
     class BoomLLM:
         def chat(self, messages, tools):
             raise LLMError("unknown llm failure")
+        def chat_stream(self, messages, tools):
+            raise LLMError("unknown llm failure")
+            yield
 
     service = AgentService(llm=BoomLLM(), source_root=tmp_path, confirmer=AutoApproveConfirmer())
     events: list = []
@@ -263,6 +275,14 @@ class _UsageLLM:
         usage = self._usage_list[self._i]
         self._i += 1
         return LLMResponse(text=f"ans-{self._i}", tool_calls=[], usage=usage)
+
+    def chat_stream(self, messages, tools):
+        from taisang.llm_stream import StreamChunk
+
+        usage = self._usage_list[self._i]
+        self._i += 1
+        yield StreamChunk(text_delta=f"ans-{self._i}")
+        yield StreamChunk(tool_calls=[], usage=usage, is_final=True)
 
 
 def test_agent_accumulates_and_resets_token_usage(tmp_path):
@@ -372,3 +392,123 @@ def test_agent_service_interrupt_no_op_when_no_run(tmp_path):
         confirmer=AutoApproveConfirmer(),
     )
     service.interrupt()  # 无副作用,不抛
+
+
+# --- Task 9: AgentService 流式主循环 ---
+
+def test_run_streaming_emits_llm_chunk_events(tmp_path):
+    """流式 run emit LLM_CHUNK 事件,累积 text_delta == FINAL_ANSWER text。"""
+    from taisang.agent_core.events import LLM_CHUNK, FINAL_ANSWER
+
+    mock = MockLLM([LLMResponse(text="hello world", tool_calls=[])])
+    service = AgentService(llm=mock, source_root=tmp_path, confirmer=AutoApproveConfirmer())
+    events = []
+    service.run("test", on_event=lambda e: events.append(e))
+    chunk_events = [e for e in events if e.type == LLM_CHUNK]
+    final = [e for e in events if e.type == FINAL_ANSWER][0]
+    assert len(chunk_events) >= 2
+    text = "".join(e.payload.get("text_delta", "") for e in chunk_events)
+    assert text == "hello world"
+    assert final.payload["interrupted"] is False
+
+
+def test_run_streaming_reasoning_delta(tmp_path):
+    """reasoning_delta 流式 emit(MockLLM reasoning 字段)。"""
+    from taisang.agent_core.events import LLM_CHUNK
+
+    mock = MockLLM([LLMResponse(text="answer", tool_calls=[], reasoning="thinking process")])
+    service = AgentService(llm=mock, source_root=tmp_path, confirmer=AutoApproveConfirmer())
+    events = []
+    service.run("test", on_event=lambda e: events.append(e))
+    reasoning = "".join(e.payload.get("reasoning_delta", "") for e in events if e.type == LLM_CHUNK)
+    assert reasoning == "thinking process"
+
+
+def test_run_streaming_interrupt_during_llm(tmp_path):
+    """LLM 流式阶段中断:半截 text + [interrupted] 标记。"""
+    from taisang.agent_core.events import FINAL_ANSWER, LLM_CHUNK
+
+    mock = MockLLM([LLMResponse(text="a" * 50, tool_calls=[])])
+    service = AgentService(llm=mock, source_root=tmp_path, confirmer=AutoApproveConfirmer())
+    events = []
+    def on_event(e):
+        events.append(e)
+        if e.type == LLM_CHUNK and not service._cancel_event.is_set():
+            service.interrupt()
+    answer = service.run("test", on_event=on_event)
+    final = [e for e in events if e.type == FINAL_ANSWER][0]
+    assert final.payload["interrupted"] is True
+    assert "[interrupted]" in final.payload["text"]
+    assert answer.interrupted is True
+
+
+def test_run_streaming_interrupt_during_tool_execution(tmp_path):
+    """工具执行阶段中断:补空 tool_result + [interrupted] 标记。"""
+    from taisang.agent_core.events import FINAL_ANSWER, TOOL_CALL
+
+    (tmp_path / "x.py").write_text("x = 1\n", encoding="utf-8")
+    mock = MockLLM([
+        LLMResponse(
+            text="read file",
+            tool_calls=[{"id": "tc1", "type": "function", "function": {"name": "read_file", "arguments": '{"path": "x.py"}'}}],
+        ),
+        LLMResponse(text="final", tool_calls=[]),
+    ])
+    service = AgentService(llm=mock, source_root=tmp_path, confirmer=AutoApproveConfirmer())
+    events = []
+    def on_event(e):
+        events.append(e)
+        if e.type == TOOL_CALL and not service._cancel_event.is_set():
+            service.interrupt()
+    answer = service.run("test", on_event=on_event)
+    final = [e for e in events if e.type == FINAL_ANSWER][0]
+    assert final.payload["interrupted"] is True
+    assert answer.interrupted is True
+    msgs = service.ctx.messages()
+    tool_results = [m for m in msgs if m.get("role") == "tool"]
+    assert len(tool_results) >= 1
+    assert "_interrupted" in tool_results[0].get("content", "")
+
+
+def test_run_streaming_mid_failure_no_retry(tmp_path):
+    """流中失败(LLMTransientError after first chunk)不重试,标记 [LLM 调用失败]。"""
+    from taisang.agent_core.events import FINAL_ANSWER
+    from taisang.llm_errors import LLMTransientError
+    from taisang.llm_stream import StreamChunk
+
+    class FakeLLM:
+        def __init__(self):
+            self.calls = []
+        def chat(self, messages, tools):
+            raise NotImplementedError
+        def chat_stream(self, messages, tools):
+            self.calls.append({"messages": messages, "tools": tools})
+            yield StreamChunk(text_delta="partial")
+            raise LLMTransientError("mid stream boom")
+
+    service = AgentService(llm=FakeLLM(), source_root=tmp_path, confirmer=AutoApproveConfirmer())
+    events = []
+    answer = service.run("test", on_event=lambda e: events.append(e))
+    final = [e for e in events if e.type == FINAL_ANSWER][0]
+    assert "partial" in final.payload["text"]
+    assert "[LLM 调用失败" in final.payload["text"]
+    assert final.payload["interrupted"] is False
+
+
+def test_run_streaming_interrupt_preserves_ctx_for_next_run(tmp_path):
+    """中断后 ctx 保持 LLM API 兼容,下次 run 能继续。"""
+    from taisang.agent_core.events import LLM_CHUNK, FINAL_ANSWER
+
+    mock = MockLLM([
+        LLMResponse(text="a" * 50, tool_calls=[]),
+        LLMResponse(text="next answer", tool_calls=[]),
+    ])
+    service = AgentService(llm=mock, source_root=tmp_path, confirmer=AutoApproveConfirmer())
+    def on_event1(e):
+        if e.type == LLM_CHUNK and not service._cancel_event.is_set():
+            service.interrupt()
+    service.run("first", on_event=on_event1)
+    events2 = []
+    service.run("second", on_event=lambda e: events2.append(e))
+    final = [e for e in events2 if e.type == FINAL_ANSWER][0]
+    assert final.payload["text"] == "next answer"

@@ -32,6 +32,7 @@ from .events import (
     DEBUG_RESPONSE,
     DEBUG_TOOL_RESULT,
     FINAL_ANSWER,
+    LLM_CHUNK,
     LLM_RETRY,
     LLM_THINKING,
     TOOL_CALL,
@@ -53,6 +54,27 @@ _CITATION_RE = re.compile(r"\[([^\]\s]+\.py)(?::(\d+)(?:-(\d+))?)?\]")
 
 # on_event 回调类型
 EventCallback = Callable[[AgentEvent], None]
+
+
+def _iter_with_retry(make_iter, on_retry):
+    """流式迭代器重试包装:只重试第一次 next(连接建立 + 首 chunk)。
+
+    首 chunk 成功后,后续 next 失败不重试(已经吐过字了,重试会重复)。
+
+    make_iter: 返回 iterator 的 callable(每次重试会重新调)
+    on_retry: 重试回调(同 call_with_retry 的 on_retry)
+
+    Yields: 首 chunk + 后续 chunks
+    Raises: 首 chunk 失败 → LLMTransientError(call_with_retry 重试后仍失败);
+            后续 chunk 失败 → LLMTransientError(不重试,直接抛)
+    """
+    state = {"it": None}
+    def _do_first():
+        state["it"] = make_iter()
+        return next(state["it"])
+    first_chunk = call_with_retry(_do_first, on_retry=on_retry)
+    yield first_chunk
+    yield from state["it"]  # 后续 next 失败不重试,直接抛
 
 
 class AgentService:
@@ -260,11 +282,15 @@ class AgentService:
                     )
                 )
             try:
-                # LLM 调用包 retry(call_with_retry):对 LLMTransientError(网络/超时/429/5xx)
-                # 按指数退避重试最多 5 次,LLMProtocolError 不重试。on_retry emit LLM_RETRY
-                # 事件,前端 ThinkingIndicator 显示"第 N 次重试中"。
-                resp = call_with_retry(
-                    lambda: self.llm.chat(messages=self.ctx.messages(), tools=registry.schemas()),
+                # 流式 LLM 调用:重试只包第一次 next(_iter_with_retry)
+                # 首 chunk 成功后,后续 chunk 失败不重试(已经吐过字了)
+                accumulated_text = ""
+                accumulated_reasoning = ""
+                tool_calls: list[dict] = []
+                usage: dict | None = None
+                assistant_appended = False  # 标记是否已 append_assistant(中断处理用)
+                stream = _iter_with_retry(
+                    lambda: self.llm.chat_stream(messages=self.ctx.messages(), tools=registry.schemas()),
                     on_retry=lambda attempt, err, delay: _emit(
                         AgentEvent(
                             type=LLM_RETRY,
@@ -276,75 +302,123 @@ class AgentService:
                         )
                     ),
                 )
+                for chunk in stream:
+                    # 中断检查点 1:每个 chunk
+                    if self._cancel_event.is_set():
+                        raise InterruptedError()
+                    if chunk.text_delta:
+                        accumulated_text += chunk.text_delta
+                        _emit(AgentEvent(
+                            type=LLM_CHUNK,
+                            payload={"text_delta": chunk.text_delta, "reasoning_delta": ""},
+                        ))
+                    if chunk.reasoning_delta:
+                        accumulated_reasoning += chunk.reasoning_delta
+                        _emit(AgentEvent(
+                            type=LLM_CHUNK,
+                            payload={"text_delta": "", "reasoning_delta": chunk.reasoning_delta},
+                        ))
+                    if chunk.is_final:
+                        tool_calls = chunk.tool_calls
+                        usage = chunk.usage
+            except KeyboardInterrupt:
+                # CLI Ctrl+C:转中断信号,走统一中断分支
+                self._cancel_event.set()
+                raise InterruptedError() from None
+            except InterruptedError:
+                # 用户中断:把已流出的 text 作为最终答案,标 [interrupted]
+                if accumulated_text:
+                    text = accumulated_text + " [interrupted]"
+                else:
+                    text = "(已中断)"
+                if not assistant_appended:
+                    self.ctx.append_assistant(text=text, tool_calls=None)
+                _emit(AgentEvent(type=FINAL_ANSWER, payload={"text": text, "interrupted": True}))
+                self._emit_usage_report(_emit)
+                return Answer(
+                    text=text, citations=[], complete=False,
+                    steps_used=steps, interrupted=True,
+                )
+            except LLMTransientError as e:
+                # 流中失败:半截 text 已通过 LLM_CHUNK 流出,落盘 + 标记
+                self._emit_usage_report(_emit)
+                log.warning("LLM transient error at step %d: %s", steps, e)
+                if accumulated_text:
+                    text = accumulated_text + f" [LLM 调用失败: {e}]"
+                else:
+                    text = f"(LLM 调用失败: {e})"
+                if not assistant_appended:
+                    self.ctx.append_assistant(text=text, tool_calls=None)
+                _emit(AgentEvent(type=FINAL_ANSWER, payload={"text": text, "interrupted": False}))
+                return Answer(
+                    text=text, citations=[], complete=False, steps_used=steps,
+                )
             except LLMProtocolError as e:
                 self._emit_usage_report(_emit)
                 log.warning("LLM protocol error at step %d: %s", steps, e)
                 text = f"(LLM 协议错误: {e})"
-                _emit(AgentEvent(type=FINAL_ANSWER, payload={"text": text}))
+                _emit(AgentEvent(type=FINAL_ANSWER, payload={"text": text, "interrupted": False}))
                 return Answer(
-                    text=text,
-                    citations=[],
-                    complete=False,
-                    steps_used=steps,
-                )
-            except LLMTransientError as e:
-                self._emit_usage_report(_emit)
-                log.warning("LLM transient error at step %d: %s", steps, e)
-                text = f"(LLM 调用失败: {e})"
-                _emit(AgentEvent(type=FINAL_ANSWER, payload={"text": text}))
-                return Answer(
-                    text=text,
-                    citations=[],
-                    complete=False,
-                    steps_used=steps,
+                    text=text, citations=[], complete=False, steps_used=steps,
                 )
             except LLMError as e:
                 self._emit_usage_report(_emit)
                 log.warning("LLM error at step %d: %s", steps, e)
                 text = f"(LLM 错误: {e})"
-                _emit(AgentEvent(type=FINAL_ANSWER, payload={"text": text}))
+                _emit(AgentEvent(type=FINAL_ANSWER, payload={"text": text, "interrupted": False}))
                 return Answer(
-                    text=text,
-                    citations=[],
-                    complete=False,
-                    steps_used=steps,
+                    text=text, citations=[], complete=False, steps_used=steps,
                 )
             # 累加此轮 + session 累计 token(MockLLM / endpoint 未返回时 usage=None,跳过)
-            self._accumulate_usage(resp.usage)
+            self._accumulate_usage(usage)
 
-            if not resp.tool_calls:
+            if not tool_calls:
                 if self.debug:
                     _emit(
                         AgentEvent(
                             type=DEBUG_RESPONSE,
-                            payload={"step": steps, "text": resp.text, "tool_calls": []},
+                            payload={"step": steps, "text": accumulated_text, "tool_calls": []},
                         )
                     )
                 # session memory post-sampling(idle_break 分支):
                 # LLM 给最终答案(无 tool_call)是自然对话断点,此时触发 extract。
                 # 对齐 Claude Code shouldExtractMemory 的 hasToolCallsInLastTurn=False 分支。
                 self._maybe_trigger_session_memory(last_turn_has_tool_calls=False)
-                citations = self._extract_citations(resp.text)
+                citations = self._extract_citations(accumulated_text)
                 # 最终答案也要落盘(走 on_append 写 jsonl),否则 resume 缺 assistant 回复
-                self.ctx.append_assistant(text=resp.text, tool_calls=None)
-                _emit(AgentEvent(type=FINAL_ANSWER, payload={"text": resp.text}))
+                self.ctx.append_assistant(text=accumulated_text, tool_calls=None)
+                _emit(AgentEvent(type=FINAL_ANSWER, payload={"text": accumulated_text, "interrupted": False}))
                 self._emit_usage_report(_emit)
                 return Answer(
-                    text=resp.text,
-                    citations=citations,
-                    complete=True,
-                    steps_used=steps,
+                    text=accumulated_text, citations=citations,
+                    complete=True, steps_used=steps,
                 )
 
             if self.debug:
                 _emit(
                     AgentEvent(
                         type=DEBUG_RESPONSE,
-                        payload={"step": steps, "text": resp.text, "tool_calls": resp.tool_calls},
+                        payload={"step": steps, "text": accumulated_text, "tool_calls": tool_calls},
                     )
                 )
-            self.ctx.append_assistant(text=resp.text, tool_calls=resp.tool_calls)
-            for tc in resp.tool_calls:
+            self.ctx.append_assistant(text=accumulated_text, tool_calls=tool_calls)
+            assistant_appended = True
+            for tc in tool_calls:
+                # 中断检查点 2:每个工具执行前
+                if self._cancel_event.is_set():
+                    # 补空 tool_result 避免 LLM API 缺 tool result 报错
+                    self.ctx.append_tool_result(
+                        '{"_interrupted": true}',
+                        name=tc["function"]["name"],
+                        tool_call_id=tc["id"],
+                    )
+                    text = accumulated_text + " [interrupted]" if accumulated_text else "(已中断)"
+                    _emit(AgentEvent(type=FINAL_ANSWER, payload={"text": text, "interrupted": True}))
+                    self._emit_usage_report(_emit)
+                    return Answer(
+                        text=text, citations=[], complete=False,
+                        steps_used=steps, interrupted=True,
+                    )
                 name = tc["function"]["name"]
                 args_str = tc["function"].get("arguments", "") or ""
                 try:
@@ -363,6 +437,19 @@ class AgentService:
                 _emit(AgentEvent(type=TOOL_CALL, payload={"name": name, "args": args}))
                 try:
                     result = registry.call(name, args)
+                except InterruptedError:
+                    # ToolRegistry 检查到 cancel_event,走中断分支
+                    self.ctx.append_tool_result(
+                        '{"_interrupted": true}',
+                        name=name, tool_call_id=tc["id"],
+                    )
+                    text = accumulated_text + " [interrupted]" if accumulated_text else "(已中断)"
+                    _emit(AgentEvent(type=FINAL_ANSWER, payload={"text": text, "interrupted": True}))
+                    self._emit_usage_report(_emit)
+                    return Answer(
+                        text=text, citations=[], complete=False,
+                        steps_used=steps, interrupted=True,
+                    )
                 except Exception as e:
                     log.warning("tool %s dispatch failed: %s", name, e)
                     result = {"error": f"tool {name} failed: {e}"}
