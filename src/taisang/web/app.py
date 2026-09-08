@@ -216,6 +216,22 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
 
         return StreamingResponse(stream(), media_type="text/event-stream")
 
+    @app.post("/api/sessions/{session_id}/interrupt")
+    async def interrupt_session(session_id: str) -> dict:
+        """请求中断当前 turn。set agent._cancel_event。
+
+        幂等:turn 已结束或未开始时调用无副作用(返回 interrupted=False)。
+        并发安全:threading.Event.set() thread-safe。
+        不等中断生效就返回:前端通过 FINAL_ANSWER(interrupted=True) 事件知道中断生效。
+        """
+        sess = registry.get_or_load(session_id)
+        if sess is None:
+            raise HTTPException(404, f"session not found: {session_id}")
+        if not sess.lock.locked():
+            return {"ok": True, "interrupted": False}
+        sess.agent.interrupt()
+        return {"ok": True, "interrupted": True}
+
     @app.post("/api/sessions/{session_id}/confirm/{token}")
     async def confirm(session_id: str, token: str, req: ConfirmReq) -> dict:
         sess = registry.get_or_load(session_id)

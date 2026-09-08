@@ -372,3 +372,21 @@ def test_post_config_unchanged_api_key_keeps_old(tmp_path, monkeypatch):
     data = json.loads(p.read_text(encoding="utf-8"))
     assert data["llm"]["api_key"] == "sk-original123456789"  # 保留
     assert data["llm"]["model"] == "new-m"  # 改了
+
+
+# --- Task 10: POST /interrupt 路由 ---
+
+def test_interrupt_endpoint_idle_session(client):
+    """turn 没在跑时 POST /interrupt 幂等返回 {interrupted: False}。"""
+    r = client.post("/api/sessions", json={"title": "test"})
+    sid = r.json()["id"]
+    r = client.post(f"/api/sessions/{sid}/interrupt")
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+    assert r.json()["interrupted"] is False
+
+
+def test_interrupt_endpoint_unknown_session_404(client):
+    """未知 session POST /interrupt 返回 404。"""
+    r = client.post("/api/sessions/nonexistent-id/interrupt")
+    assert r.status_code == 404
