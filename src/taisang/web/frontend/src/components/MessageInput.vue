@@ -12,6 +12,7 @@
         @input="autoResize"
       ></textarea>
       <t-button
+        v-if="!streaming"
         shape="circle"
         theme="primary"
         aria-label="发送"
@@ -22,6 +23,17 @@
           <t-icon name="send" />
         </template>
       </t-button>
+      <t-button
+        v-else
+        shape="circle"
+        theme="danger"
+        aria-label="停止"
+        @click="handleStop"
+      >
+        <template #icon>
+          <t-icon name="stop" />
+        </template>
+      </t-button>
     </div>
   </div>
 </template>
@@ -29,12 +41,13 @@
 <script setup lang="ts">
 import { ref, nextTick, onMounted } from 'vue'
 
-const props = withDefaults(defineProps<{ placeholder?: string; autofocus?: boolean }>(), {
+const props = withDefaults(defineProps<{ placeholder?: string; autofocus?: boolean; streaming?: boolean }>(), {
   placeholder: '输入问题,Enter 发送,Shift+Enter 换行...',
   autofocus: false,
+  streaming: false,
 })
 
-const emit = defineEmits<{ send: [query: string] }>()
+const emit = defineEmits<{ send: [query: string]; stop: [] }>()
 const text = ref('')
 const taRef = ref<HTMLTextAreaElement | null>(null)
 
@@ -64,6 +77,10 @@ function handleSend() {
   emit('send', q)
   text.value = ''
   nextTick(autoResize)
+}
+
+function handleStop() {
+  emit('stop')
 }
 </script>
 

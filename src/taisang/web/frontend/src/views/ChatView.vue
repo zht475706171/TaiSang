@@ -30,7 +30,13 @@
       />
     </div>
 
-    <MessageInput v-if="currentSession && messages.length" autofocus @send="handleSend" />
+    <MessageInput
+      v-if="currentSession && messages.length"
+      autofocus
+      :streaming="thinking"
+      @send="handleSend"
+      @stop="handleStop"
+    />
   </div>
 </template>
 
@@ -42,6 +48,7 @@ import MessageList from '@/components/MessageList.vue'
 import MessageInput from '@/components/MessageInput.vue'
 import { useSessionStore } from '@/stores/session'
 import { resetSession, setDebug } from '@/api/session'
+import { interruptSession } from '@/api/chat'
 import { useChatStream } from '@/composables/useChatStream'
 
 const route = useRoute()
@@ -120,6 +127,15 @@ async function handleSlash(cmd: string) {
 
 async function handleAnswer(token: string, approve: boolean) {
   await answerConfirm(token, approve)
+}
+
+async function handleStop() {
+  if (!currentId.value) return
+  try {
+    await interruptSession(currentId.value)
+  } catch (e) {
+    console.error('interrupt failed:', e)
+  }
 }
 
 async function handleReset() {
