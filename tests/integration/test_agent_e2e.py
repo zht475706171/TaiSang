@@ -64,8 +64,14 @@ def test_e2e_fork_mode_inherits_parent_context(tmp_path: Path, monkeypatch) -> N
     def fake_chat(messages, tools):
         seen.extend(messages)
         return LLMResponse(text="fork 接续结果", tool_calls=[])
+    def fake_chat_stream(messages, tools):
+        seen.extend(messages)
+        from taisang.llm_stream import StreamChunk
+        yield StreamChunk(text_delta="fork 接续结果")
+        yield StreamChunk(tool_calls=[], usage=None, is_final=True)
     child_llm = MockLLM([])
     child_llm.chat = fake_chat
+    child_llm.chat_stream = fake_chat_stream
     parent_llm = MockLLM([
         LLMResponse(text="", tool_calls=[{
             "id": "tc1", "type": "function",
@@ -170,7 +176,13 @@ def test_e2e_recursion_guard_subagent_cannot_dispatch(tmp_path: Path, monkeypatc
     def fake_chat(messages, tools):
         captured.append(tools)
         return LLMResponse(text="子 agent 完成", tool_calls=[])
+    def fake_chat_stream(messages, tools):
+        captured.append(tools)
+        from taisang.llm_stream import StreamChunk
+        yield StreamChunk(text_delta="子 agent 完成")
+        yield StreamChunk(tool_calls=[], usage=None, is_final=True)
     child_llm.chat = fake_chat
+    child_llm.chat_stream = fake_chat_stream
     import taisang.agent_core.agent_tool as at_mod
     at_mod._make_child_llm = lambda parent_llm: child_llm
     try:
