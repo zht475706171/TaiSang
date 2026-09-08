@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 from collections.abc import Callable
 from pathlib import Path
 
@@ -135,10 +136,22 @@ class AgentService:
         self._session_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         # 此轮 run() 的 token 用量临时累加器(每次 run 开始前重置)。
         self._turn_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        # 用户中断信号:每次 run() 新建(避免跨 turn 状态泄漏)。
+        # interrupt() set 它,主循环在 chunk / 工具执行前检查,走中断分支。
+        self._cancel_event: threading.Event | None = None
 
     def set_debug(self, on: bool) -> None:
         """REPL /debug 命令切换开关。"""
         self.debug = on
+
+    def interrupt(self) -> None:
+        """用户请求中断当前 turn。thread-safe(threading.Event.set 是线程安全的)。
+
+        主循环在下一个 chunk 或工具执行前检查 is_set() → True 走中断分支。
+        如果 turn 已经结束或未开始(_cancel_event is None),set 无副作用。
+        """
+        if self._cancel_event is not None:
+            self._cancel_event.set()
 
     def reset(self) -> None:
         """清空对话上下文 + 重置压缩状态。
@@ -196,6 +209,8 @@ class AgentService:
         # agent_tool._run_sync 通过 getattr(self, "_last_on_event", None) 拿到 parent_emit。
         # 不需要清理:下次 run() 会覆盖;无 run 就没有子事件需要转发。
         self._last_on_event = on_event
+        # 每次 run 新建 cancel_event(避免上轮 set 的状态影响这轮)
+        self._cancel_event = threading.Event()
         # 重置此轮 token 累加器(session 累计不清,跨 run 保留)
         self._turn_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         self.ctx.append_user(query)
@@ -210,6 +225,7 @@ class AgentService:
             mcp_manager=self._mcp_manager,
             agents=self.agents,
             parent_service=self,
+            cancel_event=self._cancel_event,
         )
         observations_dir = PathManager.observations_dir(self.source_root)
         transcript_path = self.source_root / ".taisang" / "sessions" / "current.jsonl"

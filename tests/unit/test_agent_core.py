@@ -346,3 +346,29 @@ def test_agent_event_has_agent_id_field() -> None:
     assert evt.agent_id == ""  # 默认空
     evt2 = AgentEvent(type=TOOL_CALL, payload={"name": "Read"}, agent_id="child-123")
     assert evt2.agent_id == "child-123"
+
+
+# --- Task 8: AgentService interrupt mechanism ---
+
+def test_agent_service_interrupt_sets_cancel_event(tmp_path):
+    """interrupt() set _cancel_event。"""
+    mock = MockLLM([LLMResponse(text="ok", tool_calls=[])])
+    service = AgentService(
+        llm=mock, source_root=tmp_path,
+        confirmer=AutoApproveConfirmer(),
+    )
+    assert service._cancel_event is None
+    service.run("test", on_event=None)
+    assert service._cancel_event is not None
+    service.interrupt()
+    assert service._cancel_event.is_set() is True
+
+
+def test_agent_service_interrupt_no_op_when_no_run(tmp_path):
+    """interrupt() 在 run 之前调用无副作用。"""
+    mock = MockLLM([LLMResponse(text="ok", tool_calls=[])])
+    service = AgentService(
+        llm=mock, source_root=tmp_path,
+        confirmer=AutoApproveConfirmer(),
+    )
+    service.interrupt()  # 无副作用,不抛
