@@ -49,6 +49,7 @@ class AgentEvent:
 
     type: str
     payload: dict[str, Any] = field(default_factory=dict)
+    agent_id: str = ""  # 主 agent 为空,子 agent 用唯一 id(SSE 区分嵌套渲染)
     # NOTE:debug 事件(DEBUG_REQUEST/DEBUG_RESPONSE/DEBUG_TOOL_RESULT)只在 /debug
     # 模式下 emit,payload 结构:
     #   DEBUG_REQUEST: {"step": int, "messages": list[dict], "tools": list[dict]}

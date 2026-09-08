@@ -337,3 +337,12 @@ def test_agent_service_on_append_propagates_to_ctx(tmp_path):
     agent.ctx.append_user("hello")
     assert any(m == {"role": "user", "content": "hello"} for m in collected)
     assert collected[0]["role"] == "system"  # system prompt 先落盘
+
+
+def test_agent_event_has_agent_id_field() -> None:
+    """AgentEvent 支持 agent_id 字段(默认空字符串,主 agent 用空)。"""
+    from taisang.agent_core.events import AgentEvent, TOOL_CALL
+    evt = AgentEvent(type=TOOL_CALL, payload={"name": "Read"})
+    assert evt.agent_id == ""  # 默认空
+    evt2 = AgentEvent(type=TOOL_CALL, payload={"name": "Read"}, agent_id="child-123")
+    assert evt2.agent_id == "child-123"
