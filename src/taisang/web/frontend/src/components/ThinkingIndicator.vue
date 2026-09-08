@@ -4,7 +4,8 @@
     <span v-if="retryInfo" class="retry-badge">
       第 {{ retryInfo.attempt }} 次重试中({{ retryInfo.delaySec.toFixed(1) }}s 后)
     </span>
-    <span class="dots">
+    <span v-if="reasoningText" class="reasoning">{{ reasoningText }}</span>
+    <span v-else class="dots">
       <span></span>
       <span></span>
       <span></span>
@@ -15,13 +16,14 @@
 <script setup lang="ts">
 defineProps<{
   retryInfo?: { attempt: number; delaySec: number } | null
+  reasoningText?: string
 }>()
 </script>
 
 <style scoped>
 .thinking {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding: 8px 12px;
   color: var(--td-text-color-placeholder);
@@ -35,10 +37,21 @@ defineProps<{
   border-radius: 4px;
   font-size: 12px;
   border: 1px solid var(--td-warning-color-2, #ffcc80);
+  flex-shrink: 0;
+}
+.reasoning {
+  color: var(--td-text-color-secondary);
+  font-style: italic;
+  white-space: pre-wrap;
+  word-break: break-word;
+  flex: 1 1 auto;
+  max-height: 120px;
+  overflow-y: auto;
 }
 .dots {
   display: inline-flex;
   gap: 3px;
+  flex-shrink: 0;
 }
 .dots span {
   width: 4px;

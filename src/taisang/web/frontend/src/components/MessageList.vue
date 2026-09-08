@@ -1,6 +1,6 @@
 <template>
   <div ref="listRef" class="message-list">
-    <ThinkingIndicator v-if="thinking" :retry-info="retryInfo" />
+    <ThinkingIndicator v-if="thinking" :retry-info="retryInfo" :reasoning-text="reasoningText" />
     <template v-for="m in messages" :key="m.id">
       <div v-if="m.kind === 'user'" class="msg user">{{ m.text }}</div>
       <div v-else-if="m.kind === 'assistant'" class="msg assistant">
@@ -37,6 +37,7 @@ const props = defineProps<{
   messages: ChatMessage[]
   thinking: boolean
   retryInfo?: { attempt: number; delaySec: number } | null
+  reasoningText?: string
 }>()
 
 const listRef = ref<HTMLDivElement | null>(null)

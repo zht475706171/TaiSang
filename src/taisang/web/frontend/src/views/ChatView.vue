@@ -25,6 +25,7 @@
         :messages="messages"
         :thinking="thinking"
         :retry-info="retryInfo"
+        :reasoning-text="reasoningText"
         @answer="handleAnswer"
       />
     </div>
@@ -54,7 +55,7 @@ const currentSession = computed(
 
 // useChatStream 需要一个 ref,用 toRef 把 computed 转 ref
 const sessionIdRef = toRef(currentId)
-const { messages, thinking, retryInfo, connectionState, send, loadHistory, openEventStream, closeEventStream, answerConfirm } =
+const { messages, thinking, retryInfo, reasoningText, connectionState, send, loadHistory, openEventStream, closeEventStream, answerConfirm } =
   useChatStream(sessionIdRef, () => store.fetchSessions())
 
 watch(
