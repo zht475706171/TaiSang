@@ -24,6 +24,10 @@
           <span v-else-if="sub.kind === 'llm_retry'" class="sub-text retry">
             第 {{ sub.retryAttempt }} 次重试({{ sub.delaySec?.toFixed(1) }}s 后)
           </span>
+          <span v-else-if="sub.kind === 'llm_chunk'" class="sub-text chunk">
+            <span v-if="sub.textDelta">{{ sub.textDelta }}</span>
+            <span v-else-if="sub.reasoningDelta" class="reasoning">{{ sub.reasoningDelta }}</span>
+          </span>
           <span v-else class="sub-text">{{ sub.kind }}</span>
         </div>
       </div>
@@ -56,6 +60,7 @@ function subLabel(sub: ChatMessage): string {
     thinking: '…',
     compacted: '∙',
     llm_retry: '↻',
+    llm_chunk: '…',
   }
   return map[sub.kind] || '·'
 }
@@ -166,6 +171,10 @@ function usageLabel(sub: ChatMessage): string {
 }
 .sub-text.retry {
   color: var(--td-warning-color, #b25803);
+  font-style: italic;
+}
+.sub-text.chunk .reasoning {
+  color: var(--td-text-color-placeholder);
   font-style: italic;
 }
 </style>
