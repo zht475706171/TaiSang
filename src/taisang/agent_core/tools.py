@@ -496,7 +496,7 @@ class BashTool(_BaseTool):
             },
         }
 
-    def run(self, args: dict) -> dict:
+    def run(self, args: dict, cancel_event=None) -> dict:
         command = args.get("command", "").strip()
         if not command:
             return {"ok": False, "error": "empty command"}
@@ -518,11 +518,14 @@ class BashTool(_BaseTool):
                 return {"ok": False, "error": f"cd: {e}"}
             if not self.permission.check(target_resolved):
                 return {"ok": False, "error": f"permission denied: {raw_path}"}
-        # 跑命令(持久 shell)
+        # 跑命令(持久 shell,支持 cancel_event 中断)
         try:
-            result = self.shell.run(command, timeout=self.timeout)
+            result = self.shell.run(command, timeout=self.timeout, cancel_event=cancel_event)
         except Exception as e:  # noqa: BLE001 — 兜底,转成 observation
             return {"ok": False, "error": str(e)}
+        # 中断:抛 InterruptedError,让 ToolRegistry.call 透传给主循环
+        if result.get("interrupted"):
+            raise InterruptedError("bash command interrupted by user")
         combined = result.get("output", "")
         ok = result.get("ok", False)
         returncode = result.get("returncode")
@@ -702,6 +705,14 @@ class ToolRegistry:
         # 每次调用前同步 cwd(Bash cd 后文件工具跟随)
         self._sync_cwd()
         try:
+            # 透传 cancel_event 给支持的工具(目前只有 BashTool)。
+            # 用 inspect 检查 run 签名是否接受 cancel_event 参数,兼容旧工具。
+            import inspect as _inspect
+            sig = _inspect.signature(tool.run)
+            if "cancel_event" in sig.parameters:
+                return tool.run(args, cancel_event=self._cancel_event)
             return tool.run(args)
+        except InterruptedError:
+            raise  # 透传,主循环 catch 走中断分支
         except Exception as e:
             return {"error": f"tool {name} failed: {e}"}

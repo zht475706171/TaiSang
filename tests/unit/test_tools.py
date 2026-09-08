@@ -232,3 +232,59 @@ def test_tool_registry_cancel_event_default_none(tmp_path):
     assert registry._cancel_event is None
     result = registry.call("read_file", {"path": "nonexistent.py"})
     assert "error" in result
+
+
+def test_tool_registry_call_passes_cancel_event_to_bash(tmp_path):
+    """ToolRegistry.call 把 cancel_event 透传给 BashTool.run,执行中 set 能中断。
+
+    对标 Claude Code:cancel 信号贯穿全链路,工具执行中也能被 kill。
+    """
+    import threading
+    import time
+    import pytest
+    from taisang.agent_core.tools import ToolRegistry
+    from taisang.agent_core.shell import PipeShell
+    from taisang.storage.paths import PathManager
+
+    shell = PipeShell(cwd=tmp_path)
+    try:
+        cancel = threading.Event()
+        registry = ToolRegistry(
+            cwd=tmp_path,
+            shell=shell,
+            cancel_event=cancel,
+            bash_timeout=30,
+            observations_dir=PathManager.observations_dir(tmp_path),
+        )
+        result_holder = {}
+        def _run():
+            try:
+                result_holder["result"] = registry.call(
+                    "Bash",
+                    {"command": 'python -c "import time; time.sleep(20)"'},
+                )
+            except Exception as e:
+                result_holder["error"] = e
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        time.sleep(0.5)
+        cancel.set()
+        t.join(timeout=5)
+        assert not t.is_alive(), "Bash should be interrupted"
+        # InterruptedError 被 ToolRegistry.call 透传
+        assert isinstance(result_holder.get("error"), InterruptedError)
+    finally:
+        shell.close()
+
+
+def test_tool_registry_call_non_bash_tools_dont_get_cancel_event(tmp_path):
+    """非 Bash 工具(无 cancel_event 参数)正常调用,不因 inspect 检查报错。"""
+    import threading
+    from taisang.agent_core.tools import ToolRegistry
+
+    cancel = threading.Event()
+    registry = ToolRegistry(cwd=tmp_path, cancel_event=cancel)
+    # read_file 无 cancel_event 参数,应正常执行不报错
+    result = registry.call("read_file", {"path": "nonexistent.py"})
+    assert "error" in result
+    assert "InterruptedError" not in str(result)
