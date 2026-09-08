@@ -30,11 +30,15 @@ class LLMResponse:
         {"prompt_tokens": int, "completion_tokens": int, "total_tokens": int}
         cache 命中字段(cached_tokens)若 endpoint 报告也原样保留在 dict 里,
         目前 aitoken521 + glm-5.2 不报告。
+    reasoning: thinking 模型的推理过程(Kimi reasoning_content 等)。非流式
+        chat() 目前不提取(空字符串),流式 chat_stream() 在 chunk 中按
+        reasoning_delta 流出。MockLLM 用此字段测试 reasoning 流。
     """
 
     text: str
     tool_calls: list[dict] = field(default_factory=list)
     usage: dict | None = None
+    reasoning: str = ""
 
 
 class LLMClient:

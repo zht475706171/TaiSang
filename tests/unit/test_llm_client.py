@@ -237,3 +237,15 @@ def test_llm_client_openai_exception_wrapped_as_transient():
 
     with pytest.raises(LLMTransientError, match="LLM API call failed"):
         client.chat(messages=[{"role": "user", "content": "q"}], tools=[])
+
+
+def test_llm_response_reasoning_field_default_empty():
+    """LLMResponse.reasoning 默认空字符串(向后兼容)。"""
+    r = LLMResponse(text="hello", tool_calls=[])
+    assert r.reasoning == ""
+
+
+def test_llm_response_reasoning_field_set():
+    """LLMResponse.reasoning 可设值(测试 thinking 流用)。"""
+    r = LLMResponse(text="answer", tool_calls=[], reasoning="thinking process")
+    assert r.reasoning == "thinking process"
