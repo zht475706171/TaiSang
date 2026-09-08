@@ -2,7 +2,7 @@
 
 > 简化版 Claude Code / Trae —— 一个能读写、修改、调试代码的交互式 coding agent。
 
-**当前状态:v0.1(REPL + Web UI 双入口,带 Skill 系统)**
+**当前状态:v0.1(REPL + Web UI 双入口,带 Skill 系统 + 多 Agent 调度)**
 
 ## 功能
 
@@ -29,6 +29,19 @@
 - **前端 Skill 管理页** (`/skills`):表格、来源标签(项目/用户/内置)、启用开关、重载、**导入**(MD 单文件 / zip 目录形式)+ 覆盖确认(同名 409 → confirm → `?overwrite=true`)、**删除**(内置不可删,顺带清 disabled 状态记录)
 - 安全:frontmatter name 字符集校验(`/^[A-Za-z0-9][A-Za-z0-9_-]*$/` 防目录穿越)+ zip-slip 拦截(拒绝绝对路径/`..`/反斜杠/前缀外成员)+ 10MB 上限
 
+**多 Agent 调度(M3)**
+- Agent 工具(`AgentTool`):主 agent 通过 `Agent({subagent_type, prompt, run_in_background})` 派子 agent
+- 4 个内置 agent:`general-purpose` / `explore`(只读) / `plan`(只读) / `verification`(对抗,默认 async)
+- 两种模式:传 `subagent_type` 走 A(全新上下文,用 agent.system_prompt),省略走 B(fork 深拷贝父 messages 继承对话)
+- sync + async 执行:async 立即返回 `async_launched`,后台 daemon 线程跑完把结果注入 `parent_service._pending_async_notifications`,主循环下轮 `flush_async_notifications()` 消费成 user 消息
+- Agent 定义文件:目录格式 `AGENT.md`,三源加载(`project > user > system`),frontmatter 字段:`name` / `description` / `tools` / `disallowedTools` / `maxTurns` / `background` / `model`
+- state 持久化:`~/.taisang/agents_state.json` 记录 disabled 状态,原子写(tmp + os.replace,chmod 0o600 best-effort)
+- 渐进披露清单:`format_agent_listing` 每条 ≤250 字符描述、总预算 2000 字符,超限降级到 per-entry 截断 → names-only
+- **前端 `/agents` 页**:表格(name / 描述 / 来源标签 / 工具集 / 启用开关)+ 重载按钮 + Sidebar "Agent 管理" 入口
+- 事件嵌套:`AgentEvent.agent_id` 区分主/子,SSE 嵌套渲染到 Agent 工具卡片内(ToolCard 展开 `[data-sub-agent-event]` 列表)
+- token 双层:子 agent 单独 emit `USAGE_REPORT`(`agent_id` 非空),同时 `_merge_child_usage` 累加进主 session 累计
+- 递归防护:子 agent `ToolRegistry` 构造时 `agents=[]` 物理不注册 `AgentTool`;`is_fork_child` flag 阻止 fork-in-fork
+
 **Web UI** (Vue 3.5 + Vite + TDesign)
 - 多会话列表(Sidebar) / 中对话流(ChatView) / 底一体式输入框(Claude 风格)
 - 工具卡片可折叠 / Markdown 渲染 / 代码高亮
@@ -51,14 +64,14 @@
 按需求强度排序:
 
 **高频 / 跨项目**
-- **多 agent / subagent 调度**:无 orchestrator、无 Task 工具(不能 agent-as-a-tool、不能并行/串行 team)
+- **多 agent / subagent 调度**:~~无 orchestrator、无 Task 工具~~ ✅ 已实现(M3,见上方"多 Agent 调度"章节)。剩余缺口:不支持并发多个 Agent 工具调用(同时只 1 个 in-flight),前端 `findLastAgentToolCall` 用"最后一个 Agent 卡片"匹配
 - **MCP 客户端**:Sidebar 那个 server 图标是占位;不支持接入第三方 MCP server 的 tool/resource/prompt(stdio/sse/http 传输都没有)
 - **流式 LLM 响应**:当前等完整 response 才一次性给前端(SSE 是事件层,不是 token 流)
 - **多 skill 批量导入**:importer 现在一个 zip 一个 skill;扩展后可一次导入 N 个(像 superpowers plugin 那样)
 
-**claude-code plugin 概念**(全部未实现)
+**claude-code plugin 概念**(部分实现)
 - Commands(slash command,如 `/commit`)
-- Agents(子 agent 类型定义)
+- ~~Agents(子 agent 类型定义)~~ ✅ 已实现(M3 — `AGENT.md` 定义文件 + 三源加载 + 4 内置 agent)
 - Hooks(PreToolUse / PostToolUse / SessionStart 等)
 - Plugin 清单解析(plugin.json + marketplace)
 
