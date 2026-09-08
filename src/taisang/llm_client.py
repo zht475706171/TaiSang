@@ -150,6 +150,12 @@ class LLMClient:
             )
             raise LLMTransientError(f"LLM API call failed: {e}") from e
 
+        # 暴露 raw stream 给外部:cancel 时 service.py 调 self.llm._last_raw_stream.close()
+        # 关 HTTP 连接(httpx response.close,线程安全),让 pump 线程的 next() 抛异常退出。
+        # 不能靠 gen.close() 触发 GeneratorExit:generator 绑定创建线程,跨线程 close
+        # 会抛 "generator already executing"。
+        self._last_raw_stream = stream
+
         acc_tool_calls: dict[int, dict] = {}
         last_usage = None
         try:
@@ -183,13 +189,24 @@ class LLMClient:
                         "total_tokens": getattr(chunk.usage, "total_tokens", 0) or 0,
                     }
         except Exception as e:
+            # GeneratorExit(generator 被 close)/ 正常异常都走这里
             cause = getattr(e, "__cause__", None)
             cause_repr = repr(cause) if cause else "(none)"
             log.warning(
                 "LLM stream chunk failed: type=%s msg=%s cause=%s",
                 type(e).__name__, e, cause_repr, exc_info=True,
             )
+            # GeneratorExit 不包装,直接抛(让 generator 正常终止)
+            if type(e).__name__ == "GeneratorExit":
+                raise
             raise LLMTransientError(f"LLM stream failed: {e}") from e
+        finally:
+            # 确保 HTTP 连接释放:正常完成 / 异常 / 外部 raw stream.close() 都走这里
+            try:
+                stream.close()
+            except Exception:  # noqa: BLE001 — close 失败不致命,连接已断
+                pass
+            self._last_raw_stream = None
 
         yield StreamChunk(
             tool_calls=list(acc_tool_calls.values()),

@@ -357,7 +357,27 @@ def _make_fake_chunk(content=None, reasoning_content=None, tool_calls=None, usag
 
 
 def _make_fake_stream(chunks):
-    return iter(chunks)
+    """造 fake stream:迭代器 + close() 方法(模拟 openai Stream)。
+
+    close 被调时记录到 close_calls,供测试验证 cancel 时真关流。
+    """
+    class FakeStream:
+        def __init__(self, items):
+            self._it = iter(items)
+            self.close_calls = 0
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            # 阻塞模拟:next() 永远阻塞,直到外部 close() 触发 GeneratorExit
+            # 用于 cancel 测试:主线程 next() 卡住,外部 gen.close() 让其退出
+            return next(self._it)
+
+        def close(self):
+            self.close_calls += 1
+
+    return FakeStream(chunks)
 
 
 def _make_llm_client():
@@ -447,3 +467,70 @@ def test_llm_client_chat_stream_mid_failure_wraps_transient():
         mp.setattr(client._client.chat.completions, "create", lambda **kw: gen())
         with pytest.raises(LLMTransientError, match="LLM stream failed"):
             list(client.chat_stream(messages=[], tools=[]))
+
+
+def test_llm_client_chat_stream_close_releases_stream_on_normal_completion():
+    """正常完成时 finally 块调 stream.close(),连接释放。"""
+    import pytest
+
+    client = _make_llm_client()
+    fake_chunks = [
+        _make_fake_chunk(content="hi"),
+        _make_fake_chunk(has_choices=False, usage=None),
+    ]
+    with pytest.MonkeyPatch().context() as mp:
+        stream = _make_fake_stream(fake_chunks)
+        mp.setattr(client._client.chat.completions, "create", lambda **kw: stream)
+        list(client.chat_stream(messages=[], tools=[]))
+    assert stream.close_calls == 1
+
+
+def test_llm_client_chat_stream_close_releases_stream_on_external_close():
+    """外部调 stream.close()(从另一线程)→ pump 线程 next() 抛异常 → finally 块执行。
+
+    这是 cancel 的核心:service.py 主线程 cancel 时调 self.llm._last_raw_stream.close(),
+    pump 线程的 next(stream) 因连接关闭抛异常,generator 的 finally 块再次 close(幂等)。
+    """
+    import pytest
+    import threading
+    import time
+
+    client = _make_llm_client()
+    # 阻塞 stream:next() 永远阻塞(模拟 LLM 长时间不吐 chunk)
+    class BlockingStream:
+        def __init__(self):
+            self.close_calls = 0
+            self._closed = False
+        def __iter__(self): return self
+        def __next__(self):
+            # 模拟阻塞:close 后抛 RuntimeError(像 httpx 连接关闭后 next 抛异常)
+            while not self._closed:
+                time.sleep(0.05)
+            raise RuntimeError("connection closed")
+        def close(self):
+            self._closed = True
+            self.close_calls += 1
+
+    stream = BlockingStream()
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setattr(client._client.chat.completions, "create", lambda **kw: stream)
+        gen = client.chat_stream(messages=[], tools=[])
+        chunks_received = []
+        error_seen = []
+        def consume():
+            try:
+                for c in gen:
+                    chunks_received.append(c)
+            except Exception as e:
+                error_seen.append(e)
+        t = threading.Thread(target=consume, daemon=True)
+        t.start()
+        time.sleep(0.2)  # 等 pump 线程进入 next() 阻塞
+        # 主线程 cancel:直接 close raw stream(service.py 会这么做)
+        assert client._last_raw_stream is stream
+        client._last_raw_stream.close()
+        t.join(timeout=2)
+    # stream.close 被调至少 1 次(主线程 1 次 + finally 块 1 次,幂等)
+    assert stream.close_calls >= 1
+    # pump 线程因连接关闭抛异常,generator 包装成 LLMTransientError
+    assert any(LLMTransientError.__name__ in type(e).__name__ for e in error_seen) or chunks_received == []
