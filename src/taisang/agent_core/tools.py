@@ -593,6 +593,7 @@ class ToolRegistry:
         mcp_manager=None,
         agents: list | None = None,
         parent_service=None,
+        cancel_event=None,
     ) -> None:
         if confirmer is None:
             confirmer = AutoDenyConfirmer()
@@ -655,6 +656,9 @@ class ToolRegistry:
                 confirmer=confirmer,
                 mcp_manager=mcp_manager,
             )
+        # 用户中断信号:工具执行前检查,set 时抛 InterruptedError。
+        # 默认 None(向后兼容,现有调用不受影响)。
+        self._cancel_event = cancel_event
 
     def _sync_cwd(self) -> None:
         """从 shell 拿当前 cwd,同步到所有文件工具。Bash cd 后文件工具跟随。"""
@@ -691,6 +695,10 @@ class ToolRegistry:
         tool = self._tools.get(name)
         if not tool:
             return {"error": f"unknown tool: {name}"}
+        # 用户中断检查:执行前检查 cancel_event,set 时抛 InterruptedError。
+        # AgentService 主循环 catch 后走中断分支(补空 tool_result + [interrupted] 标记)。
+        if self._cancel_event is not None and self._cancel_event.is_set():
+            raise InterruptedError("tool execution cancelled by user")
         # 每次调用前同步 cwd(Bash cd 后文件工具跟随)
         self._sync_cwd()
         try:

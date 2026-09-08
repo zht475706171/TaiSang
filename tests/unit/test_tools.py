@@ -194,3 +194,41 @@ def test_grep_skips_long_lines(tmp_path):
     result = tool.run({"pattern": "a+", "scope": "min.py"})
     assert result["matches"] == []
     assert result["error"] is None
+
+
+# --- ToolRegistry cancel_event 中断检查 ---
+
+def test_tool_registry_call_raises_interrupted_when_cancel_set(tmp_path):
+    """cancel_event set 时,ToolRegistry.call 抛 InterruptedError。"""
+    import threading
+    import pytest
+
+    from taisang.agent_core.tools import ToolRegistry
+
+    cancel = threading.Event()
+    cancel.set()
+    registry = ToolRegistry(cwd=tmp_path, cancel_event=cancel)
+    with pytest.raises(InterruptedError, match="cancelled"):
+        registry.call("read_file", {"path": "x.py"})
+
+
+def test_tool_registry_call_normal_when_cancel_not_set(tmp_path):
+    """cancel_event 未 set 时,ToolRegistry.call 正常执行(不抛 InterruptedError)。"""
+    import threading
+
+    from taisang.agent_core.tools import ToolRegistry
+
+    cancel = threading.Event()
+    registry = ToolRegistry(cwd=tmp_path, cancel_event=cancel)
+    result = registry.call("read_file", {"path": "nonexistent.py"})
+    assert "error" in result
+
+
+def test_tool_registry_cancel_event_default_none(tmp_path):
+    """cancel_event 默认 None(向后兼容)。"""
+    from taisang.agent_core.tools import ToolRegistry
+
+    registry = ToolRegistry(cwd=tmp_path)
+    assert registry._cancel_event is None
+    result = registry.call("read_file", {"path": "nonexistent.py"})
+    assert "error" in result
