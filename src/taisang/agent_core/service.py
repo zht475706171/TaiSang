@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import queue
 import re
 import threading
 from collections.abc import Callable
@@ -75,6 +76,65 @@ def _iter_with_retry(make_iter, on_retry):
     first_chunk = call_with_retry(_do_first, on_retry=on_retry)
     yield first_chunk
     yield from state["it"]  # 后续 next 失败不重试,直接抛
+
+
+def _consume_stream_with_cancel(gen, cancel_event, on_chunk, get_raw_stream=None):
+    """pump 线程消费 generator + 主线程周期检查 cancel,真关 HTTP 连接。
+
+    对标 Claude Code abort signal:cancel 不只是设 flag 等下一个 chunk,
+    要主动关 raw stream 让阻塞中的 next() 抛异常退出,中断延迟 ms 级。
+
+    流程:
+    - pump 线程:for chunk in gen → q.put(chunk),异常存 pump_error
+    - 主线程:while True:
+        - cancel_event.is_set() → get_raw_stream().close() 关连接 + raise InterruptedError
+        - q.get(timeout=0.05) → on_chunk(item) / None 结束 / 异常抛出
+
+    get_raw_stream: callable () -> raw stream | None。LLMClient.chat_stream 把
+    raw stream 挂在 self._last_raw_stream,service.py 调用时传
+    lambda: getattr(self.llm, "_last_raw_stream", None)。MockLLM 没有该属性,
+    getattr 兜底 None,cancel 时仅靠 flag 在 chunk 之间检查(mock chunk 间隔为 0)。
+
+    gen: chat_stream 返回的 generator
+    cancel_event: threading.Event
+    on_chunk: 收到 chunk 调 on_chunk(chunk),异常时主循环 catch
+    get_raw_stream: callable () -> stream | None,cancel 时调 stream.close()
+    """
+    q: queue.Queue = queue.Queue()
+    pump_error: list = []
+
+    def _pump():
+        try:
+            for chunk in gen:
+                q.put(chunk)
+        except Exception as e:
+            pump_error.append(e)
+        finally:
+            q.put(None)  # sentinel
+
+    t = threading.Thread(target=_pump, daemon=True)
+    t.start()
+
+    while True:
+        if cancel_event.is_set():
+            # 真取消:关 raw HTTP 连接,让 pump 线程的 next() 抛异常退出
+            if get_raw_stream is not None:
+                raw_stream = get_raw_stream()
+                if raw_stream is not None:
+                    try:
+                        raw_stream.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+            raise InterruptedError()
+        try:
+            item = q.get(timeout=0.05)
+        except queue.Empty:
+            continue
+        if item is None:
+            if pump_error:
+                raise pump_error[0]
+            break
+        on_chunk(item)
 
 
 class AgentService:
@@ -284,6 +344,9 @@ class AgentService:
             try:
                 # 流式 LLM 调用:重试只包第一次 next(_iter_with_retry)
                 # 首 chunk 成功后,后续 chunk 失败不重试(已经吐过字了)
+                # _consume_stream_with_cancel: pump 线程消费 stream + 主线程周期检查 cancel,
+                # cancel 时调 raw_stream.close() 真关 HTTP 连接(对标 Claude Code abort signal),
+                # 让阻塞中的 next() 抛异常退出,中断延迟 ms 级(不等下一个 chunk)
                 accumulated_text = ""
                 accumulated_reasoning = ""
                 tool_calls: list[dict] = []
@@ -302,10 +365,9 @@ class AgentService:
                         )
                     ),
                 )
-                for chunk in stream:
-                    # 中断检查点 1:每个 chunk
-                    if self._cancel_event.is_set():
-                        raise InterruptedError()
+
+                def _on_chunk(chunk):
+                    nonlocal accumulated_text, accumulated_reasoning, tool_calls, usage
                     if chunk.text_delta:
                         accumulated_text += chunk.text_delta
                         _emit(AgentEvent(
@@ -321,6 +383,13 @@ class AgentService:
                     if chunk.is_final:
                         tool_calls = chunk.tool_calls
                         usage = chunk.usage
+
+                _consume_stream_with_cancel(
+                    stream,
+                    self._cancel_event,
+                    on_chunk=_on_chunk,
+                    get_raw_stream=lambda: getattr(self.llm, "_last_raw_stream", None),
+                )
             except KeyboardInterrupt:
                 # CLI Ctrl+C:转中断信号,走统一中断分支
                 self._cancel_event.set()

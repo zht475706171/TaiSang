@@ -512,3 +512,75 @@ def test_run_streaming_interrupt_preserves_ctx_for_next_run(tmp_path):
     service.run("second", on_event=lambda e: events2.append(e))
     final = [e for e in events2 if e.type == FINAL_ANSWER][0]
     assert final.payload["text"] == "next answer"
+
+
+def test_run_streaming_cancel_closes_raw_stream(tmp_path):
+    """LLM 流式阶段 cancel:主线程调 raw_stream.close() 真关连接,pump 线程退出。
+
+    对标 Claude Code abort signal:cancel 不只是设 flag,要真关 HTTP 连接,
+    让阻塞中的 next() 抛异常退出,中断延迟从"等下一个 chunk"降到 ms 级。
+    """
+    import threading
+    import time as _time
+    from taisang.agent_core.events import FINAL_ANSWER, LLM_CHUNK, LLM_THINKING
+    from taisang.llm_errors import LLMTransientError
+
+    # 自定义 LLM:chat_stream 用阻塞 stream 模拟 LLM 长时间不吐 chunk
+    class BlockingMockLLM:
+        def __init__(self):
+            self.calls = []
+            self._raw_stream = None
+
+        def chat(self, messages, tools):
+            raise RuntimeError("not used")
+
+        def chat_stream(self, messages, tools):
+            from taisang.llm_stream import StreamChunk
+            self.calls.append({"messages": messages, "tools": tools})
+            class BlockingStream:
+                def __init__(self):
+                    self.close_calls = 0
+                    self._closed = False
+                def __iter__(self): return self
+                def __next__(self):
+                    while not self._closed:
+                        _time.sleep(0.05)
+                    raise RuntimeError("connection closed")
+                def close(self):
+                    self._closed = True
+                    self.close_calls += 1
+            stream = BlockingStream()
+            self._raw_stream = stream
+            # 暴露给 service.py 通过 _last_raw_stream close
+            self._last_raw_stream = stream
+            try:
+                # 永远不会自然结束(阻塞),只能被 close
+                while True:
+                    if stream._closed:
+                        raise RuntimeError("connection closed")
+                    _time.sleep(0.05)
+            except RuntimeError:
+                raise LLMTransientError("LLM stream failed: connection closed")
+            finally:
+                stream.close()
+
+    mock = BlockingMockLLM()
+    service = AgentService(llm=mock, source_root=tmp_path, confirmer=AutoApproveConfirmer())
+    events = []
+    started = threading.Event()
+    def on_event(e):
+        events.append(e)
+        if e.type == LLM_THINKING:
+            started.set()
+    # 在另一线程触发 cancel(模拟用户点 stop)
+    def trigger_cancel():
+        started.wait(timeout=2)
+        _time.sleep(0.1)  # 等 pump 线程进入 next() 阻塞
+        service.interrupt()
+    threading.Thread(target=trigger_cancel, daemon=True).start()
+    answer = service.run("test", on_event=on_event)
+    final = [e for e in events if e.type == FINAL_ANSWER][0]
+    assert final.payload["interrupted"] is True
+    assert answer.interrupted is True
+    # raw stream 被 close(主线程 cancel 逻辑调的)
+    assert mock._raw_stream.close_calls >= 1
