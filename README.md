@@ -17,6 +17,7 @@
 - 权限模型:WebPermissionManager,首次访问新目录问用户批准,批准后该目录树放行
 - 调试模式:`/debug` 打印完整 messages + 工具 observation;`/reset` 清对话上下文(保留 session memory)
 - Token 用量:每轮 + session 累计
+- **流式输出**:LLM 响应逐 chunk 流式输出(最终答案 text + thinking reasoning),Web 和 CLI 都支持;用户可中断当前 turn(Web 停止按钮 / CLI Ctrl+C),中断后保留半截答案 + `[interrupted]` 标记,上下文保持一致(LLM 阶段补半截 assistant,工具阶段补空 tool_result `{"_interrupted": true}`)
 
 **Skill 系统(渐进披露)**
 - `SKILL.md` 目录格式,frontmatter 字段:`name` / `description` / `when_to_use` / `allowed_tools`
@@ -66,7 +67,7 @@
 **高频 / 跨项目**
 - **多 agent / subagent 调度**:~~无 orchestrator、无 Task 工具~~ ✅ 已实现(M3,见上方"多 Agent 调度"章节)。剩余缺口:不支持并发多个 Agent 工具调用(同时只 1 个 in-flight),前端 `findLastAgentToolCall` 用"最后一个 Agent 卡片"匹配
 - **MCP 客户端**:Sidebar 那个 server 图标是占位;不支持接入第三方 MCP server 的 tool/resource/prompt(stdio/sse/http 传输都没有)
-- **流式 LLM 响应**:当前等完整 response 才一次性给前端(SSE 是事件层,不是 token 流)
+- **流式 LLM 响应**:~~当前等完整 response 才一次性给前端(SSE 是事件层,不是 token 流)~~ ✅ 已实现(逐 chunk `LLM_CHUNK` 事件 + 用户中断,见上方"Agent 核心"章节)
 - **多 skill 批量导入**:importer 现在一个 zip 一个 skill;扩展后可一次导入 N 个(像 superpowers plugin 那样)
 
 **claude-code plugin 概念**(部分实现)
@@ -160,7 +161,8 @@ taisang web --repo .
 
 - **token 用量**:每轮回答后显示此轮 + session 累计 token(cache 命中率因 endpoint 不报告固定 N/A)
 - **/debug 模式**:打印发给 LLM 的完整 messages + 响应 + 工具完整 observation
-- **事件流**:8 种 AgentEvent,CLI 和 Web UI 共用同一套渲染逻辑
+- **事件流**:9 种 AgentEvent(含 `LLM_CHUNK` 流式 chunk 事件,text_delta / reasoning_delta),CLI 和 Web UI 共用同一套渲染逻辑
+- **流式 chunk 事件**:`LLM_CHUNK` 事件实时推送 text_delta / reasoning_delta,前端 streamingMessage / reasoningText 累积渲染;子 agent 的 chunk 嵌套到父 Agent 工具卡片内
 
 ## 测试
 
