@@ -33,6 +33,10 @@
         <t-icon name="edit-1" class="menu-icon" />
         <span class="menu-title">Prompt 管理</span>
       </div>
+      <div class="menu-item" @click="router.push('/agents')">
+        <t-icon name="user-circle" class="menu-icon" />
+        <span class="menu-title">Agent 管理</span>
+      </div>
     </nav>
 
     <!-- 唯一滚动区:历史会话 -->

@@ -4,6 +4,7 @@ const ChatView = () => import('@/views/ChatView.vue')
 const SkillManage = () => import('@/views/SkillManage.vue')
 const McpManage = () => import('@/views/McpManage.vue')
 const PromptManage = () => import('@/views/PromptManage.vue')
+const AgentManage = () => import('@/views/AgentManage.vue')
 
 const router = createRouter({
   history: createWebHistory(),
@@ -13,6 +14,7 @@ const router = createRouter({
     { path: '/skills', name: 'skills', component: SkillManage },
     { path: '/mcp', name: 'mcp', component: McpManage },
     { path: '/prompts', name: 'prompts', component: PromptManage },
+    { path: '/agents', name: 'agents', component: AgentManage },
   ],
 })
 
