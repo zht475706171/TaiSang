@@ -17,6 +17,9 @@ export function useChatStream(
   // LLM 重试状态:call_with_retry 重试前 emit llm_retry,前端在 ThinkingIndicator 旁显示
   // "第 N 次重试中(Xs 后)"。新事件(tool_call/final_answer/run_end)到来时清掉。
   const retryInfo = ref<{ attempt: number; delaySec: number } | null>(null)
+  // 流式状态:正在累积的 assistant 消息 + reasoning 文本
+  const streamingMessage = ref<ChatMessage | null>(null)
+  const reasoningText = ref('')
   const connectionState = ref<'connected' | 'reconnecting' | 'failed'>('connected')
   let eventSource: EventSource | null = null
   let reconnectCount = 0
@@ -34,6 +37,14 @@ export function useChatStream(
   function clearThinking() {
     thinking.value = false
     retryInfo.value = null
+    reasoningText.value = ''
+  }
+
+  function clearStreaming() {
+    if (streamingMessage.value && streamingMessage.value.streaming) {
+      streamingMessage.value.streaming = false
+    }
+    streamingMessage.value = null
   }
 
   function pushUser(text: string) {
@@ -256,10 +267,45 @@ export function useChatStream(
       // 主 agent 重试:更新 retryInfo,ThinkingIndicator 显示"第 N 次重试中"
       retryInfo.value = { attempt: d.attempt, delaySec: d.delay_sec }
     })
+    eventSource.addEventListener('llm_chunk', (e: MessageEvent) => {
+      const d = safeParse<{ text_delta: string; reasoning_delta: string; agent_id?: string }>(e.data)
+      if (!d) return
+      // 子 agent chunk:嵌套到父卡片(降级:无父则忽略)
+      if (d.agent_id) {
+        const parent = findLastAgentToolCall()
+        if (parent) {
+          pushSubEvent(parent, {
+            id: nextId(),
+            kind: 'llm_chunk',
+            textDelta: d.text_delta,
+            reasoningDelta: d.reasoning_delta,
+            agentId: d.agent_id,
+          })
+        }
+        return
+      }
+      // 主 agent chunk
+      if (d.text_delta) {
+        if (!streamingMessage.value || !streamingMessage.value.streaming) {
+          streamingMessage.value = {
+            id: nextId(),
+            kind: 'assistant',
+            text: '',
+            streaming: true,
+          }
+          messages.value.push(streamingMessage.value)
+        }
+        streamingMessage.value.text = (streamingMessage.value.text || '') + d.text_delta
+      }
+      if (d.reasoning_delta) {
+        reasoningText.value = (reasoningText.value || '') + d.reasoning_delta
+      }
+    })
     eventSource.addEventListener('tool_call', (e: MessageEvent) => {
       const d = safeParse<{ name: string; args: Record<string, unknown>; agent_id?: string }>(e.data)
       if (!d) return
       clearThinking()
+      clearStreaming()
       if (d.agent_id) {
         // 子 agent 事件:嵌套到最近的 Agent 工具卡片
         const parent = findLastAgentToolCall()
@@ -291,7 +337,7 @@ export function useChatStream(
       fillToolResult(d.name, d.preview, d.total_bytes)
     })
     eventSource.addEventListener('final_answer', (e: MessageEvent) => {
-      const d = safeParse<{ text: string; agent_id?: string }>(e.data)
+      const d = safeParse<{ text: string; interrupted?: boolean; agent_id?: string }>(e.data)
       if (!d) return
       clearThinking()
       if (d.agent_id) {
@@ -302,12 +348,27 @@ export function useChatStream(
             id: nextId(),
             kind: 'assistant',
             text: d.text || '',
+            interrupted: d.interrupted || false,
             agentId: d.agent_id,
           })
           return
         }
       }
-      pushAssistant(d.text || '')
+      // 主 agent:流式模式下 FINAL_ANSWER 不重复 push(已在 llm_chunk 累积)
+      if (streamingMessage.value && streamingMessage.value.streaming) {
+        streamingMessage.value.streaming = false
+        streamingMessage.value.interrupted = d.interrupted || false
+        // 如果中断且 text 为空,用 d.text(含 [interrupted] 标记)
+        if (!streamingMessage.value.text) {
+          streamingMessage.value.text = d.text
+        } else if (d.interrupted) {
+          streamingMessage.value.text = (streamingMessage.value.text || '') + ' [interrupted]'
+        }
+        streamingMessage.value = null
+      } else {
+        // 非流式回退(autocompact LLM 摘要等内部调用仍用 chat 非流式)
+        pushAssistant(d.text || '')
+      }
     })
     eventSource.addEventListener('compacted', (e: MessageEvent) => {
       const d = safeParse<{ via: string; agent_id?: string }>(e.data)
@@ -350,10 +411,12 @@ export function useChatStream(
       const d = safeParse<{ error: string }>(e.data)
       if (!d) return
       clearThinking()
+      clearStreaming()
       pushRunError(d.error || '未知错误')
     })
     eventSource.addEventListener('run_end', () => {
       clearThinking()
+      clearStreaming()
     })
     eventSource.addEventListener('session_title_updated', () => {
       if (onTitleUpdated) onTitleUpdated()
@@ -366,6 +429,7 @@ export function useChatStream(
       eventSource = null
     }
     clearThinking()
+    clearStreaming()
     connectionState.value = 'connected'
     reconnectCount = 0
   }
@@ -394,6 +458,8 @@ export function useChatStream(
     messages,
     thinking,
     retryInfo,
+    reasoningText,
+    streamingMessage,
     connectionState,
     send,
     loadHistory,
