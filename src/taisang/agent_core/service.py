@@ -82,6 +82,9 @@ class AgentService:
         on_append: Callable[[dict], None] | None = None,
         skills: list[Skill] | None = None,
         mcp_manager=None,
+        agent_id: str = "",
+        is_fork_child: bool = False,
+        agents: list | None = None,
     ) -> None:
         self.llm = llm
         self.source_root = source_root
@@ -113,6 +116,12 @@ class AgentService:
         self.ctx = ContextManager(token_budget=self.token_budget, on_append=on_append)
         self.skills = skills or []
         self._mcp_manager = mcp_manager
+        # 多 agent 支持:agent_id 用于事件流区分主/子;is_fork_child 用于
+        # AgentTool 调用入口防递归(fork 内不能再 fork)。
+        self.agent_id = agent_id
+        self.is_fork_child = is_fork_child
+        self.agents = agents or []
+        self._pending_async_notifications: list[str] = []
         skills_section = format_skill_listing(self.skills)
         mcp_section = format_mcp_section(mcp_manager) if mcp_manager else ""
         self.ctx.append_system(build_system_prompt(skills_section, mcp_section))
@@ -143,6 +152,28 @@ class AgentService:
         self._tool_calls_since_last_extract = 0
         self._session_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         self._turn_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        # async 通知队列也清空(reset 清短期状态,通知是短期状态)
+        self._pending_async_notifications = []
+
+    def flush_async_notifications(self) -> None:
+        """把 _pending_async_notifications 队列里的通知依次 append_user 注入 ctx 并清空。
+
+        AgentService 主循环在本轮所有 tool_result append 完之后调用(紧跟
+        flush_skill_injections 之后),保证 async 子 agent 完成通知以 user-role
+        消息注入,下轮 LLM 自然看到。OpenAI 协议:user 消息排在 tool 消息之后。
+        """
+        for text in self._pending_async_notifications:
+            self.ctx.append_user(text)
+        self._pending_async_notifications = []
+
+    def _merge_child_usage(self, child_session_usage: dict) -> None:
+        """把子 agent 的 _session_usage 累加进本 agent(主 agent 用)。
+
+        子 agent 跑完(sync 或 async)后调,保证主 session 累计 token 含子 agent。
+        子 agent 自己也 emit USAGE_REPORT 事件(带 agent_id),前端可看子单独用量。
+        """
+        for k in self._session_usage:
+            self._session_usage[k] += child_session_usage.get(k, 0)
 
     def run(self, query: str, on_event: EventCallback | None = None) -> Answer:
         """执行 Agent 循环,返回 Answer。
