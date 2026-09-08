@@ -125,3 +125,33 @@ def test_load_agents_empty_dirs(tmp_path: Path) -> None:
     """空目录返回空列表。"""
     agents = load_agents(user_dirs=[tmp_path / "empty"], project_dirs=[], system_dirs=[])
     assert agents == []
+
+
+def test_load_builtin_agents() -> None:
+    """默认 system_dirs 加载 4 个内置 agent。"""
+    from taisang.agents.loader import load_agents, BUILTIN_AGENTS_DIR
+    agents = load_agents(user_dirs=[], project_dirs=[], system_dirs=[BUILTIN_AGENTS_DIR])
+    names = {a.agent_type for a in agents}
+    assert names == {"general-purpose", "explore", "plan", "verification"}
+    # verification 是 background
+    verif = next(a for a in agents if a.agent_type == "verification")
+    assert verif.background is True
+    assert verif.max_turns == 100
+    # explore / plan / verification 黑名单含 Edit/Write/Agent
+    for name in ("explore", "plan", "verification"):
+        a = next(a for a in agents if a.agent_type == name)
+        assert "Edit" in a.disallowed_tools
+        assert "Write" in a.disallowed_tools
+        assert "Agent" in a.disallowed_tools
+    # general-purpose 全工具
+    gp = next(a for a in agents if a.agent_type == "general-purpose")
+    assert gp.tools is not None
+    assert set(gp.tools) == {"Read", "Grep", "Glob", "Edit", "Write", "Bash"}
+
+
+def test_builtin_agents_packaged_in_wheel() -> None:
+    """wheel 包含 builtin AGENT.md(setuptools package-data 生效)。"""
+    # 这个测试只验证文件存在于源码目录,wheel 打包靠 pyproject.toml 配置
+    from taisang.agents.loader import BUILTIN_AGENTS_DIR
+    for name in ("general-purpose", "explore", "plan", "verification"):
+        assert (BUILTIN_AGENTS_DIR / name / "AGENT.md").is_file()

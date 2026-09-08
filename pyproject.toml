@@ -42,6 +42,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "taisang.skills" = ["builtin/**/*.md"]
+"taisang.agents" = ["builtin/**/*.md"]
 
 [tool.ruff]
 line-length = 100
