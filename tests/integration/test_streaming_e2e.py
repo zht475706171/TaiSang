@@ -145,3 +145,118 @@ def test_e2e_sse_format_final_answer_interrupted() -> None:
     payload = json.loads(data_line[6:])
     assert payload["interrupted"] is True
     assert payload["text"] == "partial [interrupted]"
+
+
+def test_e2e_cancel_closes_raw_stream_during_blocking_llm(tmp_path: Path) -> None:
+    """E2E:LLM 流式阶段 cancel 真关 HTTP 连接,阻塞中的 next() 抛异常退出。
+
+    对标 Claude Code abort signal:cancel 不只是设 flag 等下一个 chunk,
+    要主动关 raw stream 让阻塞 next() 退出,中断延迟 ms 级。
+    用阻塞 stream 模拟 Kimi 思考阶段(长时间不吐 chunk),验证 cancel 后
+    ≤2s 内 turn 结束(不等 30s 超时)。
+    """
+    import threading
+    import time as _time
+    from taisang.agent_core.events import FINAL_ANSWER, LLM_THINKING
+    from taisang.agent_core.confirm import AutoApproveConfirmer
+    from taisang.agent_core.service import AgentService
+    from taisang.llm_errors import LLMTransientError
+
+    class BlockingMockLLM:
+        """模拟 LLM 长时间不吐 chunk(Kimi 思考阶段)。"""
+        def __init__(self):
+            self.calls = []
+            self._raw_stream = None
+        def chat(self, messages, tools):
+            raise RuntimeError("not used")
+        def chat_stream(self, messages, tools):
+            self.calls.append({"messages": messages, "tools": tools})
+            class BlockingStream:
+                def __init__(self):
+                    self.close_calls = 0
+                    self._closed = False
+                def __iter__(self): return self
+                def __next__(self):
+                    while not self._closed:
+                        _time.sleep(0.05)
+                    raise RuntimeError("connection closed")
+                def close(self):
+                    self._closed = True
+                    self.close_calls += 1
+            stream = BlockingStream()
+            self._raw_stream = stream
+            self._last_raw_stream = stream
+            try:
+                while True:
+                    if stream._closed:
+                        raise RuntimeError("connection closed")
+                    _time.sleep(0.05)
+            except RuntimeError:
+                raise LLMTransientError("LLM stream failed: connection closed")
+            finally:
+                stream.close()
+
+    mock = BlockingMockLLM()
+    service = AgentService(llm=mock, source_root=tmp_path, confirmer=AutoApproveConfirmer())
+    events = []
+    started = threading.Event()
+    def on_event(e):
+        events.append(e)
+        if e.type == LLM_THINKING:
+            started.set()
+    # 另一线程触发 cancel(模拟用户点 stop)
+    def trigger_cancel():
+        started.wait(timeout=2)
+        _time.sleep(0.2)  # 等 pump 线程进入 next() 阻塞
+        service.interrupt()
+    threading.Thread(target=trigger_cancel, daemon=True).start()
+    t0 = _time.time()
+    answer = service.run("test", on_event=on_event)
+    elapsed = _time.time() - t0
+    # 关键断言:cancel 后 ≤2s 内 turn 结束(不等 30s 超时)
+    assert elapsed < 3.0, f"cancel 应 ms 级生效,实际耗时 {elapsed:.1f}s"
+    final = [e for e in events if e.type == FINAL_ANSWER][0]
+    assert final.payload["interrupted"] is True
+    assert answer.interrupted is True
+    # raw stream 被 close(真关连接)
+    assert mock._raw_stream.close_calls >= 1
+
+
+def test_e2e_cancel_bash_during_long_command(tmp_path: Path) -> None:
+    """E2E:Bash 长命令执行中 cancel → kill shell + 重启 + interrupted 标记。
+
+    对标 Claude Code kill 子进程(SIGTERM),不等跑完。
+    """
+    import json
+    import threading
+    import time as _time
+    from taisang.agent_core.events import FINAL_ANSWER, TOOL_CALL
+    from taisang.agent_core.confirm import AutoApproveConfirmer
+    from taisang.agent_core.service import AgentService
+    from taisang.llm_client import LLMResponse, MockLLM
+
+    # MockLLM 第 1 轮调 Bash sleep 20,第 2 轮给最终答案(不会到这,会被中断)
+    bash_args = json.dumps({"command": "python -c \"import time; time.sleep(20)\""})
+    mock = MockLLM([
+        LLMResponse(
+            text="",
+            tool_calls=[{"id": "tc1", "type": "function", "function": {"name": "Bash", "arguments": bash_args}}],
+        ),
+        LLMResponse(text="done", tool_calls=[]),
+    ])
+    service = AgentService(llm=mock, source_root=tmp_path, confirmer=AutoApproveConfirmer())
+    events = []
+    def on_event(e):
+        events.append(e)
+        if e.type == TOOL_CALL:
+            # Bash 开始执行,触发 cancel
+            _time.sleep(0.3)  # 等命令开始
+            service.interrupt()
+    t0 = _time.time()
+    answer = service.run("run sleep", on_event=on_event)
+    elapsed = _time.time() - t0
+    # 关键断言:cancel 后 ≤3s 内 turn 结束(不等 20s sleep 跑完)
+    assert elapsed < 5.0, f"bash cancel 应 kill 立即生效,实际耗时 {elapsed:.1f}s"
+    final = [e for e in events if e.type == FINAL_ANSWER][0]
+    assert final.payload["interrupted"] is True
+    assert answer.interrupted is True

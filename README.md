@@ -18,6 +18,7 @@
 - 调试模式:`/debug` 打印完整 messages + 工具 observation;`/reset` 清对话上下文(保留 session memory)
 - Token 用量:每轮 + session 累计
 - **流式输出**:LLM 响应逐 chunk 流式输出(最终答案 text + thinking reasoning),Web 和 CLI 都支持;用户可中断当前 turn(Web 停止按钮 / CLI Ctrl+C),中断后保留半截答案 + `[interrupted]` 标记,上下文保持一致(LLM 阶段补半截 assistant,工具阶段补空 tool_result `{"_interrupted": true}`)
+- **即时中断(对标 Claude Code abort signal)**:cancel 信号贯穿全链路 —— 前端点 stop 立刻切回发送按钮(stopping 状态显示"停止中…"),后端 pump 线程 + Queue 模式让主循环周期检查 cancel,触发时调 `raw_stream.close()` 真关 HTTP 连接(Kimi 服务端停生成),Bash 工具执行中 cancel 则 kill shell + 重启(cwd 从 Python state 保留)。中断延迟 ms 级,不等下一个 chunk 或命令跑完
 
 **Skill 系统(渐进披露)**
 - `SKILL.md` 目录格式,frontmatter 字段:`name` / `description` / `when_to_use` / `allowed_tools`
