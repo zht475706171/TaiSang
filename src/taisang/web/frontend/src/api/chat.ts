@@ -16,3 +16,7 @@ export function respondConfirm(id: string, token: string, approve: boolean): Pro
 export function respondPermission(id: string, token: string, approve: boolean): Promise<{ resolved: boolean }> {
   return apiPost<{ resolved: boolean }>(`/api/sessions/${id}/permission/${token}`, { approve })
 }
+
+export function interruptSession(id: string): Promise<{ ok: boolean; interrupted: boolean }> {
+  return apiPost<{ ok: boolean; interrupted: boolean }>(`/api/sessions/${id}/interrupt`, {})
+}

@@ -26,6 +26,7 @@ export type MessageKind =
   | 'run_error'
   | 'usage'
   | 'llm_retry'
+  | 'llm_chunk'
 
 export interface ChatMessage {
   id: string               // 前端生成 uuid,用于 v-for key
@@ -55,6 +56,12 @@ export interface ChatMessage {
   // llm_retry
   retryAttempt?: number    // 第几次重试(1-based)
   delaySec?: number        // 几秒后重试
+  // 流式相关
+  streaming?: boolean       // True = 正在流式累积(llm_chunk 来了,final_answer 未到)
+  interrupted?: boolean     // True = 用户主动中断(FINAL_ANSWER interrupted 标记)
+  // llm_chunk(subagent 嵌套用,主 agent 的 chunk 不存 message list)
+  textDelta?: string
+  reasoningDelta?: string
   // Task 14: subagent 事件嵌套渲染
   agentId?: string               // 非空 → 该消息来自子 agent
   subAgentEvents?: ChatMessage[] // 嵌套子事件,挂在 Agent 工具卡片内
