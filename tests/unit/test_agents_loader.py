@@ -155,3 +155,32 @@ def test_builtin_agents_packaged_in_wheel() -> None:
     from taisang.agents.loader import BUILTIN_AGENTS_DIR
     for name in ("general-purpose", "explore", "plan", "verification"):
         assert (BUILTIN_AGENTS_DIR / name / "AGENT.md").is_file()
+
+
+def test_load_agents_with_state_applies_disabled(tmp_path: Path, monkeypatch) -> None:
+    """load_agents_with_state 读 agents_state.json,把 disabled=True 的 agent 标记禁用。"""
+    from taisang.agents.loader import load_agents_with_state
+    user_dir = tmp_path / "user"
+    _write_agent_md(user_dir, "explore", "name: explore\ndescription: ok\n", "body")
+    _write_agent_md(user_dir, "plan", "name: plan\ndescription: ok\n", "body")
+    # state 文件:explore 禁用,plan 不禁
+    state_file = tmp_path / "agents_state.json"
+    state_file.write_text('{"explore": true}', encoding="utf-8")
+    # monkeypatch state 文件路径
+    import taisang.agents.loader as loader_mod
+    monkeypatch.setattr(loader_mod, "_STATE_FILE", state_file)
+    agents = load_agents_with_state(source_root=tmp_path, user_dirs=[user_dir], project_dirs=[])
+    by_type = {a.agent_type: a for a in agents}
+    assert by_type["explore"].disabled is True
+    assert by_type["plan"].disabled is False
+
+
+def test_load_agents_with_state_missing_file_no_error(tmp_path: Path, monkeypatch) -> None:
+    """state 文件不存在时,所有 agent disabled=False,不报错。"""
+    from taisang.agents.loader import load_agents_with_state
+    user_dir = tmp_path / "user"
+    _write_agent_md(user_dir, "explore", "name: explore\ndescription: ok\n", "body")
+    import taisang.agents.loader as loader_mod
+    monkeypatch.setattr(loader_mod, "_STATE_FILE", tmp_path / "nonexistent.json")
+    agents = load_agents_with_state(source_root=tmp_path, user_dirs=[user_dir], project_dirs=[])
+    assert all(not a.disabled for a in agents)

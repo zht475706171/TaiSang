@@ -9,6 +9,8 @@ AGENT.md 目录约定:每个 agent 一个目录,目录名 = agent name,里面一
 """
 from __future__ import annotations
 
+import json
+import os
 import re
 from pathlib import Path
 
@@ -19,6 +21,8 @@ from .types import AgentDefinition
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n?---\s*\n(.*)$", re.DOTALL)
 
 BUILTIN_AGENTS_DIR = Path(__file__).parent / "builtin"
+
+_STATE_FILE = Path.home() / ".taisang" / "agents_state.json"
 
 
 def _parse_agent_md(path: Path, source: str) -> AgentDefinition | None:
@@ -103,3 +107,47 @@ def load_agents(
                     continue
                 by_name[agent.agent_type] = agent
     return list(by_name.values())
+
+
+def _load_disabled_state() -> dict[str, bool]:
+    """读 ~/.taisang/agents_state.json,记录被禁用的 agent name。"""
+    if not _STATE_FILE.exists():
+        return {}
+    try:
+        return json.loads(_STATE_FILE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_disabled_state(state: dict[str, bool]) -> None:
+    """原子写 agents_state.json。"""
+    _STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _STATE_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    try:
+        os.chmod(tmp, 0o600)
+    except OSError:
+        pass  # Windows 无 chmod
+    os.replace(tmp, _STATE_FILE)
+
+
+def load_agents_with_state(
+    source_root: Path,
+    user_dirs: list[Path] | None = None,
+    project_dirs: list[Path] | None = None,
+    system_dirs: list[Path] | None = None,
+) -> list[AgentDefinition]:
+    """加载所有 agent + 应用 agents_state.json 的 disabled 状态。
+
+    API 路由和 session_registry._build_session 共用此函数,
+    保证 UI 上的开关和新会话里的 agent 看到同一份状态。
+    """
+    if user_dirs is None:
+        user_dirs = [Path.home() / ".taisang" / "agents"]
+    if project_dirs is None:
+        project_dirs = [source_root / ".taisang" / "agents"]
+    agents = load_agents(user_dirs=user_dirs, project_dirs=project_dirs, system_dirs=system_dirs)
+    disabled = _load_disabled_state()
+    for a in agents:
+        a.disabled = disabled.get(a.agent_type, False)
+    return agents
