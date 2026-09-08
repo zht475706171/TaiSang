@@ -54,13 +54,28 @@ def format_agent_listing(
     full = "\n".join(_entry(a) for a in enabled)
     if len(full) <= char_budget:
         return full
-    # 降级:逐条截断 description
-    name_overhead = sum(len(a.agent_type) + 10 for a in enabled)  # "- name:  (Tools: All tools)" 大约
+    # 逐条降级:精确测量每条非 desc 开销(格式 "- {name}: {desc} (Tools: {tools})" + 换行)
+    # 固定开销: "- " + name + ": " + " (Tools: " + tools_str + ")" = name + 14 + len(tools_str)
+    # 加 (n-1) 个换行符
+    name_overhead = sum(
+        len(a.agent_type) + 14 + len(_tools_description(a))
+        for a in enabled
+    ) + max(0, len(enabled) - 1)
     available = char_budget - name_overhead
-    max_desc = available // len(enabled)
+    max_desc = available // len(enabled) if enabled else 0
     if max_desc < MIN_DESC_LENGTH:
-        # 极端降级:只留名字
-        return "\n".join(f"- {a.agent_type}" for a in enabled)
+        # 极端降级:只留名字,但仍保证 ≤ budget
+        lines = []
+        total = 0
+        for a in enabled:
+            line = f"- {a.agent_type}"
+            extra = len(line) + (1 if lines else 0)  # 换行符(首行无)
+            if total + extra > char_budget:
+                break
+            lines.append(line)
+            total += extra
+        return "\n".join(lines)
+    max_desc = min(max_desc, MAX_LISTING_DESC_CHARS)  # 250 字符硬上限
     lines = []
     for a in enabled:
         desc = a.when_to_use
