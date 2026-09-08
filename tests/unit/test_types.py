@@ -42,3 +42,15 @@ def test_answer_json_round_trip():
     assert restored == original
     assert restored.citations[0].file == "app.py"
     assert restored.steps_used == 3
+
+
+def test_answer_interrupted_default_false():
+    """Answer.interrupted 默认 False(向后兼容)。"""
+    a = Answer(text="hello", citations=[], complete=True, steps_used=1)
+    assert a.interrupted is False
+
+
+def test_answer_interrupted_set_true():
+    """Answer.interrupted 可设 True(中断场景)。"""
+    a = Answer(text="partial [interrupted]", citations=[], complete=False, steps_used=3, interrupted=True)
+    assert a.interrupted is True

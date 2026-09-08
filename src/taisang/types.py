@@ -20,3 +20,4 @@ class Answer(BaseModel):
     citations: list[Citation] = Field(default_factory=list)
     complete: bool = True  # False 表示因 max_steps/token 提前终止
     steps_used: int = 0
+    interrupted: bool = False  # True 表示用户主动中断(半截答案 + [interrupted] 标记)
