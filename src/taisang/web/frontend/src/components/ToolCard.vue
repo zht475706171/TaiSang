@@ -21,6 +21,9 @@
           <span v-else-if="sub.kind === 'assistant'" class="sub-text">{{ sub.text }}</span>
           <span v-else-if="sub.kind === 'usage'" class="sub-text usage">{{ usageLabel(sub) }}</span>
           <span v-else-if="sub.kind === 'compacted'" class="sub-text">[compact: {{ sub.via }}]</span>
+          <span v-else-if="sub.kind === 'llm_retry'" class="sub-text retry">
+            第 {{ sub.retryAttempt }} 次重试({{ sub.delaySec?.toFixed(1) }}s 后)
+          </span>
           <span v-else class="sub-text">{{ sub.kind }}</span>
         </div>
       </div>
@@ -52,6 +55,7 @@ function subLabel(sub: ChatMessage): string {
     llm_thinking: '…',
     thinking: '…',
     compacted: '∙',
+    llm_retry: '↻',
   }
   return map[sub.kind] || '·'
 }
@@ -158,6 +162,10 @@ function usageLabel(sub: ChatMessage): string {
 }
 .sub-text.usage {
   color: var(--td-warning-color);
+  font-style: italic;
+}
+.sub-text.retry {
+  color: var(--td-warning-color, #b25803);
   font-style: italic;
 }
 </style>

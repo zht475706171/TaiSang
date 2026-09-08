@@ -11,11 +11,14 @@ LLMClient 用 openai SDK,兼容任意 OpenAI 兼容 endpoint。
 from __future__ import annotations
 
 import copy
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
 from .config import LLMConfig
 from .llm_errors import LLMProtocolError, LLMTransientError
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -53,13 +56,23 @@ class LLMClient:
             LLMTransientError: openai SDK 异常(网络/限流/超时等)
             LLMProtocolError: tool_calls 畸形 JSON 或结构异常
         """
-        kwargs: dict[str, Any] = {"model": self.model, "messages": messages, "timeout": 30}
+        kwargs: dict[str, Any] = {"model": self.model, "messages": messages, "timeout": 60}
         if tools:
             kwargs["tools"] = [{"type": "function", "function": t} for t in tools]
         try:
             resp = self._client.chat.completions.create(**kwargs)
         except Exception as e:
             # openai SDK 异常(APIError/RateLimitError/APITimeoutError 等)统一包装
+            # 打原始异常类型 + cause + __cause__,辅助诊断间歇性连接问题
+            cause = getattr(e, "__cause__", None)
+            cause_repr = repr(cause) if cause else "(none)"
+            log.warning(
+                "LLM chat failed: type=%s msg=%s cause=%s",
+                type(e).__name__,
+                e,
+                cause_repr,
+                exc_info=True,
+            )
             raise LLMTransientError(f"LLM API call failed: {e}") from e
 
         msg = resp.choices[0].message

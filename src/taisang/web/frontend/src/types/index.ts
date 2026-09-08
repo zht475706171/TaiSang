@@ -25,6 +25,7 @@ export type MessageKind =
   | 'permission'
   | 'run_error'
   | 'usage'
+  | 'llm_retry'
 
 export interface ChatMessage {
   id: string               // 前端生成 uuid,用于 v-for key
@@ -51,6 +52,9 @@ export interface ChatMessage {
   usage?: UsageData
   // run_error
   error?: string
+  // llm_retry
+  retryAttempt?: number    // 第几次重试(1-based)
+  delaySec?: number        // 几秒后重试
   // Task 14: subagent 事件嵌套渲染
   agentId?: string               // 非空 → 该消息来自子 agent
   subAgentEvents?: ChatMessage[] // 嵌套子事件,挂在 Agent 工具卡片内

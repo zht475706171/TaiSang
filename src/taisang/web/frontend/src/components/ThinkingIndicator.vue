@@ -1,6 +1,9 @@
 <template>
   <div class="thinking">
     <span class="label">thinking</span>
+    <span v-if="retryInfo" class="retry-badge">
+      第 {{ retryInfo.attempt }} 次重试中({{ retryInfo.delaySec.toFixed(1) }}s 后)
+    </span>
     <span class="dots">
       <span></span>
       <span></span>
@@ -8,6 +11,12 @@
     </span>
   </div>
 </template>
+
+<script setup lang="ts">
+defineProps<{
+  retryInfo?: { attempt: number; delaySec: number } | null
+}>()
+</script>
 
 <style scoped>
 .thinking {
@@ -18,6 +27,14 @@
   color: var(--td-text-color-placeholder);
   font-size: 13px;
   font-family: var(--app-font-mono);
+}
+.retry-badge {
+  color: var(--td-warning-color, #b25803);
+  background: var(--td-warning-color-1, #fff3e0);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  border: 1px solid var(--td-warning-color-2, #ffcc80);
 }
 .dots {
   display: inline-flex;

@@ -14,6 +14,9 @@ export function useChatStream(
 ) {
   const messages = ref<ChatMessage[]>([])
   const thinking = ref(false)
+  // LLM 重试状态:call_with_retry 重试前 emit llm_retry,前端在 ThinkingIndicator 旁显示
+  // "第 N 次重试中(Xs 后)"。新事件(tool_call/final_answer/run_end)到来时清掉。
+  const retryInfo = ref<{ attempt: number; delaySec: number } | null>(null)
   const connectionState = ref<'connected' | 'reconnecting' | 'failed'>('connected')
   let eventSource: EventSource | null = null
   let reconnectCount = 0
@@ -30,6 +33,7 @@ export function useChatStream(
 
   function clearThinking() {
     thinking.value = false
+    retryInfo.value = null
   }
 
   function pushUser(text: string) {
@@ -232,6 +236,26 @@ export function useChatStream(
       }
       thinking.value = true
     })
+    eventSource.addEventListener('llm_retry', (e: MessageEvent) => {
+      const d = safeParse<{ attempt: number; error: string; delay_sec: number; agent_id?: string }>(e.data)
+      if (!d) return
+      // 子 agent 重试:嵌套到父卡片(降级:无父则忽略)
+      if (d.agent_id) {
+        const parent = findLastAgentToolCall()
+        if (parent) {
+          pushSubEvent(parent, {
+            id: nextId(),
+            kind: 'llm_retry',
+            retryAttempt: d.attempt,
+            delaySec: d.delay_sec,
+            agentId: d.agent_id,
+          })
+        }
+        return
+      }
+      // 主 agent 重试:更新 retryInfo,ThinkingIndicator 显示"第 N 次重试中"
+      retryInfo.value = { attempt: d.attempt, delaySec: d.delay_sec }
+    })
     eventSource.addEventListener('tool_call', (e: MessageEvent) => {
       const d = safeParse<{ name: string; args: Record<string, unknown>; agent_id?: string }>(e.data)
       if (!d) return
@@ -369,6 +393,7 @@ export function useChatStream(
   return {
     messages,
     thinking,
+    retryInfo,
     connectionState,
     send,
     loadHistory,

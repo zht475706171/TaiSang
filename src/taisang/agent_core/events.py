@@ -31,6 +31,9 @@ USAGE_REPORT = "usage_report"
 # Web UI 异步确认事件:WebConfirmer 被调用时 emit,前端弹卡片,POST /confirm/{token} 回应。
 # CLI chat 路径不 emit(用 default_confirmer 直接 stdin)。
 CONFIRM_REQUEST = "confirm_request"
+# LLM 重试事件:call_with_retry 在重试前 emit,前端 ThinkingIndicator 显示"第 N 次重试中"。
+# payload: {"attempt": int, "error": str, "delay_sec": float}
+LLM_RETRY = "llm_retry"
 
 
 @dataclass
@@ -61,3 +64,5 @@ class AgentEvent:
     #    "cache": {"available": bool, "cached_tokens": int | None}}
     # CONFIRM_REQUEST(仅 Web UI 路径 emit):
     #   {"token": str, "file_path": str, "old": str, "new": str}
+    # LLM_RETRY(call_with_retry 在重试前 emit,每次重试 1 条):
+    #   {"attempt": int, "error": str, "delay_sec": float}

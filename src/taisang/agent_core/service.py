@@ -19,6 +19,7 @@ from pathlib import Path
 from ..compaction.tool_result_budget import ContentReplacementState, enforce_budget
 from ..llm_client import LLMClient, MockLLM
 from ..llm_errors import LLMError, LLMProtocolError, LLMTransientError
+from ..llm_retry import call_with_retry
 from ..skills.listing import format_skill_listing
 from ..skills.types import Skill
 from ..storage.paths import PathManager
@@ -30,6 +31,7 @@ from .events import (
     DEBUG_RESPONSE,
     DEBUG_TOOL_RESULT,
     FINAL_ANSWER,
+    LLM_RETRY,
     LLM_THINKING,
     TOOL_CALL,
     TOOL_RESULT,
@@ -242,7 +244,22 @@ class AgentService:
                     )
                 )
             try:
-                resp = self.llm.chat(messages=self.ctx.messages(), tools=registry.schemas())
+                # LLM 调用包 retry(call_with_retry):对 LLMTransientError(网络/超时/429/5xx)
+                # 按指数退避重试最多 5 次,LLMProtocolError 不重试。on_retry emit LLM_RETRY
+                # 事件,前端 ThinkingIndicator 显示"第 N 次重试中"。
+                resp = call_with_retry(
+                    lambda: self.llm.chat(messages=self.ctx.messages(), tools=registry.schemas()),
+                    on_retry=lambda attempt, err, delay: _emit(
+                        AgentEvent(
+                            type=LLM_RETRY,
+                            payload={
+                                "attempt": attempt,
+                                "error": f"{type(err).__name__}: {err}",
+                                "delay_sec": delay,
+                            },
+                        )
+                    ),
+                )
             except LLMProtocolError as e:
                 self._emit_usage_report(_emit)
                 log.warning("LLM protocol error at step %d: %s", steps, e)

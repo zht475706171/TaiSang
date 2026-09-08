@@ -1,6 +1,6 @@
 <template>
-  <div class="message-list">
-    <ThinkingIndicator v-if="thinking" />
+  <div ref="listRef" class="message-list">
+    <ThinkingIndicator v-if="thinking" :retry-info="retryInfo" />
     <template v-for="m in messages" :key="m.id">
       <div v-if="m.kind === 'user'" class="msg user">{{ m.text }}</div>
       <div v-else-if="m.kind === 'assistant'" class="msg assistant">
@@ -26,16 +26,46 @@
 </template>
 
 <script setup lang="ts">
+import { ref, watch, nextTick, onMounted } from 'vue'
 import type { ChatMessage } from '@/types'
 import ThinkingIndicator from './ThinkingIndicator.vue'
 import ToolCard from './ToolCard.vue'
 import ConfirmCard from './ConfirmCard.vue'
 import UsageLine from './UsageLine.vue'
 
-defineProps<{
+const props = defineProps<{
   messages: ChatMessage[]
   thinking: boolean
+  retryInfo?: { attempt: number; delaySec: number } | null
 }>()
+
+const listRef = ref<HTMLDivElement | null>(null)
+
+function scrollToBottom() {
+  const el = listRef.value
+  if (!el) return
+  el.scrollTop = el.scrollHeight
+}
+
+// 消息列表变化(新增/更新)→ 自动滚到底
+watch(
+  () => props.messages.length,
+  () => nextTick(scrollToBottom),
+)
+
+// thinking 出现也滚(用户发完消息立刻看到 loading 态)
+watch(
+  () => props.thinking,
+  () => nextTick(scrollToBottom),
+)
+
+// retryInfo 出现也滚(重试提示要可见)
+watch(
+  () => props.retryInfo,
+  () => nextTick(scrollToBottom),
+)
+
+onMounted(scrollToBottom)
 
 const emit = defineEmits<{ answer: [token: string, approve: boolean] }>()
 
