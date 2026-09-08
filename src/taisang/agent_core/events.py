@@ -34,6 +34,11 @@ CONFIRM_REQUEST = "confirm_request"
 # LLM 重试事件:call_with_retry 在重试前 emit,前端 ThinkingIndicator 显示"第 N 次重试中"。
 # payload: {"attempt": int, "error": str, "delay_sec": float}
 LLM_RETRY = "llm_retry"
+# LLM 流式 chunk 事件:chat_stream 每收一个 chunk emit,前端累积到"正在流"的 assistant 消息。
+# payload: {"text_delta": str, "reasoning_delta": str, "agent_id": str}
+# 一次 emit 只含一种 delta(另一种为空字符串),前端按非空那个渲染。
+# agent_id: 主 agent 为空,子 agent 用唯一 id(嵌套渲染到父卡片)。
+LLM_CHUNK = "llm_chunk"
 
 
 @dataclass
@@ -66,3 +71,9 @@ class AgentEvent:
     #   {"token": str, "file_path": str, "old": str, "new": str}
     # LLM_RETRY(call_with_retry 在重试前 emit,每次重试 1 条):
     #   {"attempt": int, "error": str, "delay_sec": float}
+    # LLM_CHUNK(chat_stream 每收一个 chunk emit):
+    #   {"text_delta": str, "reasoning_delta": str, "agent_id": str}
+    #   一次 emit 只含一种 delta(另一种为空字符串)
+    # FINAL_ANSWER payload 扩展:
+    #   {"text": str, "interrupted": bool}  # interrupted=True 表示用户主动中断
+    #   前端用 .get("interrupted", False) 兼容历史事件
