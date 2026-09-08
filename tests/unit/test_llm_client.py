@@ -249,3 +249,71 @@ def test_llm_response_reasoning_field_set():
     """LLMResponse.reasoning 可设值(测试 thinking 流用)。"""
     r = LLMResponse(text="answer", tool_calls=[], reasoning="thinking process")
     assert r.reasoning == "thinking process"
+
+
+# --- MockLLM.chat_stream(流式接口)---
+
+from taisang.llm_stream import StreamChunk  # noqa: E402
+
+
+def test_mock_llm_chat_stream_chunks_text():
+    """MockLLM.chat_stream 把 text 拆成 chunk yield,拼回完整 text。"""
+    mock = MockLLM([LLMResponse(text="hello world", tool_calls=[])])
+    chunks = list(mock.chat_stream(messages=[{"role": "user", "content": "hi"}], tools=[]))
+    text = "".join(c.text_delta for c in chunks if c.text_delta)
+    assert text == "hello world"
+    assert chunks[-1].is_final
+
+
+def test_mock_llm_chat_stream_final_chunk_has_tool_calls_and_usage():
+    """最后 chunk 含 tool_calls + usage + is_final。"""
+    mock = MockLLM([
+        LLMResponse(
+            text="ok",
+            tool_calls=[{"id": "tc1", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}],
+            usage={"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        )
+    ])
+    chunks = list(mock.chat_stream(messages=[{"role": "user", "content": "q"}], tools=[]))
+    last = chunks[-1]
+    assert last.is_final is True
+    assert last.tool_calls[0]["function"]["name"] == "read_file"
+    assert last.usage["total_tokens"] == 15
+
+
+def test_mock_llm_chat_stream_records_calls():
+    """chat_stream 也记录调用(deepcopy)。"""
+    mock = MockLLM([LLMResponse(text="ok", tool_calls=[])])
+    list(mock.chat_stream(messages=[{"role": "user", "content": "q"}], tools=[{"name": "grep"}]))
+    assert len(mock.calls) == 1
+    assert mock.calls[0]["messages"][0]["content"] == "q"
+    assert mock.calls[0]["tools"][0]["name"] == "grep"
+
+
+def test_mock_llm_chat_stream_raises_when_run_out():
+    """预设响应用完抛 RuntimeError。"""
+    import pytest
+
+    mock = MockLLM([LLMResponse(text="only", tool_calls=[])])
+    list(mock.chat_stream(messages=[], tools=[]))
+    with pytest.raises(RuntimeError, match="no more mock responses"):
+        list(mock.chat_stream(messages=[], tools=[]))
+
+
+def test_mock_llm_chat_stream_empty_text():
+    """空 text 只 yield final chunk(无 text chunk)。"""
+    mock = MockLLM([LLMResponse(text="", tool_calls=[])])
+    chunks = list(mock.chat_stream(messages=[], tools=[]))
+    assert len(chunks) == 1
+    assert chunks[0].is_final is True
+    assert chunks[0].text_delta == ""
+
+
+def test_mock_llm_chat_stream_reasoning_chunks():
+    """reasoning 字段也拆 chunk yield(测试 thinking 流)。"""
+    mock = MockLLM([LLMResponse(text="answer", tool_calls=[], reasoning="thinking process")])
+    chunks = list(mock.chat_stream(messages=[], tools=[]))
+    reasoning = "".join(c.reasoning_delta for c in chunks if c.reasoning_delta)
+    assert reasoning == "thinking process"
+    text = "".join(c.text_delta for c in chunks if c.text_delta)
+    assert text == "answer"

@@ -137,3 +137,28 @@ class MockLLM:
         if not self._responses:
             raise RuntimeError("no more mock responses prescribed")
         return self._responses.pop(0)
+
+    def chat_stream(self, messages: list[dict], tools: list[dict]):
+        """测试用流式 chat。把预设 LLMResponse 拆成 chunk yield。
+
+        策略:text 和 reasoning 按 chunk_size=5 拆 chunk(模拟流式节奏),
+        tool_calls + usage 放最后 is_final chunk。deepcopy 防 caller mutate。
+
+        Yields: StreamChunk
+        """
+        from .llm_stream import StreamChunk
+
+        self.calls.append({"messages": copy.deepcopy(messages), "tools": copy.deepcopy(tools)})
+        if not self._responses:
+            raise RuntimeError("no more mock responses prescribed")
+        resp = self._responses.pop(0)
+        chunk_size = 5
+        for i in range(0, len(resp.text or ""), chunk_size):
+            yield StreamChunk(text_delta=resp.text[i:i + chunk_size])
+        for i in range(0, len(resp.reasoning or ""), chunk_size):
+            yield StreamChunk(reasoning_delta=resp.reasoning[i:i + chunk_size])
+        yield StreamChunk(
+            tool_calls=resp.tool_calls,
+            usage=resp.usage,
+            is_final=True,
+        )
