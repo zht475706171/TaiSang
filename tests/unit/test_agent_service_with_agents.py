@@ -59,3 +59,32 @@ def test_flush_async_notifications_empty_noop(tmp_path: Path) -> None:
     before = len(svc.ctx.messages())
     svc.flush_async_notifications()
     assert len(svc.ctx.messages()) == before
+
+
+def test_main_loop_flushes_async_notifications_after_tool_results(tmp_path: Path) -> None:
+    """主循环在本轮 tool_result append 完后自动 flush_async_notifications。
+
+    用脚本化 MockLLM:第 1 步调一个无副作用工具(返回 ok),第 2 步给最终答案。
+    在 tool 执行前塞一条 async 通知到队列,验证下轮 LLM 调用时 ctx 含通知 user 消息。
+    """
+    from taisang.agent_core.events import AgentEvent, TOOL_CALL, FINAL_ANSWER
+    llm = MockLLM([
+        LLMResponse(text="", tool_calls=[{
+            "id": "tc1", "type": "function",
+            "function": {"name": "Glob", "arguments": '{"pattern": "*.py"}'}
+        }]),
+        LLMResponse(text="done", tool_calls=[]),
+    ])
+    svc = AgentService(llm=llm, source_root=tmp_path, confirmer=lambda *a, **kw: True)
+    # 在 run 之前塞一条 async 通知
+    svc._pending_async_notifications.append("[子 agent 'explore' 完成]\n找到 utils.py")
+    events: list[AgentEvent] = []
+    answer = svc.run("test query", on_event=lambda e: events.append(e))
+    # 验证通知被 flush 进 ctx(下轮 LLM 看到了)
+    msgs = svc.ctx.messages()
+    has_notification = any(
+        m.get("role") == "user" and "子 agent 'explore' 完成" in str(m.get("content", ""))
+        for m in msgs
+    )
+    assert has_notification, "async 通知应该被 flush 进 ctx"
+    assert answer.text == "done"

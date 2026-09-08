@@ -356,6 +356,9 @@ class AgentService:
             # assistant(tool_calls) 后紧跟 tool 消息,user 注入放最后),由
             # SkillTool 的 pending 队列延迟到这里统一 flush。
             registry.flush_skill_injections()
+            # async 子 agent 完成通知:同样延迟到这里统一 flush(user-role
+            # 消息排在 tool 之后,下轮 LLM 自然看到)。
+            self.flush_async_notifications()
 
             # session memory post-sampling(update 分支):
             # 工具执行完,此时本轮 resp 一定有 tool_calls(无 tool_calls 已在上面的 return 分支)。
