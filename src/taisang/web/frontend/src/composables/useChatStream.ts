@@ -106,6 +106,48 @@ export function useChatStream(
     messages.value.push({ id: nextId(), kind: 'run_error', error })
   }
 
+  // Task 14: 子 agent 事件嵌套渲染辅助函数
+  // 找最后一个 Agent 工具卡片,作为子事件的父容器
+  function findLastAgentToolCall(): ChatMessage | null {
+    for (let i = messages.value.length - 1; i >= 0; i--) {
+      const m = messages.value[i]
+      if (m.kind === 'tool_call' && m.toolName === 'Agent') {
+        if (!m.subAgentEvents) m.subAgentEvents = []
+        return m
+      }
+    }
+    return null
+  }
+
+  // 把子事件 push 到父卡片的嵌套数组
+  function pushSubEvent(parent: ChatMessage, sub: ChatMessage) {
+    if (!parent.subAgentEvents) parent.subAgentEvents = []
+    parent.subAgentEvents.push(sub)
+  }
+
+  // 子 agent tool_result 填充:在父卡片的嵌套数组里找最后一个同名未填的 tool_call
+  function fillSubToolResult(parent: ChatMessage, name: string, preview: string, totalBytes: number) {
+    if (!parent.subAgentEvents) return
+    for (let i = parent.subAgentEvents.length - 1; i >= 0; i--) {
+      const m = parent.subAgentEvents[i]
+      if (m.kind === 'tool_call' && m.toolName === name && !m.toolFilled) {
+        m.toolPreview = preview || '(无输出)'
+        m.toolBytes = totalBytes
+        m.toolFilled = true
+        return
+      }
+    }
+    // 没找到匹配的 tool_call,单独 push 一个 result
+    parent.subAgentEvents.push({
+      id: nextId(),
+      kind: 'tool_result',
+      toolName: name,
+      toolPreview: preview || '(无输出)',
+      toolBytes: totalBytes,
+      toolFilled: true,
+    })
+  }
+
   async function answerConfirm(token: string, approve: boolean) {
     if (!sessionId.value) return
     const m = messages.value.find((x) => x.token === token && (x.kind === 'confirm' || x.kind === 'permission'))
@@ -178,34 +220,94 @@ export function useChatStream(
       }
     }
 
-    eventSource.addEventListener('llm_thinking', () => {
+    eventSource.addEventListener('llm_thinking', (e: MessageEvent) => {
+      const d = safeParse<{ agent_id?: string }>(e.data)
+      // 子 agent thinking:嵌套到父卡片(降级处理:无父则忽略,避免主流闪烁)
+      if (d?.agent_id) {
+        const parent = findLastAgentToolCall()
+        if (parent) {
+          pushSubEvent(parent, { id: nextId(), kind: 'thinking', agentId: d.agent_id })
+        }
+        return
+      }
       thinking.value = true
     })
     eventSource.addEventListener('tool_call', (e: MessageEvent) => {
-      const d = safeParse<{ name: string; args: Record<string, unknown> }>(e.data)
+      const d = safeParse<{ name: string; args: Record<string, unknown>; agent_id?: string }>(e.data)
       if (!d) return
       clearThinking()
+      if (d.agent_id) {
+        // 子 agent 事件:嵌套到最近的 Agent 工具卡片
+        const parent = findLastAgentToolCall()
+        if (parent) {
+          pushSubEvent(parent, {
+            id: nextId(),
+            kind: 'tool_call',
+            toolName: d.name,
+            toolArgs: JSON.stringify(d.args),
+            toolFilled: false,
+            agentId: d.agent_id,
+          })
+          return
+        }
+        // 父卡片缺失(异常),降级到主流
+      }
       pushToolCall(d.name, JSON.stringify(d.args))
     })
     eventSource.addEventListener('tool_result', (e: MessageEvent) => {
-      const d = safeParse<{ name: string; preview: string; total_bytes: number }>(e.data)
+      const d = safeParse<{ name: string; preview: string; total_bytes: number; agent_id?: string }>(e.data)
       if (!d) return
+      if (d.agent_id) {
+        const parent = findLastAgentToolCall()
+        if (parent) {
+          fillSubToolResult(parent, d.name, d.preview, d.total_bytes)
+          return
+        }
+      }
       fillToolResult(d.name, d.preview, d.total_bytes)
     })
     eventSource.addEventListener('final_answer', (e: MessageEvent) => {
-      const d = safeParse<{ text: string }>(e.data)
+      const d = safeParse<{ text: string; agent_id?: string }>(e.data)
       if (!d) return
       clearThinking()
+      if (d.agent_id) {
+        // 子 agent 最终答案:嵌套到父卡片
+        const parent = findLastAgentToolCall()
+        if (parent) {
+          pushSubEvent(parent, {
+            id: nextId(),
+            kind: 'assistant',
+            text: d.text || '',
+            agentId: d.agent_id,
+          })
+          return
+        }
+      }
       pushAssistant(d.text || '')
     })
     eventSource.addEventListener('compacted', (e: MessageEvent) => {
-      const d = safeParse<{ via: string }>(e.data)
+      const d = safeParse<{ via: string; agent_id?: string }>(e.data)
       if (!d) return
+      if (d.agent_id) {
+        const parent = findLastAgentToolCall()
+        if (parent) {
+          pushSubEvent(parent, { id: nextId(), kind: 'compacted', via: d.via, agentId: d.agent_id })
+          return
+        }
+      }
       pushCompacted(d.via)
     })
     eventSource.addEventListener('usage_report', (e: MessageEvent) => {
-      const d = safeParse<UsageData>(e.data)
+      const d = safeParse<UsageData & { agent_id?: string }>(e.data)
       if (!d) return
+      if (d.agent_id) {
+        // 子 agent 用量:嵌套到父卡片,ToolCard 渲染为 "子 agent 用了 N token" 小标注
+        const parent = findLastAgentToolCall()
+        if (parent) {
+          pushSubEvent(parent, { id: nextId(), kind: 'usage', usage: d, agentId: d.agent_id })
+          return
+        }
+      }
       pushUsage(d)
     })
     eventSource.addEventListener('confirm_request', (e: MessageEvent) => {

@@ -190,6 +190,10 @@ class AgentService:
 
         注意:self.ctx 跨 run() 保留,多轮对话有短期记忆;reset() 清空。
         """
+        # Task 14: 保存 on_event 到实例,让子 agent 的 AgentTool 能转发子事件到主 SSE 流。
+        # agent_tool._run_sync 通过 getattr(self, "_last_on_event", None) 拿到 parent_emit。
+        # 不需要清理:下次 run() 会覆盖;无 run 就没有子事件需要转发。
+        self._last_on_event = on_event
         # 重置此轮 token 累加器(session 累计不清,跨 run 保留)
         self._turn_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         self.ctx.append_user(query)

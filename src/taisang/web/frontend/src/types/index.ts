@@ -51,6 +51,9 @@ export interface ChatMessage {
   usage?: UsageData
   // run_error
   error?: string
+  // Task 14: subagent 事件嵌套渲染
+  agentId?: string               // 非空 → 该消息来自子 agent
+  subAgentEvents?: ChatMessage[] // 嵌套子事件,挂在 Agent 工具卡片内
 }
 
 export interface UsageData {

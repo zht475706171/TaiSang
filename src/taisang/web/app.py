@@ -133,7 +133,9 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
                 try:
                     sess.agent.run(
                         req.query,
-                        on_event=lambda e: sess.broker.publish(e.type, e.payload),
+                        # Task 14: 把 agent_id 合并进 payload,前端据 agent_id 路由子事件到
+                        # 对应的 Agent 工具卡片嵌套数组。主 agent 的 agent_id="" 不影响路由。
+                        on_event=lambda e: sess.broker.publish(e.type, {**e.payload, "agent_id": e.agent_id}),
                     )
                 except Exception as e:  # noqa: BLE001
                     log.exception("agent run failed: %s", e)
