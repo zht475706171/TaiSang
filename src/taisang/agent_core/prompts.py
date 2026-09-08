@@ -40,6 +40,12 @@ MCP_SECTION_HEADER = """
 ## MCP 服务器
 """
 
+AGENTS_SECTION_HEADER = """
+
+## 可用 Agents
+
+"""
+
 
 def get_system_prompt() -> str:
     """返回当前生效的主 system prompt:config 自定义 > 代码常量 SYSTEM_PROMPT。"""
@@ -49,13 +55,15 @@ def get_system_prompt() -> str:
     return SYSTEM_PROMPT if override.use_default or not override.value else override.value
 
 
-def build_system_prompt(skills_section: str = "", mcp_section: str = "") -> str:
-    """组装完整 system prompt:基础 prompt(读 config)+ (可选)skills 清单段 + (可选)MCP 能力段。"""
+def build_system_prompt(skills_section: str = "", mcp_section: str = "", agents_section: str = "") -> str:
+    """组装完整 system prompt:基础 prompt + (可选)skills/mcp/agents 清单段。"""
     prompt = get_system_prompt()
     if skills_section:
         prompt += SKILLS_SECTION_HEADER + "\n" + skills_section + "\n"
     if mcp_section:
         prompt += MCP_SECTION_HEADER + "\n" + mcp_section + "\n"
+    if agents_section:
+        prompt += AGENTS_SECTION_HEADER + "\n" + agents_section + "\n"
     return prompt
 
 

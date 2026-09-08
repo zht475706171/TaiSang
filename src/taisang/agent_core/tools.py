@@ -591,6 +591,8 @@ class ToolRegistry:
         skills: list | None = None,
         ctx=None,
         mcp_manager=None,
+        agents: list | None = None,
+        parent_service=None,
     ) -> None:
         if confirmer is None:
             confirmer = AutoDenyConfirmer()
@@ -640,6 +642,19 @@ class ToolRegistry:
             # 伪工具:读取 MCP 资源 / 获取 MCP prompt(无连接 server 时调用会返回错误)
             self._tools["mcp_resource"] = McpResourceTool(mcp_manager)
             self._tools["mcp_prompt"] = McpPromptTool(mcp_manager)
+        # AgentTool:LLM 调用派子 agent。仅当传入 agents + parent_service 时注册
+        # (子 agent 的 ToolRegistry 不传 agents,物理防递归)。
+        # 局部导入避免循环引用(agent_tool.py 从 tools.py 导入 _BaseTool)。
+        self._parent_service = parent_service
+        if agents and parent_service is not None:
+            from .agent_tool import AgentTool
+            self._tools[AgentTool.name] = AgentTool(
+                agents=agents,
+                parent_service=parent_service,
+                source_root=cwd,
+                confirmer=confirmer,
+                mcp_manager=mcp_manager,
+            )
 
     def _sync_cwd(self) -> None:
         """从 shell 拿当前 cwd,同步到所有文件工具。Bash cd 后文件工具跟随。"""
@@ -663,6 +678,14 @@ class ToolRegistry:
         tool = self._tools.get("skill")
         if tool is not None:
             tool.flush()
+
+    def flush_async_notifications(self) -> None:
+        """触发 parent_service 的 async 通知 flush(若有 parent_service)。
+
+        AgentService 主循环在本轮 tool_result 后调用,跟 flush_skill_injections 同位置。
+        """
+        if self._parent_service is not None:
+            self._parent_service.flush_async_notifications()
 
     def call(self, name: str, args: dict) -> dict:
         tool = self._tools.get(name)

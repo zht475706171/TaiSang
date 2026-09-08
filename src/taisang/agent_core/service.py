@@ -124,7 +124,9 @@ class AgentService:
         self._pending_async_notifications: list[str] = []
         skills_section = format_skill_listing(self.skills)
         mcp_section = format_mcp_section(mcp_manager) if mcp_manager else ""
-        self.ctx.append_system(build_system_prompt(skills_section, mcp_section))
+        from ..agents.listing import format_agent_listing
+        agents_section = format_agent_listing(self.agents) if self.agents else ""
+        self.ctx.append_system(build_system_prompt(skills_section, mcp_section, agents_section))
         # session memory post-sampling 计数器:跨 run() 累计工具调用次数。
         self._tool_calls_since_last_extract = 0
         # token 用量累计:跨 run() 累加,reset() 清零。结构同 LLMResponse.usage。
@@ -147,7 +149,9 @@ class AgentService:
         self.ctx = ContextManager(token_budget=self.token_budget, on_append=on_append)
         skills_section = format_skill_listing(self.skills)
         mcp_section = format_mcp_section(self._mcp_manager) if self._mcp_manager else ""
-        self.ctx.append_system(build_system_prompt(skills_section, mcp_section))
+        from ..agents.listing import format_agent_listing
+        agents_section = format_agent_listing(self.agents) if self.agents else ""
+        self.ctx.append_system(build_system_prompt(skills_section, mcp_section, agents_section))
         self.compaction_state = ContentReplacementState()
         self._tool_calls_since_last_extract = 0
         self._session_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
@@ -198,6 +202,8 @@ class AgentService:
             skills=self.skills,
             ctx=self.ctx,
             mcp_manager=self._mcp_manager,
+            agents=self.agents,
+            parent_service=self,
         )
         observations_dir = PathManager.observations_dir(self.source_root)
         transcript_path = self.source_root / ".taisang" / "sessions" / "current.jsonl"
