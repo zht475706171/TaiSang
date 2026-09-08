@@ -102,6 +102,10 @@ class SessionRegistry:
         # 用 skills_api 的共享 helper:同时应用 skills_state.json 的 disabled
         # 状态,保证 UI 上的开关对新会话的 agent 生效。
         skills = load_skills_with_state(self.source_root)
+        # Agent 加载:三源(user/project/system) + agents_state.json 的 disabled 状态
+        # 跟 skill 同构,用 agents.loader 的共享 helper
+        from ..agents.loader import load_agents_with_state
+        agents = load_agents_with_state(self.source_root)
         agent = AgentService(
             llm=llm,
             source_root=self.source_root,
@@ -112,6 +116,7 @@ class SessionRegistry:
             on_append=store.append,
             skills=skills,
             mcp_manager=self._mcp_manager,
+            agents=agents,
         )
         return _Session(
             session_id=session_id,
@@ -331,11 +336,13 @@ class SessionRegistry:
             agent = sess.agent
             # 重新组装 system prompt,保留 skills/mcp 段(与 service.__init__/reset 同逻辑)
             from ..skills.listing import format_skill_listing
+            from ..agents.listing import format_agent_listing
             from ..agent_core.prompts import build_system_prompt, format_mcp_section
 
             skills_section = format_skill_listing(agent.skills)
+            agents_section = format_agent_listing(agent.agents) if agent.agents else ""
             mcp_section = format_mcp_section(agent._mcp_manager) if getattr(agent, "_mcp_manager", None) else ""
-            new_system = build_system_prompt(skills_section, mcp_section)
+            new_system = build_system_prompt(skills_section, mcp_section, agents_section)
             agent.ctx.replace_system_prompt(new_system)
 
 

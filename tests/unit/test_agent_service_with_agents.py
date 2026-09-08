@@ -128,3 +128,29 @@ def test_main_agent_can_dispatch_subagent_via_agent_tool(tmp_path: Path) -> None
         import taisang.agent_core.agent_tool as at_mod2
         import taisang.llm_client
         at_mod2._make_child_llm = lambda parent_llm: parent_llm
+
+
+def test_disabled_agent_not_in_listing(tmp_path: Path) -> None:
+    """disabled agent 不进 system prompt 的 agent 清单。"""
+    from taisang.agents.types import AgentDefinition
+    explore = AgentDefinition(
+        agent_type="explore", when_to_use="搜索",
+        disallowed_tools=["Edit", "Write", "Agent"], max_turns=10,
+        base_dir=tmp_path, system_prompt="You are a search agent.",
+    )
+    explore.disabled = True
+    parent_llm = MockLLM([
+        LLMResponse(text="", tool_calls=[{
+            "id": "tc1", "type": "function",
+            "function": {"name": "Agent", "arguments": '{"description": "x", "prompt": "y", "subagent_type": "explore"}'}
+        }]),
+        LLMResponse(text="explore 禁用了,我直接搜", tool_calls=[]),
+    ])
+    svc = AgentService(
+        llm=parent_llm, source_root=tmp_path, confirmer=lambda *a, **kw: True,
+        agents=[explore],
+    )
+    answer = svc.run("用 explore 搜一下", on_event=None)
+    # 验证 system prompt 不含 explore 清单(disabled 不列出)
+    system_msg = svc.ctx.messages()[0]
+    assert "## 可用 Agents" not in str(system_msg.get("content", ""))
