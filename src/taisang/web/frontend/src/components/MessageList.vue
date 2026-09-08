@@ -1,6 +1,5 @@
 <template>
   <div ref="listRef" class="message-list">
-    <ThinkingIndicator v-if="thinking" :retry-info="retryInfo" :reasoning-text="reasoningText" />
     <template v-for="m in messages" :key="m.id">
       <div v-if="m.kind === 'user'" class="msg user">{{ m.text }}</div>
       <div v-else-if="m.kind === 'assistant'" class="msg assistant">
@@ -22,6 +21,13 @@
         错误: {{ m.error }}
       </div>
     </template>
+    <!-- thinking / stopping 指示器放底部:用户视线在最新消息下方,符合"等待回复出现"的直觉 -->
+    <ThinkingIndicator
+      v-if="thinking || stopping"
+      :stopping="stopping"
+      :retry-info="retryInfo"
+      :reasoning-text="reasoningText"
+    />
   </div>
 </template>
 
@@ -36,6 +42,7 @@ import UsageLine from './UsageLine.vue'
 const props = defineProps<{
   messages: ChatMessage[]
   thinking: boolean
+  stopping?: boolean
   retryInfo?: { attempt: number; delaySec: number } | null
   reasoningText?: string
 }>()
@@ -57,6 +64,12 @@ watch(
 // thinking 出现也滚(用户发完消息立刻看到 loading 态)
 watch(
   () => props.thinking,
+  () => nextTick(scrollToBottom),
+)
+
+// stopping 出现也滚(停止中提示要可见)
+watch(
+  () => props.stopping,
   () => nextTick(scrollToBottom),
 )
 

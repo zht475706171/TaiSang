@@ -24,6 +24,7 @@
         v-else
         :messages="messages"
         :thinking="thinking"
+        :stopping="stopping"
         :retry-info="retryInfo"
         :reasoning-text="reasoningText"
         @answer="handleAnswer"
@@ -35,7 +36,7 @@
       autofocus
       :streaming="thinking"
       @send="handleSend"
-      @stop="handleStop"
+      @stop="stop"
     />
   </div>
 </template>
@@ -48,7 +49,6 @@ import MessageList from '@/components/MessageList.vue'
 import MessageInput from '@/components/MessageInput.vue'
 import { useSessionStore } from '@/stores/session'
 import { resetSession, setDebug } from '@/api/session'
-import { interruptSession } from '@/api/chat'
 import { useChatStream } from '@/composables/useChatStream'
 
 const route = useRoute()
@@ -62,7 +62,7 @@ const currentSession = computed(
 
 // useChatStream 需要一个 ref,用 toRef 把 computed 转 ref
 const sessionIdRef = toRef(currentId)
-const { messages, thinking, retryInfo, reasoningText, connectionState, send, loadHistory, openEventStream, closeEventStream, answerConfirm } =
+const { messages, thinking, stopping, retryInfo, reasoningText, connectionState, send, stop, loadHistory, openEventStream, closeEventStream, answerConfirm } =
   useChatStream(sessionIdRef, () => store.fetchSessions())
 
 watch(
@@ -127,15 +127,6 @@ async function handleSlash(cmd: string) {
 
 async function handleAnswer(token: string, approve: boolean) {
   await answerConfirm(token, approve)
-}
-
-async function handleStop() {
-  if (!currentId.value) return
-  try {
-    await interruptSession(currentId.value)
-  } catch (e) {
-    console.error('interrupt failed:', e)
-  }
 }
 
 async function handleReset() {

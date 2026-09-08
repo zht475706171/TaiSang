@@ -1,6 +1,6 @@
 import { ref, type Ref } from 'vue'
 import type { ChatMessage, HistoryRecord, UsageData } from '@/types'
-import { getHistory, sendMessage, respondConfirm, respondPermission } from '@/api/chat'
+import { getHistory, sendMessage, respondConfirm, respondPermission, interruptSession } from '@/api/chat'
 
 let _idCounter = 0
 function nextId(): string {
@@ -20,6 +20,10 @@ export function useChatStream(
   // 流式状态:正在累积的 assistant 消息 + reasoning 文本
   const streamingMessage = ref<ChatMessage | null>(null)
   const reasoningText = ref('')
+  // stopping:用户点了 stop,后台还在收尾(等 final_answer/run_end)。
+  // 立刻切回发送按钮(thinking=false),但显示"停止中…"提示,final_answer 来了再清。
+  // 对标 Claude Code:前端翻 flag 立刻反馈,不等后端真的停。
+  const stopping = ref(false)
   const connectionState = ref<'connected' | 'reconnecting' | 'failed'>('connected')
   let eventSource: EventSource | null = null
   let reconnectCount = 0
@@ -175,6 +179,18 @@ export function useChatStream(
     } else if (m?.kind === 'permission') {
       await respondPermission(sessionId.value, token, approve)
     }
+  }
+
+  // stop:用户点停止按钮,立刻 thinking=false(按钮切回发送态)+stopping=true(显示停止中)。
+  // POST /interrupt fire-and-forget,不等返回。后台收到 cancel_event 真关 LLM 流,
+  // final_answer(interrupted=true) 来了再 stopping=false。
+  // 对标 Claude Code:前端同步翻 flag 立刻反馈,后台异步收尾。
+  function stop() {
+    if (!sessionId.value) return
+    if (!thinking.value && !stopping.value) return  // 没在跑,忽略
+    thinking.value = false
+    stopping.value = true
+    interruptSession(sessionId.value).catch((e) => console.error('interrupt failed:', e))
   }
 
   function renderHistory(records: HistoryRecord[]) {
@@ -340,6 +356,7 @@ export function useChatStream(
       const d = safeParse<{ text: string; interrupted?: boolean; agent_id?: string }>(e.data)
       if (!d) return
       clearThinking()
+      stopping.value = false  // 后台收尾结束,清停止中状态
       if (d.agent_id) {
         // 子 agent 最终答案:嵌套到父卡片
         const parent = findLastAgentToolCall()
@@ -412,11 +429,13 @@ export function useChatStream(
       if (!d) return
       clearThinking()
       clearStreaming()
+      stopping.value = false
       pushRunError(d.error || '未知错误')
     })
     eventSource.addEventListener('run_end', () => {
       clearThinking()
       clearStreaming()
+      stopping.value = false
     })
     eventSource.addEventListener('session_title_updated', () => {
       if (onTitleUpdated) onTitleUpdated()
@@ -430,6 +449,7 @@ export function useChatStream(
     }
     clearThinking()
     clearStreaming()
+    stopping.value = false
     connectionState.value = 'connected'
     reconnectCount = 0
   }
@@ -457,11 +477,13 @@ export function useChatStream(
   return {
     messages,
     thinking,
+    stopping,
     retryInfo,
     reasoningText,
     streamingMessage,
     connectionState,
     send,
+    stop,
     loadHistory,
     openEventStream,
     closeEventStream,

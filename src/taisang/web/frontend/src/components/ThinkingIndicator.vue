@@ -1,20 +1,25 @@
 <template>
-  <div class="thinking">
-    <span class="label">thinking</span>
+  <div class="thinking" :class="{ stopping }">
+    <span v-if="stopping" class="label stopping-label">停止中…</span>
+    <span v-else class="label">thinking</span>
     <span v-if="retryInfo" class="retry-badge">
       第 {{ retryInfo.attempt }} 次重试中({{ retryInfo.delaySec.toFixed(1) }}s 后)
     </span>
-    <span v-if="reasoningText" class="reasoning">{{ reasoningText }}</span>
-    <span v-else class="dots">
-      <span></span>
-      <span></span>
-      <span></span>
-    </span>
+    <span v-if="stopping" class="stopping-hint">后台正在收尾,可立即发新消息</span>
+    <template v-else>
+      <span v-if="reasoningText" class="reasoning">{{ reasoningText }}</span>
+      <span v-else class="dots">
+        <span></span>
+        <span></span>
+        <span></span>
+      </span>
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
 defineProps<{
+  stopping?: boolean
   retryInfo?: { attempt: number; delaySec: number } | null
   reasoningText?: string
 }>()
@@ -29,6 +34,17 @@ defineProps<{
   color: var(--td-text-color-placeholder);
   font-size: 13px;
   font-family: var(--app-font-mono);
+}
+.thinking.stopping {
+  color: var(--td-warning-color, #b25803);
+}
+.stopping-label {
+  color: var(--td-warning-color, #b25803);
+}
+.stopping-hint {
+  font-size: 12px;
+  color: var(--td-text-color-placeholder);
+  font-style: italic;
 }
 .retry-badge {
   color: var(--td-warning-color, #b25803);
