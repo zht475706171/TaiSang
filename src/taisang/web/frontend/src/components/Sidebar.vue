@@ -37,6 +37,10 @@
         <t-icon name="user-circle" class="menu-icon" />
         <span class="menu-title">Agent 管理</span>
       </div>
+      <div class="menu-item" @click="router.push('/profile')">
+        <t-icon name="user" class="menu-icon" />
+        <span class="menu-title">用户画像</span>
+      </div>
     </nav>
 
     <!-- 唯一滚动区:历史会话 -->

@@ -1,4 +1,5 @@
 import { ref, type Ref } from 'vue'
+import { MessagePlugin } from 'tdesign-vue-next'
 import type { ChatMessage, HistoryRecord, Todo, UsageData } from '@/types'
 import { getHistory, sendMessage, respondConfirm, respondPermission, interruptSession } from '@/api/chat'
 
@@ -333,6 +334,13 @@ export function useChatStream(
       }
       // 主 agent:覆盖式更新顶部 todos
       todos.value = d.todos
+    })
+    eventSource.addEventListener('profile_update', (e: MessageEvent) => {
+      // agent 改了画像,toast 提示(不跳转,不区分主/子 agent)
+      const d = safeParse<{ field?: string; label?: string; content?: string; source?: string }>(e.data)
+      if (!d) return
+      const label = d.label || '画像'
+      MessagePlugin.info(`画像【${label}】已更新`)
     })
     eventSource.addEventListener('tool_call', (e: MessageEvent) => {
       const d = safeParse<{ name: string; args: Record<string, unknown>; agent_id?: string }>(e.data)
