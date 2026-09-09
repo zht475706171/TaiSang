@@ -13,15 +13,6 @@ export interface LLMConfig {
   api_key_set: boolean
 }
 
-export interface Command {
-  name: string
-  description: string
-  argument_hint: string
-  source: 'user' | 'project' | 'system'
-  allowed_tools: string[] | null
-  disabled: boolean
-}
-
 // 消息列表项(前端渲染用,从 SSE 事件 + history records 合并)
 export type MessageKind =
   | 'user'
