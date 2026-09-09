@@ -47,12 +47,19 @@ class UpdateProfileTool(_BaseTool):
                     "field": {
                         "type": "string",
                         "description": "画像栏位",
-                        "enum": ["tech_stack", "code_style", "communication", "environment", "taboos"],
+                        "enum": [
+                            "tech_stack",
+                            "code_style",
+                            "communication",
+                            "environment",
+                            "taboos",
+                        ],
                     },
                     "content": {
                         "type": "string",
                         "description": (
-                            "该栏完整新内容(整栏覆盖)。建议精炼,5 栏总和建议 ≤500 字符,超长注入时截断。"
+                            "该栏完整新内容(整栏覆盖)。建议精炼,"
+                            "5 栏总和建议 ≤500 字符,超长注入时截断。"
                         ),
                     },
                 },
@@ -98,6 +105,9 @@ class UpdateProfileTool(_BaseTool):
             emit(field=field, label=label, content=content, agent_id=self._session_id)
 
         return {
-            "content": f"用户画像【{label}】已更新。将在下次上下文压缩或新会话时生效,当前会话仍用旧画像。",
+            "content": (
+                f"用户画像【{label}】已更新。将在下次上下文压缩或新会话时生效,"
+                "当前会话仍用旧画像。"
+            ),
             "error": None,
         }

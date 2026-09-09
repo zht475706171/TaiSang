@@ -11,7 +11,9 @@ def test_format_empty_profile_returns_empty():
 
 def test_format_partial_profile_skips_empty_fields():
     """部分栏空 → 跳过空栏。"""
-    p = UserProfile(tech_stack="Python/Go", code_style="", communication="中文", environment="", taboos="")
+    p = UserProfile(
+        tech_stack="Python/Go", code_style="", communication="中文", environment="", taboos=""
+    )
     out = format_profile_section(p)
     assert "### 技术栈" in out
     assert "Python/Go" in out
@@ -26,8 +28,11 @@ def test_format_partial_profile_skips_empty_fields():
 def test_format_full_profile_all_sections():
     """5 栏都有 → 全部出现,按顺序。"""
     p = UserProfile(
-        tech_stack="Python", code_style="4 空格", communication="中文",
-        environment="Windows", taboos="别动 main",
+        tech_stack="Python",
+        code_style="4 空格",
+        communication="中文",
+        environment="Windows",
+        taboos="别动 main",
     )
     out = format_profile_section(p)
     # 顺序:技术栈 → 代码风格 → 沟通 → 环境 → 禁忌

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from taisang.user_profile.types import (
     PROFILE_FIELD_LABELS,
-    ProfileFieldKey,
     UserProfile,
 )
 

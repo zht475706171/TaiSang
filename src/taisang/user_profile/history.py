@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +22,7 @@ _MAX_HISTORY = 5
 
 def _now_iso() -> str:
     """ISO8601 带本地时区。"""
-    return datetime.now(timezone.utc).astimezone().isoformat()
+    return datetime.now(UTC).astimezone().isoformat()
 
 
 def _read_all_lines(history_path: Path) -> list[str]:

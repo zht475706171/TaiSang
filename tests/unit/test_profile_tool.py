@@ -29,7 +29,11 @@ def test_tool_schema_has_update_profile_name():
     assert "content" in schema["parameters"]["properties"]
     assert "enum" in schema["parameters"]["properties"]["field"]
     assert set(schema["parameters"]["properties"]["field"]["enum"]) == {
-        "tech_stack", "code_style", "communication", "environment", "taboos",
+        "tech_stack",
+        "code_style",
+        "communication",
+        "environment",
+        "taboos",
     }
 
 
@@ -78,7 +82,9 @@ def test_tool_run_empty_content_clears_field(tmp_path):
     save_profile_field("tech_stack", "Python", source="user", session_id=None, settings_path=sp)
     hp = tmp_path / "history.jsonl"
     parent = MagicMock()
-    tool = UpdateProfileTool(session_id="s", parent_service=parent, settings_path=sp, history_path=hp)
+    tool = UpdateProfileTool(
+        session_id="s", parent_service=parent, settings_path=sp, history_path=hp
+    )
 
     tool.run({"field": "tech_stack", "content": ""})
 

@@ -1,6 +1,7 @@
 """用户画像管理 API:GET / PUT / RESET / ROLLBACK / HISTORY。
 
-画像正文存 settings.json user_profile 段(经 store.py),变更历史存 profile_history.jsonl(经 history.py)。
+画像正文存 settings.json user_profile 段(经 store.py),
+变更历史存 profile_history.jsonl(经 history.py)。
 不广播到活跃 session(画像不即时生效,等各自下次 autocompact 或新会话)。
 """
 

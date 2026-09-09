@@ -10,8 +10,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from taisang.agent_core.context import ContextManager
 from taisang.agent_core.prompts import build_system_prompt
 from taisang.user_profile.format import format_profile_section

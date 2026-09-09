@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from taisang.user_profile.history import (
@@ -9,7 +7,6 @@ from taisang.user_profile.history import (
     read_profile_history,
     rollback_profile,
 )
-
 
 _EMPTY_SNAPSHOT = {
     "tech_stack": "",
@@ -85,15 +82,33 @@ def test_history_missing_file_returns_empty(tmp_path):
 
 def test_history_corrupt_line_skipped(tmp_path):
     """损坏行跳过,不阻塞读。"""
+    import json
+
     hp = tmp_path / "history.jsonl"
+    rec1 = json.dumps(
+        {
+            "ts": "x",
+            "source": "user",
+            "field": "tech_stack",
+            "old": "",
+            "new": "Python",
+            "session_id": None,
+            "snapshot_before": _EMPTY_SNAPSHOT,
+        }
+    )
+    rec2 = json.dumps(
+        {
+            "ts": "y",
+            "source": "user",
+            "field": "code_style",
+            "old": "",
+            "new": "4 空格",
+            "session_id": None,
+            "snapshot_before": {**_EMPTY_SNAPSHOT, "tech_stack": "Python"},
+        }
+    )
     hp.write_text(
-        '{"ts":"x","source":"user","field":"tech_stack","old":"","new":"Python","session_id":null,"snapshot_before":'
-        + str(_EMPTY_SNAPSHOT).replace("'", '"')
-        + '}\n'
-        "THIS IS NOT JSON\n"
-        '{"ts":"y","source":"user","field":"code_style","old":"","new":"4 空格","session_id":null,"snapshot_before":'
-        + str({**_EMPTY_SNAPSHOT, "tech_stack": "Python"}).replace("'", '"')
-        + '}\n',
+        rec1 + "\n" "THIS IS NOT JSON\n" + rec2 + "\n",
         encoding="utf-8",
     )
     records = read_profile_history(hp)
@@ -104,12 +119,22 @@ def test_rollback_uses_last_snapshot_before(tmp_path):
     """回滚用最后一条 snapshot_before。"""
     hp = tmp_path / "history.jsonl"
     append_profile_change(
-        field="tech_stack", old="", new="Python", source="user", session_id=None,
-        snapshot_before=_EMPTY_SNAPSHOT, history_path=hp,
+        field="tech_stack",
+        old="",
+        new="Python",
+        source="user",
+        session_id=None,
+        snapshot_before=_EMPTY_SNAPSHOT,
+        history_path=hp,
     )
     append_profile_change(
-        field="tech_stack", old="Python", new="Go", source="user", session_id=None,
-        snapshot_before={**_EMPTY_SNAPSHOT, "tech_stack": "Python"}, history_path=hp,
+        field="tech_stack",
+        old="Python",
+        new="Go",
+        source="user",
+        session_id=None,
+        snapshot_before={**_EMPTY_SNAPSHOT, "tech_stack": "Python"},
+        history_path=hp,
     )
     rolled_back = rollback_profile(hp)
     assert rolled_back.tech_stack == "Python"  # 回到最后一条变更前的状态
@@ -117,15 +142,33 @@ def test_rollback_uses_last_snapshot_before(tmp_path):
 
 def test_rollback_skips_corrupt_lines(tmp_path):
     """回滚跳过损坏条,用最近可解析的。"""
+    import json
+
     hp = tmp_path / "history.jsonl"
+    rec1 = json.dumps(
+        {
+            "ts": "x",
+            "source": "user",
+            "field": "tech_stack",
+            "old": "",
+            "new": "Python",
+            "session_id": None,
+            "snapshot_before": _EMPTY_SNAPSHOT,
+        }
+    )
+    rec2 = json.dumps(
+        {
+            "ts": "y",
+            "source": "user",
+            "field": "code_style",
+            "old": "",
+            "new": "4 空格",
+            "session_id": None,
+            "snapshot_before": {**_EMPTY_SNAPSHOT, "tech_stack": "Python"},
+        }
+    )
     hp.write_text(
-        '{"ts":"x","source":"user","field":"tech_stack","old":"","new":"Python","session_id":null,"snapshot_before":'
-        + str(_EMPTY_SNAPSHOT).replace("'", '"')
-        + '}\n'
-        "CORRUPT LINE\n"
-        '{"ts":"y","source":"user","field":"code_style","old":"","new":"4 空格","session_id":null,"snapshot_before":'
-        + str({**_EMPTY_SNAPSHOT, "tech_stack": "Python"}).replace("'", '"')
-        + '}\n',
+        rec1 + "\n" "CORRUPT LINE\n" + rec2 + "\n",
         encoding="utf-8",
     )
     rolled_back = rollback_profile(hp)

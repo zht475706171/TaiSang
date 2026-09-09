@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import threading
-from pathlib import Path
 
 from taisang.user_profile.store import (
     load_profile,
