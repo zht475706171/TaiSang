@@ -35,6 +35,15 @@ SYSTEM_PROMPT = """你是一个 coding agent,跟用户对话,帮助用户读写�
 - 完成一步立刻调 TodoWrite 更新状态(把完成的标 completed,下一个标 in_progress)
 - 简单任务(单步读文件回答)不要调 TodoWrite,直接做
 
+用户画像(认识用户):
+- 你的 system prompt 里有"## 用户画像"段,记录用户的技术栈/代码风格/沟通偏好/环境/禁忌
+- 对话中发现用户的明确偏好或禁忌时,调 update_profile({field, content}) 更新对应栏
+  - field: tech_stack / code_style / communication / environment / taboos
+  - content: 该栏完整新内容(整栏覆盖)
+- 何时该调:用户明确表达"我用 X"/"别做 Y"/"我喜欢 Z 风格"等偏好时
+- 何时别调:你推测但用户没明说时(别过度推断)、用户临时性表述时(如"这次用一下 pnpm")
+- 更新在下次上下文压缩或新会话时生效,当前会话不立即生效(不废 prompt cache)
+
 语言:跟用户同语言(中文或英文)。
 """
 
@@ -54,6 +63,11 @@ AGENTS_SECTION_HEADER = """
 
 """
 
+PROFILE_SECTION_HEADER = """
+
+## 用户画像
+"""
+
 
 def get_system_prompt() -> str:
     """返回当前生效的主 system prompt:config 自定义 > 代码常量 SYSTEM_PROMPT。"""
@@ -63,9 +77,19 @@ def get_system_prompt() -> str:
     return SYSTEM_PROMPT if override.use_default or not override.value else override.value
 
 
-def build_system_prompt(skills_section: str = "", mcp_section: str = "", agents_section: str = "") -> str:
-    """组装完整 system prompt:基础 prompt + (可选)skills/mcp/agents 清单段。"""
+def build_system_prompt(
+    skills_section: str = "",
+    mcp_section: str = "",
+    agents_section: str = "",
+    profile_section: str = "",
+) -> str:
+    """组装完整 system prompt:基础 prompt + (可选)画像/skills/mcp/agents 清单段。
+
+    画像段最前(基础 prompt 后),因为画像是用户核心上下文。
+    """
     prompt = get_system_prompt()
+    if profile_section:
+        prompt += PROFILE_SECTION_HEADER + "\n" + profile_section + "\n"
     if skills_section:
         prompt += SKILLS_SECTION_HEADER + "\n" + skills_section + "\n"
     if mcp_section:
