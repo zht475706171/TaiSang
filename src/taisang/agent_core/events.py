@@ -39,6 +39,11 @@ LLM_RETRY = "llm_retry"
 # 一次 emit 只含一种 delta(另一种为空字符串),前端按非空那个渲染。
 # agent_id: 主 agent 为空,子 agent 用唯一 id(嵌套渲染到父卡片)。
 LLM_CHUNK = "llm_chunk"
+# TodoWrite 任务追踪事件:LLM 调 TodoWriteTool 后 emit,前端顶部 sticky 区渲染 todo 列表。
+# payload: {"todos": list[dict]}  全量快照(覆盖式,不是增量)
+# 每个 todo: {"content": str, "status": "pending"|"in_progress"|"completed", "activeForm": str}
+# agent_id: 主 agent 为空(渲染到顶部),子 agent 用 id(嵌套到父 Agent 卡片,不冒泡顶部)。
+TODO_UPDATE = "todo_update"
 
 
 @dataclass

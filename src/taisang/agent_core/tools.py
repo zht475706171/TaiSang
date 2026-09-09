@@ -565,6 +565,92 @@ class BashTool(_BaseTool):
         }
 
 
+class TodoWriteTool(_BaseTool):
+    """任务追踪工具。LLM 主动调用,把任务拆成显式 todo 列表。
+
+    覆盖式更新:每次调用传全量 todos(不是增量)。LLM 负责维护完整状态。
+    observation 自然落盘 jsonl(走 ToolRegistry.call 标准路径),
+    resume 时从最后一条 TodoWrite tool_call 重建。
+
+    service 引用:调 service.todos = new_todos + service._emit_todo_update()。
+    子 agent 的 ToolRegistry 也注册(传 child_service),emit 带 agent_id 嵌套到父卡片。
+    """
+
+    name = "TodoWrite"
+
+    def __init__(self, service) -> None:
+        self._service = service
+
+    def schema(self) -> dict:
+        return {
+            "name": self.name,
+            "description": (
+                "任务追踪工具。复杂任务(3+ 步)用这个把任务拆成显式 todo 列表,"
+                "执行中随时更新状态。用户能看到当前进度、剩余步骤。"
+                "每次调用传全量 todos(覆盖式更新,不是增量)。"
+                "简单任务(单步读文件回答)不需要调。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "todos": {
+                        "type": "array",
+                        "description": "全量 todo 列表(覆盖现有)",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "content": {
+                                    "type": "string",
+                                    "description": "任务描述(简短,祈使句)",
+                                },
+                                "status": {
+                                    "type": "string",
+                                    "enum": ["pending", "in_progress", "completed"],
+                                    "description": (
+                                        "pending=未开始,in_progress=进行中(同时只 1 个),"
+                                        "completed=已完成"
+                                    ),
+                                },
+                                "activeForm": {
+                                    "type": "string",
+                                    "description": "进行中显示的动名词形式(如 '正在读文件'),可选",
+                                },
+                            },
+                            "required": ["content", "status"],
+                        },
+                    },
+                },
+                "required": ["todos"],
+            },
+        }
+
+    def run(self, args: dict) -> dict:
+        todos = args.get("todos", [])
+        if not isinstance(todos, list):
+            return {"error": "todos must be array"}
+        validated: list[dict] = []
+        for i, t in enumerate(todos):
+            if not isinstance(t, dict):
+                return {"error": f"todo[{i}] must be object"}
+            content = t.get("content", "")
+            status = t.get("status", "pending")
+            if not content or not isinstance(content, str):
+                return {"error": f"todo[{i}].content required"}
+            if status not in ("pending", "in_progress", "completed"):
+                return {"error": f"todo[{i}].status invalid: {status}"}
+            validated.append(
+                {
+                    "content": content,
+                    "status": status,
+                    "activeForm": t.get("activeForm", "") or "",
+                }
+            )
+        # 覆盖式更新 service.todos + emit TODO_UPDATE 事件
+        self._service.todos = validated
+        self._service._emit_todo_update(validated)
+        return {"ok": True, "todos": validated, "count": len(validated)}
+
+
 class ToolRegistry:
     """工具注册表 + 调度。
 
@@ -597,6 +683,7 @@ class ToolRegistry:
         agents: list | None = None,
         parent_service=None,
         cancel_event=None,
+        service=None,
     ) -> None:
         if confirmer is None:
             confirmer = AutoDenyConfirmer()
@@ -662,6 +749,10 @@ class ToolRegistry:
         # 用户中断信号:工具执行前检查,set 时抛 InterruptedError。
         # 默认 None(向后兼容,现有调用不受影响)。
         self._cancel_event = cancel_event
+        # TodoWriteTool:LLM 主动调用的任务追踪工具。所有 agent 都注册(主 + 子)。
+        # service 引用:用于存 todos + emit TODO_UPDATE 事件。
+        if service is not None:
+            self._tools[TodoWriteTool.name] = TodoWriteTool(service=service)
 
     def _sync_cwd(self) -> None:
         """从 shell 拿当前 cwd,同步到所有文件工具。Bash cd 后文件工具跟随。"""

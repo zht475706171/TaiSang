@@ -1,5 +1,5 @@
 import { ref, type Ref } from 'vue'
-import type { ChatMessage, HistoryRecord, UsageData } from '@/types'
+import type { ChatMessage, HistoryRecord, Todo, UsageData } from '@/types'
 import { getHistory, sendMessage, respondConfirm, respondPermission, interruptSession } from '@/api/chat'
 
 let _idCounter = 0
@@ -25,6 +25,9 @@ export function useChatStream(
   // 对标 Claude Code:前端翻 flag 立刻反馈,不等后端真的停。
   const stopping = ref(false)
   const connectionState = ref<'connected' | 'reconnecting' | 'failed'>('connected')
+  // TodoWrite:LLM 调 TodoWriteTool 后,顶部 sticky 区渲染 todo 列表。
+  // 主 agent 的 todos 在顶层;子 agent 的 todos 嵌套到 Agent 工具卡片(不冒泡顶部)。
+  const todos = ref<Todo[]>([])
   let eventSource: EventSource | null = null
   let reconnectCount = 0
   const MAX_RECONNECT = 5
@@ -317,6 +320,20 @@ export function useChatStream(
         reasoningText.value = (reasoningText.value || '') + d.reasoning_delta
       }
     })
+    eventSource.addEventListener('todo_update', (e: MessageEvent) => {
+      const d = safeParse<{ todos: Todo[]; agent_id?: string }>(e.data)
+      if (!d) return
+      // 子 agent todo:嵌套到父 Agent 卡片(降级:无父则忽略,不冒泡顶部)
+      if (d.agent_id) {
+        const parent = findLastAgentToolCall()
+        if (parent) {
+          parent.subAgentTodos = d.todos
+        }
+        return
+      }
+      // 主 agent:覆盖式更新顶部 todos
+      todos.value = d.todos
+    })
     eventSource.addEventListener('tool_call', (e: MessageEvent) => {
       const d = safeParse<{ name: string; args: Record<string, unknown>; agent_id?: string }>(e.data)
       if (!d) return
@@ -452,6 +469,7 @@ export function useChatStream(
     stopping.value = false
     connectionState.value = 'connected'
     reconnectCount = 0
+    todos.value = []
   }
 
   async function loadHistory(id: string) {
@@ -482,6 +500,7 @@ export function useChatStream(
     reasoningText,
     streamingMessage,
     connectionState,
+    todos,
     send,
     stop,
     loadHistory,

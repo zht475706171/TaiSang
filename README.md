@@ -17,6 +17,7 @@
 - 权限模型:WebPermissionManager,首次访问新目录问用户批准,批准后该目录树放行
 - 调试模式:`/debug` 打印完整 messages + 工具 observation;`/reset` 清对话上下文(保留 session memory)
 - Token 用量:每轮 + session 累计
+- **任务追踪(TodoWrite)**:LLM 判断任务复杂(3+ 步)时主动调 `TodoWrite({todos: [...]})` 拆解,前端顶部 sticky 区渲染 todo 列表(pending/in_progress/completed 三态 + activeForm 动效),用户随时可见进度。覆盖式更新,observation 自然落盘 jsonl,resume 时从最后一条 TodoWrite 调用重建。对标 Claude Code TodoWrite。
 - **流式输出**:LLM 响应逐 chunk 流式输出(最终答案 text + thinking reasoning),Web 和 CLI 都支持;用户可中断当前 turn(Web 停止按钮 / CLI Ctrl+C),中断后保留半截答案 + `[interrupted]` 标记,上下文保持一致(LLM 阶段补半截 assistant,工具阶段补空 tool_result `{"_interrupted": true}`)
 - **即时中断(对标 Claude Code abort signal)**:cancel 信号贯穿全链路 —— 前端点 stop 立刻切回发送按钮(stopping 状态显示"停止中…"),后端 pump 线程 + Queue 模式让主循环周期检查 cancel,触发时调 `raw_stream.close()` 真关 HTTP 连接(Kimi 服务端停生成),Bash 工具执行中 cancel 则 kill shell + 重启(cwd 从 Python state 保留)。中断延迟 ms 级,不等下一个 chunk 或命令跑完
 
@@ -91,9 +92,9 @@
 - Web 端断线重连(EventSource 断了不会自动续)
 
 **Agent 行为**
-- TodoWrite / 任务列表:无任务追踪 UI
+- ~~TodoWrite / 任务列表:无任务追踪 UI~~ ✅ 已实现(LLM 主动调 `TodoWrite` 工具,顶部 sticky 区渲染,见上方"任务追踪"章节)
 - 图片 / 多模态输入:只支持文本
-- Resume 中断的会话:进程死了会话就死
+- Resume 中断的会话:进程死了会话就死(todos 已支持 resume,从 jsonl 重建)
 - Skill 全文驻内存:几十个无压力,几百个浪费 RAM(v2 改 lazy read)
 
 **工程**
@@ -168,7 +169,7 @@ taisang web --repo .
 ## 测试
 
 ```bash
-pytest tests/ -q       # 248 passed
+pytest tests/ -q       # 532 passed
 ruff check src/ tests/ # 全绿
 black --check src/ tests/ # 全绿
 ```

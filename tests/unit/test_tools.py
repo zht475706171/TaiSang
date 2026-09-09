@@ -288,3 +288,101 @@ def test_tool_registry_call_non_bash_tools_dont_get_cancel_event(tmp_path):
     result = registry.call("read_file", {"path": "nonexistent.py"})
     assert "error" in result
     assert "InterruptedError" not in str(result)
+
+
+def test_todo_write_tool_basic(tmp_path):
+    """TodoWriteTool 基本行为:schema 校验 + 覆盖式更新 service.todos + emit 事件 + return observation。"""
+    from taisang.agent_core.tools import TodoWriteTool, ToolRegistry
+    from taisang.agent_core.events import TODO_UPDATE
+
+    # 用一个最小 fake service 模拟 AgentService 的 todos + _emit_todo_update
+    class FakeService:
+        def __init__(self):
+            self.todos = []
+            self.emitted = []
+        def _emit_todo_update(self, todos, agent_id=""):
+            self.emitted.append((todos, agent_id))
+
+    service = FakeService()
+    tool = TodoWriteTool(service=service)
+
+    # schema 结构校验
+    schema = tool.schema()
+    assert schema["name"] == "TodoWrite"
+    assert schema["parameters"]["properties"]["todos"]["type"] == "array"
+    status_enum = schema["parameters"]["properties"]["todos"]["items"]["properties"]["status"]["enum"]
+    assert set(status_enum) == {"pending", "in_progress", "completed"}
+
+    # 正常调用:覆盖式更新 + emit + return
+    result = tool.run({"todos": [
+        {"content": "读文件", "status": "in_progress", "activeForm": "正在读文件"},
+        {"content": "总结", "status": "pending"},
+    ]})
+    assert result["ok"] is True
+    assert result["count"] == 2
+    assert len(service.todos) == 2
+    assert service.todos[0]["content"] == "读文件"
+    assert service.todos[0]["status"] == "in_progress"
+    assert service.todos[0]["activeForm"] == "正在读文件"
+    assert service.todos[1]["activeForm"] == ""  # 缺省 activeForm 为空串
+    assert len(service.emitted) == 1
+    assert service.emitted[0][0] == service.todos  # emit 全量快照
+    assert service.emitted[0][1] == ""  # 主 agent_id 为空
+
+    # 覆盖式:第二次调用替换整个列表
+    result2 = tool.run({"todos": [{"content": "新任务", "status": "pending"}]})
+    assert result2["count"] == 1
+    assert len(service.todos) == 1
+    assert service.todos[0]["content"] == "新任务"
+    assert len(service.emitted) == 2
+
+    # schema 校验:status 非法
+    bad = tool.run({"todos": [{"content": "x", "status": "invalid"}]})
+    assert "error" in bad
+    # 非法不更新 todos
+    assert len(service.todos) == 1
+    assert len(service.emitted) == 2
+
+    # schema 校验:缺 content
+    bad2 = tool.run({"todos": [{"status": "pending"}]})
+    assert "error" in bad2
+
+    # schema 校验:todos 非数组
+    bad3 = tool.run({"todos": "not array"})
+    assert "error" in bad3
+
+
+def test_tool_registry_registers_todo_write_tool(tmp_path):
+    """ToolRegistry 传 service 时注册 TodoWriteTool,call 能正常调度。"""
+    from taisang.agent_core.tools import ToolRegistry
+    from taisang.agent_core.events import TODO_UPDATE
+
+    class FakeService:
+        def __init__(self):
+            self.todos = []
+            self.emitted = []
+        def _emit_todo_update(self, todos, agent_id=""):
+            self.emitted.append((todos, agent_id))
+
+    service = FakeService()
+    registry = ToolRegistry(cwd=tmp_path, service=service)
+    assert "TodoWrite" in registry._tools  # noqa: SLF001
+
+    # schema 包含 TodoWrite
+    schemas = registry.schemas()
+    names = [s["name"] for s in schemas]
+    assert "TodoWrite" in names
+
+    # call 调度
+    result = registry.call("TodoWrite", {"todos": [{"content": "test", "status": "in_progress"}]})
+    assert result["ok"] is True
+    assert len(service.todos) == 1
+    assert len(service.emitted) == 1
+
+
+def test_tool_registry_without_service_does_not_register_todo_write(tmp_path):
+    """ToolRegistry 不传 service 时不注册 TodoWrite(向后兼容)。"""
+    from taisang.agent_core.tools import ToolRegistry
+
+    registry = ToolRegistry(cwd=tmp_path)
+    assert "TodoWrite" not in registry._tools  # noqa: SLF001

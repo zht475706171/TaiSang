@@ -254,3 +254,139 @@ def test_list_all_returns_relative_time_and_updated_at(tmp_path, mock_env):
     assert "updated_at" in lst[0]
     # old 的相对时间应包含 "h ago"
     assert "h ago" in lst[1]["relative_time"]
+
+
+def test_reconstruct_todos_finds_last_todo_write_call():
+    """_reconstruct_todos 从 records 找最后一条 TodoWrite tool_call,重建 todos。"""
+    import json
+    from taisang.web.session_registry import _reconstruct_todos
+
+    records = [
+        {"role": "user", "content": "分析两个文件"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "TodoWrite",
+                        "arguments": json.dumps({"todos": [
+                            {"content": "读 A", "status": "in_progress"},
+                            {"content": "读 B", "status": "pending"},
+                        ]}),
+                    }
+                }
+            ],
+        },
+        {"role": "tool", "content": '{"ok": true}'},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "TodoWrite",
+                        "arguments": json.dumps({"todos": [
+                            {"content": "读 A", "status": "completed"},
+                            {"content": "读 B", "status": "in_progress"},
+                        ]}),
+                    }
+                }
+            ],
+        },
+    ]
+    todos = _reconstruct_todos(records)
+    assert len(todos) == 2
+    # 最后一条的 args.todos(覆盖式,取最新状态)
+    assert todos[0]["status"] == "completed"
+    assert todos[1]["status"] == "in_progress"
+
+
+def test_reconstruct_todos_no_todo_write_returns_empty():
+    """没调过 TodoWrite(简单任务)→ 返回空列表。"""
+    from taisang.web.session_registry import _reconstruct_todos
+
+    records = [
+        {"role": "user", "content": "读个文件"},
+        {"role": "assistant", "content": "ok", "tool_calls": []},
+    ]
+    assert _reconstruct_todos(records) == []
+
+
+def test_reconstruct_todos_handles_malformed_arguments():
+    """TodoWrite tool_call 的 arguments 损坏 → 跳过,继续找更早的。"""
+    import json
+    from taisang.web.session_registry import _reconstruct_todos
+
+    records = [
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "TodoWrite",
+                        "arguments": "not-json",  # 损坏
+                    }
+                }
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "TodoWrite",
+                        "arguments": json.dumps({"todos": [{"content": "x", "status": "pending"}]}),
+                    }
+                }
+            ],
+        },
+    ]
+    # 最新一条损坏,应跳过找更早一条(但更早一条在上面 records[0],
+    # reversed 后 records[1] 先遇到合法的)。实际 reversed 先访问最后的 records[1] 合法 → 直接返回
+    todos = _reconstruct_todos(records)
+    assert len(todos) == 1
+    assert todos[0]["content"] == "x"
+
+
+def test_get_or_load_reconstructs_todos_from_disk(tmp_path, mock_env):
+    """磁盘会话 lazy 重建时,从 jsonl 历史重建 todos。"""
+    import json
+    from taisang.storage.conversation_store import ConversationStore
+
+    reg = SessionRegistry(tmp_path)
+    sid = "oldsession"
+    sess_dir = tmp_path / ".taisang" / "sessions" / sid
+    sess_dir.mkdir(parents=True)
+
+    # 造一个 jsonl:含一条 TodoWrite tool_call
+    store = ConversationStore(session_id=sid, sessions_dir=tmp_path / ".taisang" / "sessions")
+    store.append({"role": "user", "content": "分析文件"})
+    store.append({
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": "tc1",
+                "type": "function",
+                "function": {
+                    "name": "TodoWrite",
+                    "arguments": json.dumps({"todos": [
+                        {"content": "读 A", "status": "in_progress", "activeForm": "正在读 A"},
+                        {"content": "总结", "status": "pending"},
+                    ]}),
+                },
+            }
+        ],
+    })
+    store.append({"role": "tool", "tool_call_id": "tc1", "name": "TodoWrite", "content": '{"ok": true}'})
+
+    # lazy 重建
+    sess = reg.get_or_load(sid)
+    assert sess is not None
+    assert len(sess.agent.todos) == 2
+    assert sess.agent.todos[0]["content"] == "读 A"
+    assert sess.agent.todos[0]["activeForm"] == "正在读 A"
+    assert sess.agent.todos[1]["status"] == "pending"

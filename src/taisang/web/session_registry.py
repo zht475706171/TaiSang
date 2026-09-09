@@ -177,6 +177,9 @@ class SessionRegistry:
         records = sess.store.load_all()
         if records:
             sess.agent.ctx.load_from_records(records)
+            # 重建 todos:扫最后一条 TodoWrite tool_call,把它的 args.todos 灌回 service.todos。
+            # TodoWrite 是普通 tool_call,observation 自然在 jsonl 里,不需要额外建表。
+            sess.agent.todos = _reconstruct_todos(records)
         # title 优先从 meta.json 读(重启后恢复动态 title);meta 不存在才 fallback id
         meta = sess.store.load_meta()
         if meta is not None and meta.get("title"):
@@ -344,6 +347,34 @@ class SessionRegistry:
             mcp_section = format_mcp_section(agent._mcp_manager) if getattr(agent, "_mcp_manager", None) else ""
             new_system = build_system_prompt(skills_section, mcp_section, agents_section)
             agent.ctx.replace_system_prompt(new_system)
+
+
+def _reconstruct_todos(records: list[dict]) -> list[dict]:
+    """从历史 records 找最后一条 TodoWrite tool_call,重建 todos。
+
+    TodoWrite 是覆盖式更新,最后一条的 args.todos 就是当前状态。
+    找不到 TodoWrite 调用(简单任务没拆 todo)返回空列表。
+
+    records 结构:ConversationStore.load_all() 返回的 dict 列表,
+    assistant 消息带 tool_calls 字段(OpenAI function call 格式)。
+    """
+    import json
+
+    for r in reversed(records):
+        if r.get("role") != "assistant":
+            continue
+        for tc in r.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            if fn.get("name") != "TodoWrite":
+                continue
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            except Exception:
+                continue
+            todos = args.get("todos", [])
+            if isinstance(todos, list):
+                return todos
+    return []
 
 
 def _relative_time(seconds: float) -> str:

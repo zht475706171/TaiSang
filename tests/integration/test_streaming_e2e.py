@@ -260,3 +260,61 @@ def test_e2e_cancel_bash_during_long_command(tmp_path: Path) -> None:
     final = [e for e in events if e.type == FINAL_ANSWER][0]
     assert final.payload["interrupted"] is True
     assert answer.interrupted is True
+
+
+def test_e2e_sse_format_todo_update() -> None:
+    """SSE 编码层:todo_update 事件能被 format_sse 正确编码。"""
+    import json
+    from taisang.web.sse import format_sse
+
+    out = format_sse("todo_update", {"todos": [
+        {"content": "读 A", "status": "in_progress", "activeForm": "正在读 A"},
+        {"content": "读 B", "status": "pending"},
+    ]})
+    assert out.startswith("event: todo_update\n")
+    assert out.endswith("\n\n")
+    data_line = [ln for ln in out.splitlines() if ln.startswith("data: ")][0]
+    payload = json.loads(data_line[6:])
+    assert len(payload["todos"]) == 2
+    assert payload["todos"][0]["status"] == "in_progress"
+    assert payload["todos"][0]["activeForm"] == "正在读 A"
+
+
+def test_e2e_todo_update_event_through_agent_service(tmp_path: Path) -> None:
+    """E2E:AgentService.run 调 TodoWrite → emit TODO_UPDATE 事件 → 前端可消费。
+
+    验证全链路:LLM 调 TodoWrite 工具 → ToolRegistry.call 调度 → TodoWriteTool.run
+    → service._emit_todo_update → on_event 回调收到 TODO_UPDATE 事件。
+    """
+    import json
+    from taisang.agent_core.events import FINAL_ANSWER, TODO_UPDATE, TOOL_CALL
+
+    todo_args = json.dumps({"todos": [
+        {"content": "读 service.py", "status": "in_progress", "activeForm": "正在读 service.py"},
+        {"content": "总结核心逻辑", "status": "pending"},
+        {"content": "对比风格", "status": "pending"},
+    ]})
+    mock = MockLLM([
+        LLMResponse(
+            text="",
+            tool_calls=[{"id": "tc1", "type": "function", "function": {"name": "TodoWrite", "arguments": todo_args}}],
+        ),
+        LLMResponse(text="分析完成", tool_calls=[]),
+    ])
+    service = AgentService(llm=mock, source_root=tmp_path, confirmer=AutoApproveConfirmer())
+    events: list = []
+    service.run("分析 service.py 和 prompts.py 并对比", on_event=lambda e: events.append(e))
+
+    todo_events = [e for e in events if e.type == TODO_UPDATE]
+    assert len(todo_events) == 1
+    assert len(todo_events[0].payload["todos"]) == 3
+    assert todo_events[0].payload["todos"][0]["activeForm"] == "正在读 service.py"
+    assert todo_events[0].agent_id == ""  # 主 agent
+
+    # service.todos 也被更新
+    assert len(service.todos) == 3
+
+    # final_answer 也收到(任务跑完)
+    finals = [e for e in events if e.type == FINAL_ANSWER]
+    assert len(finals) == 1
+    assert finals[0].payload["text"] == "分析完成"

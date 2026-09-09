@@ -65,12 +65,21 @@ export interface ChatMessage {
   // Task 14: subagent 事件嵌套渲染
   agentId?: string               // 非空 → 该消息来自子 agent
   subAgentEvents?: ChatMessage[] // 嵌套子事件,挂在 Agent 工具卡片内
+  // TodoWrite:子 agent todo 嵌套到 Agent 卡片(主 agent 的 todos 在 useChatStream.todos 顶层)
+  subAgentTodos?: Todo[]
 }
 
 export interface UsageData {
   turn: { prompt: number; completion: number; total: number } | null
   session: { prompt: number; completion: number; total: number }
   cache: { available: boolean; cached_tokens: number | null }
+}
+
+// TodoWrite 任务项(LLM 调 TodoWriteTool 后从 todo_update SSE 事件推来)
+export interface Todo {
+  content: string
+  status: 'pending' | 'in_progress' | 'completed'
+  activeForm?: string
 }
 
 // 后端 history record(GET /api/sessions/:id/messages 返回)

@@ -19,6 +19,7 @@
     </div>
 
     <div class="chat-body">
+      <TodoList :todos="todos" />
       <EmptyState v-if="!messages.length" @send="handleEmptySend" />
       <MessageList
         v-else
@@ -47,6 +48,7 @@ import { useRoute, useRouter } from 'vue-router'
 import EmptyState from '@/components/EmptyState.vue'
 import MessageList from '@/components/MessageList.vue'
 import MessageInput from '@/components/MessageInput.vue'
+import TodoList from '@/components/TodoList.vue'
 import { useSessionStore } from '@/stores/session'
 import { resetSession, setDebug } from '@/api/session'
 import { useChatStream } from '@/composables/useChatStream'
@@ -62,7 +64,7 @@ const currentSession = computed(
 
 // useChatStream 需要一个 ref,用 toRef 把 computed 转 ref
 const sessionIdRef = toRef(currentId)
-const { messages, thinking, stopping, retryInfo, reasoningText, connectionState, send, stop, loadHistory, openEventStream, closeEventStream, answerConfirm } =
+const { messages, thinking, stopping, retryInfo, reasoningText, connectionState, todos, send, stop, loadHistory, openEventStream, closeEventStream, answerConfirm } =
   useChatStream(sessionIdRef, () => store.fetchSessions())
 
 watch(

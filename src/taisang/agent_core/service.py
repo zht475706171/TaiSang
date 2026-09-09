@@ -221,6 +221,9 @@ class AgentService:
         # 用户中断信号:每次 run() 新建(避免跨 turn 状态泄漏)。
         # interrupt() set 它,主循环在 chunk / 工具执行前检查,走中断分支。
         self._cancel_event: threading.Event | None = None
+        # TodoWrite 维护的任务列表:LLM 调 TodoWriteTool 覆盖式更新,跨 run() 保留
+        # (用户能看到上一轮的任务状态;reset 清空)。resume 时从 jsonl 重建。
+        self.todos: list[dict] = []
 
     def set_debug(self, on: bool) -> None:
         """REPL /debug 命令切换开关。"""
@@ -234,6 +237,19 @@ class AgentService:
         """
         if self._cancel_event is not None:
             self._cancel_event.set()
+
+    def _emit_todo_update(self, todos: list[dict], agent_id: str = "") -> None:
+        """TodoWriteTool 调用后,通过 _last_on_event emit TODO_UPDATE 事件。
+
+        _last_on_event 是 per-run 的 on_event 回调(run() 开头存到实例),
+        让 TodoWriteTool 能拿到当前 run 的事件流。agent_id 默认空(主 agent),
+        子 agent 传自己的 id(前端嵌套渲染到父 Agent 卡片)。
+        """
+        from .events import AgentEvent, TODO_UPDATE
+
+        on_event = getattr(self, "_last_on_event", None)
+        if on_event is not None:
+            on_event(AgentEvent(type=TODO_UPDATE, payload={"todos": todos}, agent_id=agent_id))
 
     def reset(self) -> None:
         """清空对话上下文 + 重置压缩状态。
@@ -255,6 +271,8 @@ class AgentService:
         self._turn_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         # async 通知队列也清空(reset 清短期状态,通知是短期状态)
         self._pending_async_notifications = []
+        # todos 清空(reset 清短期任务状态,新对话从空开始)
+        self.todos = []
 
     def flush_async_notifications(self) -> None:
         """把 _pending_async_notifications 队列里的通知依次 append_user 注入 ctx 并清空。
@@ -308,6 +326,7 @@ class AgentService:
             agents=self.agents,
             parent_service=self,
             cancel_event=self._cancel_event,
+            service=self,
         )
         observations_dir = PathManager.observations_dir(self.source_root)
         transcript_path = self.source_root / ".taisang" / "sessions" / "current.jsonl"

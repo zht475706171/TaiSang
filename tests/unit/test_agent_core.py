@@ -584,3 +584,73 @@ def test_run_streaming_cancel_closes_raw_stream(tmp_path):
     assert answer.interrupted is True
     # raw stream 被 close(主线程 cancel 逻辑调的)
     assert mock._raw_stream.close_calls >= 1
+
+
+def test_run_emits_todo_update_event(tmp_path):
+    """LLM 调 TodoWrite 工具后,emit TODO_UPDATE 事件 + service.todos 更新。
+
+    验证:TodoWriteTool 通过 service._emit_todo_update → _last_on_event emit 事件,
+    前端能从 SSE 收到 todo_update。
+    """
+    from taisang.agent_core.events import FINAL_ANSWER, TODO_UPDATE, TOOL_CALL
+
+    # MockLLM 第 1 轮调 TodoWrite 拆任务,第 2 轮给最终答案
+    todo_args = json.dumps({"todos": [
+        {"content": "读 service.py", "status": "in_progress", "activeForm": "正在读 service.py"},
+        {"content": "总结核心逻辑", "status": "pending"},
+    ]})
+    mock = MockLLM([
+        LLMResponse(
+            text="",
+            tool_calls=[{"id": "tc1", "type": "function", "function": {"name": "TodoWrite", "arguments": todo_args}}],
+        ),
+        LLMResponse(text="done", tool_calls=[]),
+    ])
+    service = AgentService(llm=mock, source_root=tmp_path, confirmer=AutoApproveConfirmer())
+    events = []
+    service.run("分析 service.py", on_event=lambda e: events.append(e))
+
+    # TODO_UPDATE 事件被 emit
+    todo_events = [e for e in events if e.type == TODO_UPDATE]
+    assert len(todo_events) == 1
+    payload = todo_events[0].payload
+    assert len(payload["todos"]) == 2
+    assert payload["todos"][0]["content"] == "读 service.py"
+    assert payload["todos"][0]["status"] == "in_progress"
+    assert payload["todos"][0]["activeForm"] == "正在读 service.py"
+    assert todo_events[0].agent_id == ""  # 主 agent
+
+    # service.todos 被覆盖式更新
+    assert len(service.todos) == 2
+    assert service.todos[0]["content"] == "读 service.py"
+
+    # ToolCall 事件也发了(LLM 调 TodoWrite)
+    tool_calls = [e for e in events if e.type == TOOL_CALL and e.payload.get("name") == "TodoWrite"]
+    assert len(tool_calls) == 1
+
+
+def test_todo_write_persists_across_runs(tmp_path):
+    """todos 跨 run() 保留(用户能看到上一轮任务状态),reset 清空。"""
+    from taisang.agent_core.events import TODO_UPDATE
+
+    todo_args = json.dumps({"todos": [{"content": "任务1", "status": "in_progress"}]})
+    mock = MockLLM([
+        LLMResponse(
+            text="",
+            tool_calls=[{"id": "tc1", "type": "function", "function": {"name": "TodoWrite", "arguments": todo_args}}],
+        ),
+        LLMResponse(text="ok", tool_calls=[]),
+    ])
+    service = AgentService(llm=mock, source_root=tmp_path, confirmer=AutoApproveConfirmer())
+    service.run("start", on_event=lambda e: None)
+    assert len(service.todos) == 1
+
+    # 第二轮 run(不调 TodoWrite),todos 仍保留
+    mock2 = MockLLM([LLMResponse(text="done", tool_calls=[])])
+    service.llm = mock2
+    service.run("continue", on_event=lambda e: None)
+    assert len(service.todos) == 1  # 保留上一轮
+
+    # reset 清空
+    service.reset()
+    assert service.todos == []
