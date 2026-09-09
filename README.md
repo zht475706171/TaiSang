@@ -77,7 +77,7 @@
 - **前端 `/mcp` 管理页**:server 列表(name / transport / 状态 / 工具数)、增删改、启用/禁用 toggle(禁用真断开,不残留工具暴露)、重连、**三种快速添加**:
   - CLI 一行:`myserver npx -y @some/mcp-server` 或 `myserver --transport sse https://...`
   - JSON 文本:支持 **claude-code `mcpServers` 格式** + TaiSang 单对象/数组/`{servers:[...]}` 三种格式
-  - 文件上传:1MB 上限 + UTF-8 校验
+  - 文件上传:前端 1MB 拦截,读为文本走 JSON 导入路径
   - 同名覆盖,批量导入部分失败不影响其他(返回 added/updated/failed)
 - 安全:name 字符集校验(`/^[A-Za-z0-9][A-Za-z0-9_-]*$/`)+ stdio 必填 command / sse 必填 url
 - Sidebar "MCP 管理" 入口绑定 `/mcp` 路由,真跳转
@@ -85,8 +85,8 @@
 **Web UI** (Vue 3.5 + Vite + TDesign)
 - 多会话列表(Sidebar) / 中对话流(ChatView) / 底一体式输入框(Claude 风格)
 - 工具卡片可折叠 / Markdown 渲染 / 代码高亮
-- SSE 实时事件流(8 种 AgentEvent)
-- LLM 配置页(`/settings`):model / api_key(打码)/ base_url,保存后立即应用到所有活跃 session(MockLLM 实例除外)
+- SSE 实时事件流(15 种 AgentEvent)
+- LLM 配置弹窗(ConfigModal):model / api_key(打码)/ base_url,保存后立即应用到所有活跃 session(MockLLM 实例除外)
 - SPA history 路由:`/chat/:id`、`/skills` 深链刷新不 404
 - Sidebar 入口:新对话、Skill 管理、MCP 管理、Prompt 管理、Agent 管理、用户画像
 
@@ -199,7 +199,7 @@ taisang web --repo .
 
 - **token 用量**:每轮回答后显示此轮 + session 累计 token(cache 命中率因 endpoint 不报告固定 N/A)
 - **/debug 模式**:打印发给 LLM 的完整 messages + 响应 + 工具完整 observation
-- **事件流**:9 种 AgentEvent(含 `LLM_CHUNK` 流式 chunk 事件,text_delta / reasoning_delta),CLI 和 Web UI 共用同一套渲染逻辑
+- **事件流**:15 种 AgentEvent(LLM_THINKING / TOOL_CALL / TOOL_RESULT / FINAL_ANSWER / DOC_WRITTEN / COMPACTED / DEBUG_REQUEST / DEBUG_RESPONSE / DEBUG_TOOL_RESULT / USAGE_REPORT / CONFIRM_REQUEST / LLM_RETRY / LLM_CHUNK / TODO_UPDATE / PROFILE_UPDATE),CLI 和 Web UI 共用同一套渲染逻辑
 - **流式 chunk 事件**:`LLM_CHUNK` 事件实时推送 text_delta / reasoning_delta,前端 streamingMessage / reasoningText 累积渲染;子 agent 的 chunk 嵌套到父 Agent 工具卡片内
 
 ## 测试
