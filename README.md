@@ -32,6 +32,16 @@
 - **前端 Skill 管理页** (`/skills`):表格、来源标签(项目/用户/内置)、启用开关、重载、**导入**(MD 单文件 / zip 目录形式)+ 覆盖确认(同名 409 → confirm → `?overwrite=true`)、**删除**(内置不可删,顺带清 disabled 状态记录)
 - 安全:frontmatter name 字符集校验(`/^[A-Za-z0-9][A-Za-z0-9_-]*$/` 防目录穿越)+ zip-slip 拦截(拒绝绝对路径/`..`/反斜杠/前缀外成员)+ 10MB 上限
 
+**Prompt 管理**
+- 4 份核心 prompt 可前端可视化编辑,持久化到 `~/.taisang/settings.json`:
+  - `system_prompt`:agent 主系统提示
+  - `autocompact_prompt`:autocompact 摘要提示(自定义文本必须含 `{conversation}` 占位符)
+  - `session_memory_template`:session memory 10 章节模板
+  - `session_memory_update_prompt`:session memory 更新提示
+- 每个 prompt 返回 `{current, default, use_default, value}`:可切回默认(use_default)或自定义覆盖
+- `system_prompt` 变更后广播到所有活跃 session,即时生效(其它 key 仅影响新会话)
+- **前端 `/prompts` 管理页**:4 个编辑区 + 重置默认按钮 + Sidebar "Prompt 管理" 入口
+
 **多 Agent 调度(M3)**
 - Agent 工具(`AgentTool`):主 agent 通过 `Agent({subagent_type, prompt, run_in_background})` 派子 agent
 - 4 个内置 agent:`general-purpose` / `explore`(只读) / `plan`(只读) / `verification`(对抗,默认 async)
@@ -83,7 +93,7 @@
 按需求强度排序:
 
 **高频 / 跨项目**
-- **多 agent / subagent 调度**:~~无 orchestrator、无 Task 工具~~ ✅ 已实现(M3,见上方"多 Agent 调度"章节)。剩余缺口:不支持并发多个 Agent 工具调用(同时只 1 个 in-flight),前端 `findLastAgentToolCall` 用"最后一个 Agent 卡片"匹配
+- ~~**多 agent / subagent 调度**:无 orchestrator、无 Task 工具~~ ✅ 已实现(M3 — AgentTool + 4 内置 agent + sync/async + fork + 递归防护 + 前端 /agents 管理页,见上方"多 Agent 调度"章节)
 - ~~**MCP 客户端**:不支持接入第三方 MCP server~~ ✅ 已实现(stdio + sse 两种 transport + tool/resource/prompt 三类资源 + 三种快速导入 + 前端 /mcp 管理页,见上方"MCP 客户端"章节)
 - **流式 LLM 响应**:~~当前等完整 response 才一次性给前端(SSE 是事件层,不是 token 流)~~ ✅ 已实现(逐 chunk `LLM_CHUNK` 事件 + 用户中断,见上方"Agent 核心"章节)
 - **多 skill 批量导入**:importer 现在一个 zip 一个 skill;扩展后可一次导入 N 个(像 superpowers plugin 那样)
