@@ -25,6 +25,10 @@
         <t-icon name="code" class="menu-icon" />
         <span class="menu-title">Skill 管理</span>
       </div>
+      <div class="menu-item" @click="router.push('/commands')">
+        <t-icon name="terminal" class="menu-icon" />
+        <span class="menu-title">Command 管理</span>
+      </div>
       <div class="menu-item" @click="router.push('/mcp')">
         <t-icon name="server" class="menu-icon" />
         <span class="menu-title">MCP 管理</span>

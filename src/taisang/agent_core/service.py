@@ -170,6 +170,7 @@ class AgentService:
         agent_id: str = "",
         is_fork_child: bool = False,
         agents: list | None = None,
+        commands: list | None = None,
     ) -> None:
         self.llm = llm
         self.source_root = source_root
@@ -206,12 +207,20 @@ class AgentService:
         self.agent_id = agent_id
         self.is_fork_child = is_fork_child
         self.agents = agents or []
+        # Slash commands:用户输入 /name args 触发的 prompt 模板。
+        # service 持有列表用于 system prompt 清单;触发由 CLI/Web 入口解析后
+        # 把渲染正文当 user 消息发进来,不走 LLM 工具调用。
+        self.commands = commands or []
         self._pending_async_notifications: list[str] = []
         skills_section = format_skill_listing(self.skills)
         mcp_section = format_mcp_section(mcp_manager) if mcp_manager else ""
         from ..agents.listing import format_agent_listing
         agents_section = format_agent_listing(self.agents) if self.agents else ""
-        self.ctx.append_system(build_system_prompt(skills_section, mcp_section, agents_section))
+        from ..commands.listing import format_command_listing
+        commands_section = format_command_listing(self.commands) if self.commands else ""
+        self.ctx.append_system(
+            build_system_prompt(skills_section, mcp_section, agents_section, commands_section)
+        )
         # session memory post-sampling 计数器:跨 run() 累计工具调用次数。
         self._tool_calls_since_last_extract = 0
         # token 用量累计:跨 run() 累加,reset() 清零。结构同 LLMResponse.usage。
@@ -264,7 +273,11 @@ class AgentService:
         mcp_section = format_mcp_section(self._mcp_manager) if self._mcp_manager else ""
         from ..agents.listing import format_agent_listing
         agents_section = format_agent_listing(self.agents) if self.agents else ""
-        self.ctx.append_system(build_system_prompt(skills_section, mcp_section, agents_section))
+        from ..commands.listing import format_command_listing
+        commands_section = format_command_listing(self.commands) if self.commands else ""
+        self.ctx.append_system(
+            build_system_prompt(skills_section, mcp_section, agents_section, commands_section)
+        )
         self.compaction_state = ContentReplacementState()
         self._tool_calls_since_last_extract = 0
         self._session_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}

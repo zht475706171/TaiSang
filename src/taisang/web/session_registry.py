@@ -106,6 +106,10 @@ class SessionRegistry:
         # 跟 skill 同构,用 agents.loader 的共享 helper
         from ..agents.loader import load_agents_with_state
         agents = load_agents_with_state(self.source_root)
+        # Command 加载:三源(user/project/system) + commands_state.json 的 disabled 状态
+        # 跟 skill/agent 同构,用 commands_api 的共享 helper
+        from .commands_api import load_commands_with_state
+        commands = load_commands_with_state(self.source_root)
         agent = AgentService(
             llm=llm,
             source_root=self.source_root,
@@ -117,6 +121,7 @@ class SessionRegistry:
             skills=skills,
             mcp_manager=self._mcp_manager,
             agents=agents,
+            commands=commands,
         )
         return _Session(
             session_id=session_id,
@@ -345,7 +350,14 @@ class SessionRegistry:
             skills_section = format_skill_listing(agent.skills)
             agents_section = format_agent_listing(agent.agents) if agent.agents else ""
             mcp_section = format_mcp_section(agent._mcp_manager) if getattr(agent, "_mcp_manager", None) else ""
-            new_system = build_system_prompt(skills_section, mcp_section, agents_section)
+            from ..commands.listing import format_command_listing
+
+            commands_section = (
+                format_command_listing(agent.commands) if getattr(agent, "commands", None) else ""
+            )
+            new_system = build_system_prompt(
+                skills_section, mcp_section, agents_section, commands_section
+            )
             agent.ctx.replace_system_prompt(new_system)
 
 

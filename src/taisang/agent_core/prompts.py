@@ -54,6 +54,14 @@ AGENTS_SECTION_HEADER = """
 
 """
 
+COMMANDS_SECTION_HEADER = """
+
+## 可用 Commands
+
+用户输入 /name args 触发预定义 prompt 模板。LLM 会看到渲染后的正文(已替换 $ARGUMENTS)
+作为 user 消息,按指令执行即可。此处仅列清单,用户触发时才注入正文。
+"""
+
 
 def get_system_prompt() -> str:
     """返回当前生效的主 system prompt:config 自定义 > 代码常量 SYSTEM_PROMPT。"""
@@ -63,8 +71,13 @@ def get_system_prompt() -> str:
     return SYSTEM_PROMPT if override.use_default or not override.value else override.value
 
 
-def build_system_prompt(skills_section: str = "", mcp_section: str = "", agents_section: str = "") -> str:
-    """组装完整 system prompt:基础 prompt + (可选)skills/mcp/agents 清单段。"""
+def build_system_prompt(
+    skills_section: str = "",
+    mcp_section: str = "",
+    agents_section: str = "",
+    commands_section: str = "",
+) -> str:
+    """组装完整 system prompt:基础 prompt + (可选)skills/mcp/agents/commands 清单段。"""
     prompt = get_system_prompt()
     if skills_section:
         prompt += SKILLS_SECTION_HEADER + "\n" + skills_section + "\n"
@@ -72,6 +85,8 @@ def build_system_prompt(skills_section: str = "", mcp_section: str = "", agents_
         prompt += MCP_SECTION_HEADER + "\n" + mcp_section + "\n"
     if agents_section:
         prompt += AGENTS_SECTION_HEADER + "\n" + agents_section + "\n"
+    if commands_section:
+        prompt += COMMANDS_SECTION_HEADER + "\n" + commands_section + "\n"
     return prompt
 
 

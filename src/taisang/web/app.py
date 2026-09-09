@@ -127,12 +127,28 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
         if sess.lock.locked():
             raise HTTPException(409, "session busy: previous run still active")
 
+        # 解析 slash command:用户输入 /name args → 渲染 command 正文 → agent.run(rendered)
+        # 前端已 pushUser(req.query) 显示原文,这里 backend 跑渲染后版本。
+        # 内置 /exit /reset /debug 不在此处理(前端走 /api/sessions/:id/reset 等专用路由)。
+        query_to_run = req.query
+        if req.query.startswith("/"):
+            parts = req.query[1:].split(None, 1)
+            if parts:
+                name = parts[0]
+                args = parts[1] if len(parts) > 1 else ""
+                from ..commands.registry import CommandRegistry
+
+                cmd_reg = CommandRegistry(sess.agent.commands)
+                rendered = cmd_reg.render(name, args)
+                if rendered is not None:
+                    query_to_run = rendered
+
         # 后台线程跑 run。on_event 把事件 push 到 broker。
         def _run():
             with sess.lock:
                 try:
                     sess.agent.run(
-                        req.query,
+                        query_to_run,
                         # Task 14: 把 agent_id 合并进 payload,前端据 agent_id 路由子事件到
                         # 对应的 Agent 工具卡片嵌套数组。主 agent 的 agent_id="" 不影响路由。
                         on_event=lambda e: sess.broker.publish(e.type, {**e.payload, "agent_id": e.agent_id}),
@@ -255,6 +271,9 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
 
     from .skills_api import register_skills_routes
     register_skills_routes(app, source_root)
+
+    from .commands_api import register_commands_routes
+    register_commands_routes(app, source_root)
 
     from .agents_api import register_agents_routes
     register_agents_routes(app, source_root)

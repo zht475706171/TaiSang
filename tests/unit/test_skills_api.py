@@ -128,9 +128,19 @@ def test_session_registry_agent_applies_disabled_state(tmp_path, monkeypatch):
     sess = reg.get_or_load(reg.create(title=""))
     commit = next(s for s in sess.agent.skills if s.name == "commit")
     assert commit.disabled is True
-    # disabled skill 不进 system prompt 清单
+    # disabled skill 不进 system prompt 的 Skills 清单段
+    # system prompt 是单条消息(skills/mcp/commands 各段拼接),只取 Skills 段检查
     sys_msgs = [m["content"] for m in sess.agent.ctx.messages() if m["role"] == "system"]
-    assert all("commit" not in c for c in sys_msgs if "可用 Skills" in c)
+    skills_section = ""
+    for c in sys_msgs:
+        if "可用 Skills" in c:
+            # 取 Skills header 到下一个 ## 段之间的内容
+            idx = c.find("可用 Skills")
+            next_section = c.find("\n## ", idx + 10)
+            skills_section = c[idx:next_section] if next_section > 0 else c[idx:]
+            break
+    assert skills_section, "应有 Skills 段"
+    assert "commit" not in skills_section
 
 
 def test_import_md_via_api(tmp_path, monkeypatch):

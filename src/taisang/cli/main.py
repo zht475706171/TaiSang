@@ -37,10 +37,12 @@ from ..agent_core.events import (
 )
 from ..agent_core.permission import CliPermissionManager
 from ..agent_core.service import AgentService
+from ..commands.registry import CommandRegistry
 from ..config import load_config
 from ..llm_client import LLMClient, LLMResponse, MockLLM
 from ..session_memory.service import SessionMemoryService
 from ..storage.paths import PathManager
+from ..web.commands_api import load_commands_with_state
 
 
 def _normalize_path(path: str) -> Path:
@@ -210,10 +212,12 @@ def chat(repo: str, allow_dirs: tuple[str, ...], log_level: str) -> None:
         session_memory=session_mem,
         permission=CliPermissionManager(initial_dirs=allow_paths),
         allow_dirs=allow_paths,
+        commands=load_commands_with_state(source_root),
     )
+    command_registry = CommandRegistry(agent.commands)
 
     click.echo(f"taisang agent @ {source_root}")
-    click.echo("输入 /exit 退出,/reset 清上下文,/debug 切换调试输出")
+    click.echo("输入 /exit 退出,/reset 清上下文,/debug 切换调试输出,/name args 触发 command")
 
     debug_on = False
     while True:
@@ -235,6 +239,17 @@ def chat(repo: str, allow_dirs: tuple[str, ...], log_level: str) -> None:
             agent.set_debug(debug_on)
             click.echo(f"(debug {'ON' if debug_on else 'OFF'})")
             continue
+        # slash command:用户输入 /name args → 渲染 command 正文 → 当 user 消息发
+        # 内置 /exit /reset /debug 已在上面处理,这里查用户 command
+        if query.startswith("/"):
+            parts = query[1:].split(None, 1)
+            name = parts[0]
+            args = parts[1] if len(parts) > 1 else ""
+            rendered = command_registry.render(name, args)
+            if rendered is not None:
+                click.echo(f"(执行 command: /{name}{(' ' + args) if args else ''})")
+                query = rendered  # 当 user 消息发进去
+            # 没命中 → 当普通消息发(对齐现有行为,用户可能就在输入 /path 这种文本)
 
         def _render(evt) -> None:
             if evt.type == LLM_THINKING:
