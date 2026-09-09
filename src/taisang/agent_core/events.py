@@ -44,6 +44,10 @@ LLM_CHUNK = "llm_chunk"
 # 每个 todo: {"content": str, "status": "pending"|"in_progress"|"completed", "activeForm": str}
 # agent_id: 主 agent 为空(渲染到顶部),子 agent 用 id(嵌套到父 Agent 卡片,不冒泡顶部)。
 TODO_UPDATE = "todo_update"
+# 用户画像更新事件:LLM 调 UpdateProfileTool 后 emit,前端 toast「画像【label】已更新」。
+# payload: {"field": str, "label": str, "content": str, "source": "agent"}
+# agent_id: 主 agent 为空,子 agent 用 id(前端 toast 统一「agent」,不区分主子)。
+PROFILE_UPDATE = "profile_update"
 
 
 @dataclass
