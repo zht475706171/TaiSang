@@ -262,6 +262,9 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
     from .prompts_api import register_prompts_routes
     register_prompts_routes(app, registry)
 
+    from .profile_api import register_profile_routes
+    register_profile_routes(app)
+
     from .mcp_api import router as mcp_router
     app.include_router(mcp_router)
 
