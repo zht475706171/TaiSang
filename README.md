@@ -43,14 +43,15 @@
 - **前端 `/prompts` 管理页**:4 个编辑区 + 重置默认按钮 + Sidebar "Prompt 管理" 入口
 
 **用户画像(认识用户)**
-- 5 栏结构化画像(技术栈 / 代码风格 / 沟通 / 环境 / 禁忌)存 `~/.taisang/settings.json`,作为 system prompt 的一部分注入,让 agent 认识用户
-- 数据来源混合:用户前端手写种子 + agent 对话中发现偏好时调 `update_profile({field, content})` 工具增量补充(整栏覆盖)
+- 单栏自由 markdown 画像存 `~/.taisang/settings.json` 的 `user_profile.content`,用 `### 技术栈` / `### 代码风格` / `### 沟通` / `### 环境` / `### 禁忌` 三级标题分段,作为 system prompt 的一部分注入,让 agent 认识用户
+- 数据来源混合:用户前端整篇编辑 + agent 对话中发现偏好时调 `update_profile({content})` 工具更新(整篇覆盖,agent 先从 system prompt 读现有画像,在对应 `###` 标题下换行追加新偏好行,拼接成完整新 content 再写回)
 - **零额外废 prompt cache**:画像更新不碰当前 session 的 system prompt,只在 autocompact(cache 本就全废)和新 session 启动时注入,搭便车生效
 - 变更历史存 `~/.taisang/profile_history.jsonl`,最近 5 条带完整快照,前端可回滚到上一版本
-- 5 栏总和超 500 字符时注入静默截断尾部(存储不截断,存原始)
+- 画像正文超 500 字符时注入静默截断到 500(存储不截断,存原始)
 - 并发安全:`threading.Lock` 串行化 web 线程 + agent 线程的画像写
-- **前端 `/profile` 管理页**:5 栏编辑 + 总字数 + 超限红字 + 恢复上一版本 + 变更历史(最近 5 条,source 标签区分用户/agent/回滚)
-- **SSE `PROFILE_UPDATE` 事件**:agent 调 `update_profile` 后前端 toast「画像【label】已更新」(不区分主/子 agent)
+- **前端 `/profile` 管理页**:单 textarea 整篇编辑 + 总字数 + 恢复默认模板(5 个空标题骨架) + 清空 + 恢复上一版本 + 变更历史(最近 5 条,source 标签区分用户/agent/回滚)
+- **SSE `profile_update` 事件**:agent 调 `update_profile` 后前端 toast「用户画像已更新」(不区分主/子 agent)
+- **旧版兼容**:旧 5 字段格式(tech_stack/code_style/communication/environment/taboos)在加载时自动拼成 `### 标题\n内容` 段迁移到新 content 字段,空字段跳过
 
 **多 Agent 调度(M3)**
 - Agent 工具(`AgentTool`):主 agent 通过 `Agent({subagent_type, prompt, run_in_background})` 派子 agent
@@ -204,7 +205,7 @@ taisang web --repo .
 ## 测试
 
 ```bash
-pytest tests/ -q       # 583 passed(含 6 个 MCP + 8 个 profile 测试文件)
+pytest tests/ -q       # 585 passed(含 6 个 MCP + 8 个 profile 测试文件)
 ruff check src/ tests/ # 全绿
 black --check src/ tests/ # 全绿
 ```

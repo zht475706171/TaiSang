@@ -1,4 +1,4 @@
-"""用户画像管理 API:GET / PUT / RESET / ROLLBACK / HISTORY。
+"""用户画像管理 API:GET / PUT / RESET-DEFAULT / ROLLBACK / HISTORY。
 
 画像正文存 settings.json user_profile 段(经 store.py),
 变更历史存 profile_history.jsonl(经 history.py)。
@@ -16,31 +16,24 @@ from ..user_profile.history import append_profile_change, read_profile_history, 
 from ..user_profile.store import (
     _atomic_write_settings,
     _load_settings_file,
+    clear_profile,
     load_profile,
-    reset_profile_field,
-    save_profile_field,
+    reset_profile_to_default,
+    save_profile_content,
 )
-from ..user_profile.types import ProfileFieldKey, UserProfile
+from ..user_profile.types import UserProfile
 
 
-class ProfileFieldUpdate(BaseModel):
-    """PUT /api/profile 请求体:单栏更新。"""
+class ProfileContentUpdate(BaseModel):
+    """PUT /api/profile 请求体:整篇覆盖。"""
 
-    field: ProfileFieldKey
     content: str
-
-
-class ProfileFieldReset(BaseModel):
-    """POST /api/profile/reset 请求体:单栏清空。"""
-
-    field: ProfileFieldKey
 
 
 def _profile_to_dict(p: UserProfile) -> dict:
     """画像 → 响应 dict(含 total_chars)。"""
     d = p.model_dump()
-    # total_chars:5 栏总和(format_profile_section 截断前)
-    d["total_chars"] = sum(len(v) for v in d.values() if isinstance(v, str))
+    d["total_chars"] = len(p.content or "")
     return d
 
 
@@ -57,17 +50,16 @@ def register_profile_routes(
         return _profile_to_dict(p)
 
     @app.put("/api/profile")
-    async def update_profile(req: ProfileFieldUpdate) -> dict:
-        # field 枚举由 pydantic 校验(非法 → 422)
-        old, snapshot_before = save_profile_field(
-            field=req.field,
+    async def update_profile(req: ProfileContentUpdate) -> dict:
+        """整篇覆盖画像 content。"""
+        old, snapshot_before = save_profile_content(
             content=req.content,
             source="user",
             session_id=None,
             settings_path=settings_path,
         )
         append_profile_change(
-            field=req.field,
+            field="content",
             old=old,
             new=req.content,
             source="user",
@@ -78,16 +70,36 @@ def register_profile_routes(
         p = load_profile(settings_path=settings_path)
         return _profile_to_dict(p)
 
-    @app.post("/api/profile/reset")
-    async def reset_profile(req: ProfileFieldReset) -> dict:
-        old, snapshot_before = reset_profile_field(
-            field=req.field,
+    @app.post("/api/profile/reset-default")
+    async def reset_default() -> dict:
+        """恢复默认模板(5 个空标题骨架)。"""
+        old, snapshot_before = reset_profile_to_default(
             source="user",
             session_id=None,
             settings_path=settings_path,
         )
         append_profile_change(
-            field=req.field,
+            field="content",
+            old=old,
+            new="(default template)",
+            source="user",
+            session_id=None,
+            snapshot_before=snapshot_before,
+            history_path=history_path,
+        )
+        p = load_profile(settings_path=settings_path)
+        return _profile_to_dict(p)
+
+    @app.post("/api/profile/clear")
+    async def clear() -> dict:
+        """清空画像(整篇置空)。"""
+        old, snapshot_before = clear_profile(
+            source="user",
+            session_id=None,
+            settings_path=settings_path,
+        )
+        append_profile_change(
+            field="content",
             old=old,
             new="",
             source="user",
@@ -109,15 +121,17 @@ def register_profile_routes(
         sp = settings_path or (Path.home() / ".taisang" / "settings.json")
         cfg = _load_settings_file(sp)
         # 回滚前的 snapshot(供 history 记录)
-        before = UserProfile(**cfg.get("user_profile", {}))
+        from ..user_profile.store import _extract_content
+
+        before = UserProfile(content=_extract_content(cfg.get("user_profile", {})))
         snapshot_before_rollback = before.model_dump()
         cfg["user_profile"] = rolled_back.model_dump()
         _atomic_write_settings(sp, cfg)
 
         # 追加 rollback history
         append_profile_change(
-            field="*",
-            old="",
+            field="content",
+            old=before.content,
             new="(rollback)",
             source="rollback",
             session_id=None,

@@ -14,7 +14,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from .types import ProfileFieldKey, UserProfile
+from .types import DEFAULT_PROFILE_TEMPLATE, UserProfile
 
 _DEFAULT_SETTINGS_PATH = Path.home() / ".taisang" / "settings.json"
 
@@ -45,48 +45,93 @@ def _atomic_write_settings(settings_path: Path, data: dict) -> None:
     os.replace(tmp, settings_path)
 
 
+def _extract_content(raw: dict) -> str:
+    """从 user_profile 段提取 content 字段,兼容旧版 5 字段格式。
+
+    旧版:{"tech_stack": "Python", "code_style": "...", ...} → 拼成 ### 标题段
+    新版:{"content": "### 技术栈\n..."} → 直接取
+    """
+    if not isinstance(raw, dict):
+        return ""
+    # 新版:有 content 字段
+    if "content" in raw:
+        c = raw.get("content")
+        return c if isinstance(c, str) else ""
+    # 旧版兼容:5 字段拼成 ### 标题段
+    legacy_labels = {
+        "tech_stack": "技术栈",
+        "code_style": "代码风格",
+        "communication": "沟通",
+        "environment": "环境",
+        "taboos": "禁忌",
+    }
+    parts = []
+    for key, label in legacy_labels.items():
+        val = raw.get(key)
+        if isinstance(val, str) and val.strip():
+            parts.append(f"### {label}\n{val}")
+    return "\n\n".join(parts)
+
+
 def load_profile(settings_path: Path | None = None) -> UserProfile:
     """加载画像。损坏/缺失/类型错 → fallback 空 UserProfile。"""
     sp = settings_path or _DEFAULT_SETTINGS_PATH
     raw = _load_settings_file(sp).get("user_profile")
-    if not isinstance(raw, dict):
-        return UserProfile()
+    content = _extract_content(raw if isinstance(raw, dict) else {})
     try:
-        return UserProfile(**raw)
+        return UserProfile(content=content)
     except ValidationError:
         return UserProfile()
 
 
-def save_profile_field(
-    field: ProfileFieldKey,
+def save_profile_content(
     content: str,
     source: str,
     session_id: str | None,
     settings_path: Path | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    """更新单栏,返回 (old_value, snapshot_before)。
+    """整篇覆盖画像 content,返回 (old_content, snapshot_before)。
 
     读-改-写全程持锁,保证原子性。其它段(llm/skills/prompts)原样保留。
     """
     sp = settings_path or _DEFAULT_SETTINGS_PATH
     with _profile_lock:
         cfg = _load_settings_file(sp)
-        profile = UserProfile(**cfg.get("user_profile", {}))
-        old = getattr(profile, field)
-        snapshot_before = profile.model_dump()
-        setattr(profile, field, content)
-        cfg["user_profile"] = profile.model_dump()
+        old_profile = UserProfile(content=_extract_content(cfg.get("user_profile", {})))
+        old = old_profile.content
+        snapshot_before = old_profile.model_dump()
+        new_profile = UserProfile(content=content)
+        cfg["user_profile"] = new_profile.model_dump()
         _atomic_write_settings(sp, cfg)
     return old, snapshot_before
 
 
-def reset_profile_field(
-    field: ProfileFieldKey,
+def reset_profile_to_default(
     source: str,
     session_id: str | None,
     settings_path: Path | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    """清空单栏,语义等同 save_profile_field(field, "", ...)。"""
-    return save_profile_field(
-        field, "", source=source, session_id=session_id, settings_path=settings_path
+    """恢复默认模板(5 个空标题骨架)。
+
+    语义等同 save_profile_content(DEFAULT_PROFILE_TEMPLATE, ...)。
+    """
+    return save_profile_content(
+        DEFAULT_PROFILE_TEMPLATE,
+        source=source,
+        session_id=session_id,
+        settings_path=settings_path,
+    )
+
+
+def clear_profile(
+    source: str,
+    session_id: str | None,
+    settings_path: Path | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """清空画像(整篇置空)。语义等同 save_profile_content("", ...)。"""
+    return save_profile_content(
+        "",
+        source=source,
+        session_id=session_id,
+        settings_path=settings_path,
     )

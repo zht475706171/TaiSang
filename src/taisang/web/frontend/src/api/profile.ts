@@ -1,18 +1,7 @@
 import { apiGet, apiPost, apiPut } from './request'
 
-export type ProfileFieldKey =
-  | 'tech_stack'
-  | 'code_style'
-  | 'communication'
-  | 'environment'
-  | 'taboos'
-
 export interface UserProfile {
-  tech_stack: string
-  code_style: string
-  communication: string
-  environment: string
-  taboos: string
+  content: string
   total_chars: number
 }
 
@@ -30,12 +19,16 @@ export function fetchProfile(): Promise<UserProfile> {
   return apiGet<UserProfile>('/api/profile')
 }
 
-export function saveProfileField(field: ProfileFieldKey, content: string): Promise<UserProfile> {
-  return apiPut<UserProfile>('/api/profile', { field, content })
+export function saveProfileContent(content: string): Promise<UserProfile> {
+  return apiPut<UserProfile>('/api/profile', { content })
 }
 
-export function resetProfileField(field: ProfileFieldKey): Promise<UserProfile> {
-  return apiPost<UserProfile>('/api/profile/reset', { field })
+export function resetProfileToDefault(): Promise<UserProfile> {
+  return apiPost<UserProfile>('/api/profile/reset-default', {})
+}
+
+export function clearProfile(): Promise<UserProfile> {
+  return apiPost<UserProfile>('/api/profile/clear', {})
 }
 
 export function rollbackProfile(): Promise<UserProfile> {

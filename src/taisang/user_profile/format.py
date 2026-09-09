@@ -1,42 +1,26 @@
-"""画像段格式化:5 栏拼接成 system prompt 的 ## 用户画像 段。
+"""画像段格式化:直接返回 content,超 500 截断。
 
-总长超 500 按栏顺序截断尾部(空栏跳过)。全空返回空串。
+content 是用户/agent 用 ### 标题分段的自由 markdown。
+全空(空串或只有空白)返回空串(不注入段)。
 """
 
 from __future__ import annotations
 
-from .types import PROFILE_FIELD_LABELS, ProfileFieldKey, UserProfile
+from .types import UserProfile
 
-# 5 栏总和上限:注入 system prompt 时的 token 预算控制
+# content 上限:注入 system prompt 时的 token 预算控制
 _PROFILE_BUDGET = 500
-
-# 栏顺序(按 ProfileFieldKey 枚举顺序)
-_FIELD_ORDER: tuple[ProfileFieldKey, ...] = (
-    "tech_stack",
-    "code_style",
-    "communication",
-    "environment",
-    "taboos",
-)
 
 
 def format_profile_section(profile: UserProfile) -> str:
     """格式化画像段(不含 ## 用户画像 头,头由 build_system_prompt 加)。
 
-    5 栏按顺序拼接,空栏跳过。总长超 500 按栏顺序截断尾部。全空返回空串。
+    直接返回 content。全空(空串或只有空白)返回空串。
+    超 500 截断到 500。
     """
-    parts: list[str] = []
-    for field in _FIELD_ORDER:
-        content = getattr(profile, field)
-        if content:
-            parts.append(f"### {PROFILE_FIELD_LABELS[field]}\n{content}")
-
-    if not parts:
+    content = (profile.content or "").strip()
+    if not content:
         return ""
-
-    full = "\n\n".join(parts)
-    if len(full) <= _PROFILE_BUDGET:
-        return full
-
-    # 超预算:按栏顺序截断尾部
-    return full[:_PROFILE_BUDGET]
+    if len(content) <= _PROFILE_BUDGET:
+        return content
+    return content[:_PROFILE_BUDGET]

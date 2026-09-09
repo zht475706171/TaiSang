@@ -257,7 +257,7 @@ class AgentService:
             on_event(AgentEvent(type=TODO_UPDATE, payload={"todos": todos}, agent_id=agent_id))
 
     def _emit_profile_update(
-        self, field: str, label: str, content: str, agent_id: str = ""
+        self, content: str, agent_id: str = ""
     ) -> None:
         """UpdateProfileTool 调用后 emit PROFILE_UPDATE 事件,前端 toast。
 
@@ -271,7 +271,7 @@ class AgentService:
             on_event(
                 AgentEvent(
                     type=PROFILE_UPDATE,
-                    payload={"field": field, "label": label, "content": content, "source": "agent"},
+                    payload={"content": content, "source": "agent"},
                     agent_id=agent_id,
                 )
             )

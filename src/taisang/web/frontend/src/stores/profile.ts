@@ -1,12 +1,12 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import {
+  clearProfile,
   fetchProfile,
   fetchProfileHistory,
-  resetProfileField,
+  resetProfileToDefault,
   rollbackProfile,
-  saveProfileField,
-  type ProfileFieldKey,
+  saveProfileContent,
   type ProfileHistoryEntry,
   type UserProfile,
 } from '@/api/profile'
@@ -26,13 +26,18 @@ export const useProfileStore = defineStore('profile', () => {
     }
   }
 
-  async function saveField(field: ProfileFieldKey, content: string) {
-    profile.value = await saveProfileField(field, content)
+  async function save(content: string) {
+    profile.value = await saveProfileContent(content)
     history.value = await fetchProfileHistory()
   }
 
-  async function resetField(field: ProfileFieldKey) {
-    profile.value = await resetProfileField(field)
+  async function resetDefault() {
+    profile.value = await resetProfileToDefault()
+    history.value = await fetchProfileHistory()
+  }
+
+  async function clear() {
+    profile.value = await clearProfile()
     history.value = await fetchProfileHistory()
   }
 
@@ -41,5 +46,5 @@ export const useProfileStore = defineStore('profile', () => {
     history.value = await fetchProfileHistory()
   }
 
-  return { profile, history, loading, load, saveField, resetField, rollback }
+  return { profile, history, loading, load, save, resetDefault, clear, rollback }
 })

@@ -20,16 +20,15 @@ def test_update_profile_tool_emits_profile_update_event(tmp_path):
     def capture_event(evt: AgentEvent):
         events.append(evt)
 
-    # FakeParent 模拟 AgentService 的 _emit_profile_update + _last_on_event
     class FakeParent:
         def __init__(self):
             self._last_on_event = capture_event
 
-        def _emit_profile_update(self, field, label, content, agent_id=""):
+        def _emit_profile_update(self, content, agent_id=""):
             self._last_on_event(
                 AgentEvent(
                     type=PROFILE_UPDATE,
-                    payload={"field": field, "label": label, "content": content, "source": "agent"},
+                    payload={"content": content, "source": "agent"},
                     agent_id=agent_id,
                 )
             )
@@ -41,13 +40,11 @@ def test_update_profile_tool_emits_profile_update_event(tmp_path):
         settings_path=sp,
         history_path=hp,
     )
-    tool.run({"field": "tech_stack", "content": "Python/Go"})
+    tool.run({"content": "### 技术栈\nPython/Go"})
 
     assert len(events) == 1
     assert events[0].type == PROFILE_UPDATE
-    assert events[0].payload["field"] == "tech_stack"
-    assert events[0].payload["label"] == "技术栈"
-    assert events[0].payload["content"] == "Python/Go"
+    assert events[0].payload["content"] == "### 技术栈\nPython/Go"
     assert events[0].payload["source"] == "agent"
     assert events[0].agent_id == "sess1"
 

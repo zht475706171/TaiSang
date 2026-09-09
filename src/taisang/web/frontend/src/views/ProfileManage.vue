@@ -5,34 +5,32 @@
       <p class="hint">
         agent 在对话中发现你的偏好时会自动更新;你也可手动编辑。
         画像注入 system prompt,让 agent 更懂你。
+        用 ### 标题分段(技术栈/代码风格/沟通/环境/禁忌),标题下写自由文本。
       </p>
     </div>
 
     <div v-if="store.loading" class="loading">加载中...</div>
 
-    <div v-else-if="store.profile" class="fields">
-      <div
-        v-for="key in fieldKeys"
-        :key="key"
-        class="field-block"
-      >
-        <div class="field-header">
-          <label>{{ fieldLabels[key] }}</label>
-          <div class="field-actions">
-            <t-button size="small" @click="handleSave(key)" :disabled="!isDirty(key)">
-              保存
-            </t-button>
-            <t-button size="small" variant="text" @click="handleReset(key)">
-              清空
-            </t-button>
-          </div>
+    <div v-else-if="store.profile" class="editor-section">
+      <div class="field-header">
+        <label>画像内容</label>
+        <div class="field-actions">
+          <t-button size="small" @click="handleSave" :disabled="!isDirty">
+            保存
+          </t-button>
+          <t-button size="small" variant="text" @click="handleResetDefault">
+            恢复默认模板
+          </t-button>
+          <t-button size="small" variant="text" theme="danger" @click="handleClear">
+            清空
+          </t-button>
         </div>
-        <t-textarea
-          v-model="drafts[key]"
-          :autosize="{ minRows: 2, maxRows: 6 }"
-          :placeholder="`输入你的${fieldLabels[key]}偏好...`"
-        />
       </div>
+      <t-textarea
+        v-model="draft"
+        :autosize="{ minRows: 10, maxRows: 25 }"
+        placeholder="### 技术栈&#10;Python/Go,偏好 pnpm&#10;&#10;### 代码风格&#10;4 空格缩进,snake_case"
+      />
 
       <div class="total-chars" :class="{ over: totalChars > 500 }">
         总字数:{{ totalChars }} / 500
@@ -59,12 +57,11 @@
           <div v-for="(rec, idx) in [...store.history].reverse()" :key="idx" class="history-item">
             <div class="history-meta">
               <span class="source-tag" :class="`source-${rec.source}`">{{ sourceLabel(rec.source) }}</span>
-              <span class="field-name">{{ fieldLabel(rec.field) }}</span>
               <span class="ts">{{ formatTs(rec.ts) }}</span>
             </div>
             <div class="history-diff">
-              <div v-if="rec.old" class="old">旧:{{ rec.old }}</div>
-              <div class="new">新:{{ rec.new }}</div>
+              <div v-if="rec.old" class="old">旧:{{ truncate(rec.old, 80) }}</div>
+              <div class="new">新:{{ truncate(rec.new, 80) }}</div>
             </div>
           </div>
         </div>
@@ -74,61 +71,49 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { useProfileStore } from '@/stores/profile'
-import type { ProfileFieldKey } from '@/api/profile'
 
 const store = useProfileStore()
 
-const fieldKeys: ProfileFieldKey[] = [
-  'tech_stack', 'code_style', 'communication', 'environment', 'taboos',
-]
-const fieldLabels: Record<ProfileFieldKey, string> = {
-  tech_stack: '技术栈',
-  code_style: '代码风格',
-  communication: '沟通',
-  environment: '环境',
-  taboos: '禁忌',
+const draft = ref('')
+
+const totalChars = computed(() => draft.value.length)
+
+function isDirty(): boolean {
+  return draft.value !== (store.profile?.content || '')
 }
 
-const drafts = reactive<Record<ProfileFieldKey, string>>({
-  tech_stack: '',
-  code_style: '',
-  communication: '',
-  environment: '',
-  taboos: '',
-})
-
-const totalChars = computed(() =>
-  fieldKeys.reduce((sum, k) => sum + (drafts[k]?.length || 0), 0)
-)
-
-function isDirty(key: ProfileFieldKey): boolean {
-  return drafts[key] !== (store.profile?.[key] || '')
+function syncDraft() {
+  draft.value = store.profile?.content || ''
 }
 
-function syncDrafts() {
-  if (!store.profile) return
-  for (const k of fieldKeys) {
-    drafts[k] = store.profile[k] || ''
-  }
-}
-
-async function handleSave(key: ProfileFieldKey) {
+async function handleSave() {
   try {
-    await store.saveField(key, drafts[key])
+    await store.save(draft.value)
     MessagePlugin.success('已保存,当前会话下次压缩时生效;新会话立即生效')
   } catch {
     MessagePlugin.error('保存失败')
   }
 }
 
-async function handleReset(key: ProfileFieldKey) {
-  if (!confirm(`确认清空【${fieldLabels[key]}】栏?`)) return
+async function handleResetDefault() {
+  if (!confirm('确认恢复默认模板?当前内容将被覆盖(可回滚)。')) return
   try {
-    await store.resetField(key)
-    drafts[key] = ''
+    await store.resetDefault()
+    syncDraft()
+    MessagePlugin.success('已恢复默认模板')
+  } catch {
+    MessagePlugin.error('恢复失败')
+  }
+}
+
+async function handleClear() {
+  if (!confirm('确认清空所有画像内容?')) return
+  try {
+    await store.clear()
+    syncDraft()
     MessagePlugin.success('已清空')
   } catch {
     MessagePlugin.error('清空失败')
@@ -139,7 +124,7 @@ async function handleRollback() {
   if (!confirm('确认恢复到上一版本?当前画像将被覆盖。')) return
   try {
     await store.rollback()
-    syncDrafts()
+    syncDraft()
     MessagePlugin.success('已恢复到上一版本')
   } catch {
     MessagePlugin.error('恢复失败:无可用历史版本')
@@ -153,11 +138,6 @@ function sourceLabel(s: string): string {
   return s
 }
 
-function fieldLabel(f: string): string {
-  if (f === '*') return '整体'
-  return (fieldLabels as Record<string, string>)[f] || f
-}
-
 function formatTs(ts: string): string {
   try {
     return new Date(ts).toLocaleString()
@@ -166,9 +146,15 @@ function formatTs(ts: string): string {
   }
 }
 
+function truncate(s: string, n: number): string {
+  if (!s) return '(空)'
+  if (s.length <= n) return s
+  return s.slice(0, n) + '...'
+}
+
 onMounted(async () => {
   await store.load()
-  syncDrafts()
+  syncDraft()
 })
 </script>
 
@@ -185,9 +171,6 @@ onMounted(async () => {
   color: var(--td-text-color-secondary);
   font-size: 13px;
   margin: 0 0 24px;
-}
-.field-block {
-  margin-bottom: 20px;
 }
 .field-header {
   display: flex;
