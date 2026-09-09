@@ -2,7 +2,7 @@
 
 > 简化版 Claude Code / Trae —— 一个能读写、修改、调试代码的交互式 coding agent。
 
-**当前状态:v0.1(REPL + Web UI 双入口,带 Skill 系统 + 多 Agent 调度 + MCP 客户端)**
+**当前状态:v0.1(REPL + Web UI 双入口,带 Skill 系统 + 多 Agent 调度 + MCP 客户端 + 用户画像)**
 
 ## 功能
 
@@ -42,6 +42,16 @@
 - `system_prompt` 变更后广播到所有活跃 session,即时生效(其它 key 仅影响新会话)
 - **前端 `/prompts` 管理页**:4 个编辑区 + 重置默认按钮 + Sidebar "Prompt 管理" 入口
 
+**用户画像(认识用户)**
+- 5 栏结构化画像(技术栈 / 代码风格 / 沟通 / 环境 / 禁忌)存 `~/.taisang/settings.json`,作为 system prompt 的一部分注入,让 agent 认识用户
+- 数据来源混合:用户前端手写种子 + agent 对话中发现偏好时调 `update_profile({field, content})` 工具增量补充(整栏覆盖)
+- **零额外废 prompt cache**:画像更新不碰当前 session 的 system prompt,只在 autocompact(cache 本就全废)和新 session 启动时注入,搭便车生效
+- 变更历史存 `~/.taisang/profile_history.jsonl`,最近 5 条带完整快照,前端可回滚到上一版本
+- 5 栏总和超 500 字符时注入静默截断尾部(存储不截断,存原始)
+- 并发安全:`threading.Lock` 串行化 web 线程 + agent 线程的画像写
+- **前端 `/profile` 管理页**:5 栏编辑 + 总字数 + 超限红字 + 恢复上一版本 + 变更历史(最近 5 条,source 标签区分用户/agent/回滚)
+- **SSE `PROFILE_UPDATE` 事件**:agent 调 `update_profile` 后前端 toast「画像【label】已更新」(不区分主/子 agent)
+
 **多 Agent 调度(M3)**
 - Agent 工具(`AgentTool`):主 agent 通过 `Agent({subagent_type, prompt, run_in_background})` 派子 agent
 - 4 个内置 agent:`general-purpose` / `explore`(只读) / `plan`(只读) / `verification`(对抗,默认 async)
@@ -77,7 +87,7 @@
 - SSE 实时事件流(8 种 AgentEvent)
 - LLM 配置页(`/settings`):model / api_key(打码)/ base_url,保存后立即应用到所有活跃 session(MockLLM 实例除外)
 - SPA history 路由:`/chat/:id`、`/skills` 深链刷新不 404
-- Sidebar 入口:新对话、Skill 管理、MCP 管理、Prompt 管理、Agent 管理
+- Sidebar 入口:新对话、Skill 管理、MCP 管理、Prompt 管理、Agent 管理、用户画像
 
 **CLI** (`taisang chat`)
 - REPL 交互
@@ -165,7 +175,7 @@ taisang web --repo .
 - 多会话隔离,会话标题从首条消息自动生成
 - 异步文件确认(改文件时弹卡片,允许/拒绝)
 - `/reset` `/debug` 按钮,token 用量底部小字
-- SSE 实时事件流 + SPA history 路由(`/chat/:id`、`/skills`、`/mcp`、`/agents`、`/prompts` 深链刷新不 404)
+- SSE 实时事件流 + SPA history 路由(`/chat/:id`、`/skills`、`/mcp`、`/agents`、`/prompts`、`/profile` 深链刷新不 404)
 
 ## 工具集
 
@@ -194,7 +204,7 @@ taisang web --repo .
 ## 测试
 
 ```bash
-pytest tests/ -q       # 532 passed(含 6 个 MCP 测试文件)
+pytest tests/ -q       # 583 passed(含 6 个 MCP + 8 个 profile 测试文件)
 ruff check src/ tests/ # 全绿
 black --check src/ tests/ # 全绿
 ```
