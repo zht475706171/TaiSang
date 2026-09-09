@@ -2,7 +2,7 @@
 
 > 简化版 Claude Code / Trae —— 一个能读写、修改、调试代码的交互式 coding agent。
 
-**当前状态:v0.1(REPL + Web UI 双入口,带 Skill 系统 + 多 Agent 调度)**
+**当前状态:v0.1(REPL + Web UI 双入口,带 Skill 系统 + 多 Agent 调度 + MCP 客户端)**
 
 ## 功能
 
@@ -45,13 +45,29 @@
 - token 双层:子 agent 单独 emit `USAGE_REPORT`(`agent_id` 非空),同时 `_merge_child_usage` 累加进主 session 累计
 - 递归防护:子 agent `ToolRegistry` 构造时 `agents=[]` 物理不注册 `AgentTool`;`is_fork_child` flag 阻止 fork-in-fork
 
+**MCP 客户端(对标 Claude Code MCP)**
+- 接入第三方 MCP server,把其暴露的 tool / resource / prompt 注入 agent 工具体系
+- 两种 transport:`stdio`(本地子进程,command/args/env)+ `sse`(HTTP+SSE,url/headers);用官方 `mcp` SDK,真 handshake(initialize)→ 能力拉取 → 调用全链路
+- 三类资源接入 ToolRegistry:
+  - 每个 MCP tool 注册成 `MCPTool`,命名 `mcp__<server>__<tool>`,LLM 调用走 `manager.call_tool()`
+  - `mcp_resource(server, uri)` 统一工具读资源
+  - `mcp_prompt(server, name, args)` 获取 prompt 模板内容
+- 配置 CRUD + 连接生命周期:`MCPManager` 单例(线程安全双重检查锁),配置持久化到 `~/.taisang/mcp_servers.json`(原子写 + chmod 0o600),状态机 connected/disconnected/failed/disabled
+- **前端 `/mcp` 管理页**:server 列表(name / transport / 状态 / 工具数)、增删改、启用/禁用 toggle(禁用真断开,不残留工具暴露)、重连、**三种快速添加**:
+  - CLI 一行:`myserver npx -y @some/mcp-server` 或 `myserver --transport sse https://...`
+  - JSON 文本:支持 **claude-code `mcpServers` 格式** + TaiSang 单对象/数组/`{servers:[...]}` 三种格式
+  - 文件上传:1MB 上限 + UTF-8 校验
+  - 同名覆盖,批量导入部分失败不影响其他(返回 added/updated/failed)
+- 安全:name 字符集校验(`/^[A-Za-z0-9][A-Za-z0-9_-]*$/`)+ stdio 必填 command / sse 必填 url
+- Sidebar "MCP 管理" 入口绑定 `/mcp` 路由,真跳转
+
 **Web UI** (Vue 3.5 + Vite + TDesign)
 - 多会话列表(Sidebar) / 中对话流(ChatView) / 底一体式输入框(Claude 风格)
 - 工具卡片可折叠 / Markdown 渲染 / 代码高亮
 - SSE 实时事件流(8 种 AgentEvent)
 - LLM 配置页(`/settings`):model / api_key(打码)/ base_url,保存后立即应用到所有活跃 session(MockLLM 实例除外)
 - SPA history 路由:`/chat/:id`、`/skills` 深链刷新不 404
-- Sidebar 入口:新对话、Skill 管理(active)、MCP 管理(占位)
+- Sidebar 入口:新对话、Skill 管理、MCP 管理、Prompt 管理、Agent 管理
 
 **CLI** (`taisang chat`)
 - REPL 交互
@@ -68,7 +84,7 @@
 
 **高频 / 跨项目**
 - **多 agent / subagent 调度**:~~无 orchestrator、无 Task 工具~~ ✅ 已实现(M3,见上方"多 Agent 调度"章节)。剩余缺口:不支持并发多个 Agent 工具调用(同时只 1 个 in-flight),前端 `findLastAgentToolCall` 用"最后一个 Agent 卡片"匹配
-- **MCP 客户端**:Sidebar 那个 server 图标是占位;不支持接入第三方 MCP server 的 tool/resource/prompt(stdio/sse/http 传输都没有)
+- ~~**MCP 客户端**:不支持接入第三方 MCP server~~ ✅ 已实现(stdio + sse 两种 transport + tool/resource/prompt 三类资源 + 三种快速导入 + 前端 /mcp 管理页,见上方"MCP 客户端"章节)
 - **流式 LLM 响应**:~~当前等完整 response 才一次性给前端(SSE 是事件层,不是 token 流)~~ ✅ 已实现(逐 chunk `LLM_CHUNK` 事件 + 用户中断,见上方"Agent 核心"章节)
 - **多 skill 批量导入**:importer 现在一个 zip 一个 skill;扩展后可一次导入 N 个(像 superpowers plugin 那样)
 
@@ -86,7 +102,6 @@
 - skill 描述超 250 字符的完整渲染:被 listing 预算截断,只能调工具看完整
 
 **Web UI**
-- Sidebar "MCP 管理" 入口点击无反应
 - 暗色主题 / 主题切换
 - 移动端适配
 - Web 端断线重连(EventSource 断了不会自动续)
@@ -140,7 +155,7 @@ taisang web --repo .
 - 多会话隔离,会话标题从首条消息自动生成
 - 异步文件确认(改文件时弹卡片,允许/拒绝)
 - `/reset` `/debug` 按钮,token 用量底部小字
-- SSE 实时事件流 + SPA history 路由(`/chat/:id`、`/skills` 深链刷新不 404)
+- SSE 实时事件流 + SPA history 路由(`/chat/:id`、`/skills`、`/mcp`、`/agents`、`/prompts` 深链刷新不 404)
 
 ## 工具集
 
@@ -169,7 +184,7 @@ taisang web --repo .
 ## 测试
 
 ```bash
-pytest tests/ -q       # 532 passed
+pytest tests/ -q       # 532 passed(含 6 个 MCP 测试文件)
 ruff check src/ tests/ # 全绿
 black --check src/ tests/ # 全绿
 ```
