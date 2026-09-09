@@ -43,6 +43,8 @@ from .events import (
 )
 from .permission import AutoApprovePermissionManager, PermissionManager
 from .prompts import build_system_prompt, format_mcp_section
+from ..user_profile.format import format_profile_section
+from ..user_profile.store import load_profile
 from .tools import ToolRegistry
 
 log = logging.getLogger(__name__)
@@ -211,7 +213,10 @@ class AgentService:
         mcp_section = format_mcp_section(mcp_manager) if mcp_manager else ""
         from ..agents.listing import format_agent_listing
         agents_section = format_agent_listing(self.agents) if self.agents else ""
-        self.ctx.append_system(build_system_prompt(skills_section, mcp_section, agents_section))
+        profile_section = format_profile_section(load_profile())
+        self.ctx.append_system(
+            build_system_prompt(skills_section, mcp_section, agents_section, profile_section)
+        )
         # session memory post-sampling 计数器:跨 run() 累计工具调用次数。
         self._tool_calls_since_last_extract = 0
         # token 用量累计:跨 run() 累加,reset() 清零。结构同 LLMResponse.usage。
@@ -251,6 +256,26 @@ class AgentService:
         if on_event is not None:
             on_event(AgentEvent(type=TODO_UPDATE, payload={"todos": todos}, agent_id=agent_id))
 
+    def _emit_profile_update(
+        self, field: str, label: str, content: str, agent_id: str = ""
+    ) -> None:
+        """UpdateProfileTool 调用后 emit PROFILE_UPDATE 事件,前端 toast。
+
+        对标 _emit_todo_update:通过 _last_on_event 回调发事件。
+        agent_id 默认空(主 agent),子 agent 传自己的 id(前端 toast 统一「agent」)。
+        """
+        from .events import AgentEvent, PROFILE_UPDATE
+
+        on_event = getattr(self, "_last_on_event", None)
+        if on_event is not None:
+            on_event(
+                AgentEvent(
+                    type=PROFILE_UPDATE,
+                    payload={"field": field, "label": label, "content": content, "source": "agent"},
+                    agent_id=agent_id,
+                )
+            )
+
     def reset(self) -> None:
         """清空对话上下文 + 重置压缩状态。
 
@@ -264,7 +289,10 @@ class AgentService:
         mcp_section = format_mcp_section(self._mcp_manager) if self._mcp_manager else ""
         from ..agents.listing import format_agent_listing
         agents_section = format_agent_listing(self.agents) if self.agents else ""
-        self.ctx.append_system(build_system_prompt(skills_section, mcp_section, agents_section))
+        profile_section = format_profile_section(load_profile())
+        self.ctx.append_system(
+            build_system_prompt(skills_section, mcp_section, agents_section, profile_section)
+        )
         self.compaction_state = ContentReplacementState()
         self._tool_calls_since_last_extract = 0
         self._session_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
@@ -614,6 +642,8 @@ class AgentService:
                     ),
                 }
                 self.ctx.replace_messages([boundary, summary_msg], compaction_via="session_memory")
+                # 画像搭便车:autocompact 已废 cache,顺手重注入最新画像
+                self._reinject_profile_into_system()
                 _emit(AgentEvent(type=COMPACTED, payload={"via": "session_memory"}))
                 return True
 
@@ -622,8 +652,24 @@ class AgentService:
 
         new_msgs = do_autocompact(self.ctx.messages(), self.llm, transcript_path)
         self.ctx.replace_messages(new_msgs, compaction_via="llm")
+        # 画像搭便车:autocompact 已废 cache,顺手重注入最新画像
+        self._reinject_profile_into_system()
         _emit(AgentEvent(type=COMPACTED, payload={"via": "llm"}))
         return True
+
+    def _reinject_profile_into_system(self) -> None:
+        """autocompact 后重注入最新画像(搭便车,cache 本就废了)。
+
+        重建完整 system prompt(基础 + 画像 + skills + mcp + agents),
+        通过 ctx.replace_system_prompt 覆盖。
+        """
+        skills_section = format_skill_listing(self.skills)
+        mcp_section = format_mcp_section(self._mcp_manager) if self._mcp_manager else ""
+        from ..agents.listing import format_agent_listing
+        agents_section = format_agent_listing(self.agents) if self.agents else ""
+        profile_section = format_profile_section(load_profile())
+        new_system = build_system_prompt(skills_section, mcp_section, agents_section, profile_section)
+        self.ctx.replace_system_prompt(new_system)
 
     def _maybe_trigger_session_memory(self, last_turn_has_tool_calls: bool) -> None:
         """session memory post-sampling:检查阈值,达标就异步触发后台 extract。

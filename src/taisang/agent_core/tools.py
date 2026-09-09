@@ -753,6 +753,14 @@ class ToolRegistry:
         # service 引用:用于存 todos + emit TODO_UPDATE 事件。
         if service is not None:
             self._tools[TodoWriteTool.name] = TodoWriteTool(service=service)
+            # UpdateProfileTool:LLM 发现用户偏好时调,更新画像某一栏。
+            # service 引用:用于 emit PROFILE_UPDATE 事件(前端 toast)。
+            # agent_id 用 getattr 兜底(测试 FakeService 可能没此属性)。
+            from ..user_profile.tool import UpdateProfileTool
+            self._tools[UpdateProfileTool.name] = UpdateProfileTool(
+                session_id=getattr(service, "agent_id", ""),
+                parent_service=service,
+            )
 
     def _sync_cwd(self) -> None:
         """从 shell 拿当前 cwd,同步到所有文件工具。Bash cd 后文件工具跟随。"""
