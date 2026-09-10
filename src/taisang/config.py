@@ -23,6 +23,18 @@ class LLMConfig(BaseModel):
     debug: bool = False
 
 
+class SubAgentLLMConfig(BaseModel):
+    """子 agent LLM 配置。enabled=false 或 model/base_url 空时 fallback 主 LLMConfig。
+
+    api_key 允许空(本地 endpoint 如 ollama 不需要 key)。
+    无 debug 字段(debug 是主 agent 行为,跟 LLM endpoint 无关)。
+    """
+    enabled: bool = False
+    base_url: str = ""
+    api_key: str = ""
+    model: str = ""
+
+
 def _settings_path() -> Path:
     return Path.home() / ".taisang" / "settings.json"
 
@@ -82,6 +94,37 @@ def mask_api_key(key: str) -> str:
     if len(key) <= 8:
         return "***"
     return f"{key[:3]}***{key[-4:]}"
+
+
+def load_subagent_config() -> SubAgentLLMConfig:
+    """加载子 agent LLM 配置。settings.json 的 llm_subagent 字段 > 默认(全空 + enabled=false)。
+
+    损坏文件 fallback 到默认(复用 _load_settings_file 的容错)。
+    """
+    raw = _load_settings_file().get("llm_subagent", {})
+    if not isinstance(raw, dict):
+        return SubAgentLLMConfig()
+    return SubAgentLLMConfig(
+        enabled=bool(raw.get("enabled", False)),
+        base_url=str(raw.get("base_url", "")),
+        api_key=str(raw.get("api_key", "")),
+        model=str(raw.get("model", "")),
+    )
+
+
+def save_subagent_config(cfg: SubAgentLLMConfig) -> None:
+    """原子写 settings.json 的 llm_subagent 字段,保留 llm/prompts/skills 等其他字段。权限 600。"""
+    p = _settings_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    existing = _load_settings_file()
+    existing["llm_subagent"] = cfg.model_dump()
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+    try:
+        os.chmod(tmp, 0o600)
+    except OSError:
+        pass  # Windows 无 chmod
+    os.replace(tmp, p)
 
 
 class SkillsConfig(BaseModel):

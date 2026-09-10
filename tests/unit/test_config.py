@@ -155,3 +155,49 @@ def test_save_config_preserves_debug_false(tmp_path, monkeypatch):
     p = tmp_path / ".taisang" / "settings.json"
     data = json.loads(p.read_text(encoding="utf-8"))
     assert data["llm"]["debug"] is False
+
+
+def test_load_subagent_config_default(tmp_path, monkeypatch):
+    """默认 enabled=false,字段空。"""
+    _isolate_home(tmp_path, monkeypatch)
+    _clear_llm_env(monkeypatch)
+    from taisang.config import load_subagent_config
+    cfg = load_subagent_config()
+    assert cfg.enabled is False
+    assert cfg.base_url == ""
+    assert cfg.api_key == ""
+    assert cfg.model == ""
+
+
+def test_save_subagent_config_writes_field(tmp_path, monkeypatch):
+    """save_subagent_config 写 llm_subagent 字段。"""
+    _isolate_home(tmp_path, monkeypatch)
+    _clear_llm_env(monkeypatch)
+    from taisang.config import SubAgentLLMConfig, save_subagent_config
+    cfg = SubAgentLLMConfig(enabled=True, base_url="https://api.x.com", api_key="sk-sub", model="glm-4.5")
+    save_subagent_config(cfg)
+    p = tmp_path / ".taisang" / "settings.json"
+    data = json.loads(p.read_text(encoding="utf-8"))
+    assert data["llm_subagent"]["enabled"] is True
+    assert data["llm_subagent"]["base_url"] == "https://api.x.com"
+    assert data["llm_subagent"]["api_key"] == "sk-sub"
+    assert data["llm_subagent"]["model"] == "glm-4.5"
+
+
+def test_save_subagent_config_preserves_other_fields(tmp_path, monkeypatch):
+    """save_subagent_config 保留 llm/prompts 等其他字段。"""
+    _isolate_home(tmp_path, monkeypatch)
+    _clear_llm_env(monkeypatch)
+    p = tmp_path / ".taisang" / "settings.json"
+    p.parent.mkdir(parents=True)
+    p.write_text(json.dumps({
+        "llm": {"base_url": "https://main", "api_key": "sk-main", "model": "m-main"},
+        "prompts": {"system_prompt": {"value": "x", "use_default": False}},
+    }))
+    from taisang.config import SubAgentLLMConfig, save_subagent_config
+    save_subagent_config(SubAgentLLMConfig(enabled=True, base_url="https://sub", api_key="sk-sub", model="m-sub"))
+    data = json.loads(p.read_text(encoding="utf-8"))
+    assert data["llm"]["base_url"] == "https://main"  # 保留
+    assert data["prompts"]["system_prompt"]["value"] == "x"  # 保留
+    assert data["llm_subagent"]["enabled"] is True  # 新增
+    assert data["llm_subagent"]["base_url"] == "https://sub"
