@@ -111,8 +111,17 @@ class ReadFileTool(_BaseTool):
     # 持久化 Read 结果到文件再被 LLM 读回是循环,永不持久化。
     # 对齐 claude-code FileReadTool.ts:342 maxResultSizeChars: Infinity。
     max_result_size_chars = float("inf")
+    # 默认读(不传 limit)时的字节闸门。文件 > 256KB 返回 error 提示用 offset+limit,
+    # 不截断(对齐 claude-code readFileInRange.ts:95-102 抛 FileTooLargeError)。
+    # 传了 limit 时不受此闸门,按行读(由 LLM 自己控制读取范围)。
+    _DEFAULT_READ_MAX_BYTES = 256 * 1024
 
-    def __init__(self, cwd: Path, permission: PermissionManager, max_bytes: int = 32_000) -> None:
+    def __init__(
+        self,
+        cwd: Path,
+        permission: PermissionManager,
+        max_bytes: int = _DEFAULT_READ_MAX_BYTES,
+    ) -> None:
         self.cwd = cwd
         self.permission = permission
         self.max_bytes = max_bytes
@@ -137,7 +146,8 @@ class ReadFileTool(_BaseTool):
                     "limit": {
                         "type": "integer",
                         "description": (
-                            "读多少行。不传则读全部(受 32KB 字节闸门);" "传了则按行读,不受字节闸门"
+                            "读多少行。不传则读全部(文件 > 256KB 时返回 error 提示用 offset+limit);"
+                            "传了则按行读,不受 256KB 字节闸门"
                         ),
                     },
                 },
@@ -172,13 +182,22 @@ class ReadFileTool(_BaseTool):
                 }
             # 没传 limit,走字节闸门
             data = text.encode("utf-8", errors="replace")
-            truncated = False
             if len(data) > self.max_bytes:
-                data = data[: self.max_bytes]
-                truncated = True
+                # 文件太大,不截断,返回 error 让 LLM 下一轮用 offset+limit 重读。
+                # 对齐 claude-code FileTooLargeError(不截断,直接拒绝)。
+                return {
+                    "content": "",
+                    "truncated": False,
+                    "total_lines": total_lines,
+                    "offset": offset,
+                    "error": (
+                        f"file too large: {len(data):,} bytes > {self.max_bytes:,} bytes. "
+                        f"use offset + limit to read a specific range."
+                    ),
+                }
             return {
                 "content": data.decode("utf-8", errors="replace"),
-                "truncated": truncated,
+                "truncated": False,
                 "total_lines": total_lines,
                 "offset": offset,
                 "error": None,

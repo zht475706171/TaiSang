@@ -433,3 +433,53 @@ def test_write_tool_max_result_size_chars_100k(tmp_path):
 
     tool = WriteTool(cwd=tmp_path, permission=_perm(tmp_path), confirmer=AutoDenyConfirmer())
     assert tool.max_result_size_chars == 100_000
+
+
+def test_read_file_tool_throws_file_too_large_over_256kb(tmp_path):
+    """文件 > 256KB 默认读(不传 limit)时,不截断,返回 error 提示用 offset+limit。
+
+    对齐 claude-code readFileInRange.ts:95-102 抛 FileTooLargeError 行为。
+    TaiSang 不抛 Python 异常(会破坏 tool dispatch),改返回 dict observation
+    带 error 字段,LLM 见到 error 会下一轮用 offset+limit 重读。
+    """
+    big_file = tmp_path / "big.txt"
+    big_file.write_text("x" * (300 * 1024), encoding="utf-8")  # 300KB
+    tool = ReadFileTool(cwd=tmp_path, permission=_perm(tmp_path))
+    result = tool.run({"path": "big.txt"})
+    assert result["content"] == ""
+    assert "file too large" in result["error"].lower()
+    assert "offset" in result["error"].lower() or "limit" in result["error"].lower()
+    assert result.get("truncated") is False  # 没截断,是 error
+
+
+def test_read_file_tool_under_256kb_reads_full(tmp_path):
+    """文件 < 256KB 默认读时,原样读全文(不截断)。"""
+    small_file = tmp_path / "small.txt"
+    small_file.write_text("y" * (200 * 1024), encoding="utf-8")  # 200KB
+    tool = ReadFileTool(cwd=tmp_path, permission=_perm(tmp_path))
+    result = tool.run({"path": "small.txt"})
+    assert result["error"] is None
+    assert result["truncated"] is False
+    assert len(result["content"]) == 200 * 1024
+
+
+def test_read_file_tool_256kb_boundary_passes(tmp_path):
+    """文件正好 256KB 边界应该能读(> 256KB 才报错,256KB 本身 OK)。"""
+    boundary_file = tmp_path / "boundary.txt"
+    boundary_file.write_text("z" * (256 * 1024), encoding="utf-8")
+    tool = ReadFileTool(cwd=tmp_path, permission=_perm(tmp_path))
+    result = tool.run({"path": "boundary.txt"})
+    assert result["error"] is None
+    assert result["truncated"] is False
+
+
+def test_read_file_tool_with_limit_bypasses_256kb_gate(tmp_path):
+    """传了 limit 时,不受 256KB 闸门,按行读(对齐 claude-code limit===undefined ? maxSizeBytes : undefined)。"""
+    big_file = tmp_path / "big.txt"
+    # 300KB,10000 行(每行 30 字节)
+    big_file.write_text("\n".join("x" * 29 for _ in range(10000)), encoding="utf-8")
+    tool = ReadFileTool(cwd=tmp_path, permission=_perm(tmp_path))
+    result = tool.run({"path": "big.txt", "offset": 100, "limit": 50})
+    assert result["error"] is None
+    assert result["limit"] == 50
+    assert result["offset"] == 100
