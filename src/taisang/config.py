@@ -20,6 +20,7 @@ class LLMConfig(BaseModel):
     base_url: str = "https://api.openai.com/v1"
     api_key: str = ""
     model: str = "gpt-4o"
+    debug: bool = False
 
 
 def _settings_path() -> Path:
@@ -38,16 +39,23 @@ def _load_settings_file() -> dict:
 
 
 def load_config() -> LLMConfig:
-    """加载 LLM 配置。文件 > env > 默认。env 仅在文件字段缺失时 fallback。"""
+    """加载 LLM 配置。文件 > env > 默认。env 仅在文件字段缺失时 fallback。
+
+    debug 字段仅文件源(env 不覆盖),文件未写默认 False。
+    """
     file_cfg = _load_settings_file().get("llm", {})
     # 文件优先,文件没的字段才看 env
     base_url = file_cfg.get("base_url") or os.environ.get("TAISANG_LLM_BASE_URL")
     api_key = file_cfg.get("api_key") or os.environ.get("TAISANG_LLM_API_KEY")
     model = file_cfg.get("model") or os.environ.get("TAISANG_LLM_MODEL")
+    debug = file_cfg.get("debug")
+    if debug is None:
+        debug = False
     config_data = {
         "base_url": base_url,
         "api_key": api_key,
         "model": model,
+        "debug": bool(debug),
     }
     # Drop None values so Pydantic field defaults apply
     config_data = {k: v for k, v in config_data.items() if v is not None}

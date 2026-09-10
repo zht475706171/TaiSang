@@ -374,6 +374,149 @@ def test_post_config_unchanged_api_key_keeps_old(tmp_path, monkeypatch):
     assert data["llm"]["model"] == "new-m"  # 改了
 
 
+def test_get_config_returns_debug_field(tmp_path, monkeypatch):
+    """GET /api/config 返回 debug 字段。"""
+    monkeypatch.delenv("TAISANG_MOCK_LLM", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    from taisang.config import LLMConfig, save_config
+    from taisang.web.app import create_app
+
+    save_config(LLMConfig(base_url="https://x", api_key="k", model="m", debug=True))
+    app = create_app(tmp_path)
+    client = TestClient(app)
+    r = client.get("/api/config")
+    assert r.status_code == 200
+    assert r.json()["debug"] is True
+
+
+def test_post_config_saves_debug(tmp_path, monkeypatch):
+    """POST /api/config 带 debug 字段 → 持久化到 settings.json。"""
+    monkeypatch.delenv("TAISANG_MOCK_LLM", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    from taisang.web.app import create_app
+
+    app = create_app(tmp_path)
+    client = TestClient(app)
+    r = client.post(
+        "/api/config",
+        json={
+            "model": "m",
+            "api_key": "k",
+            "base_url": "https://x",
+            "debug": True,
+        },
+    )
+    assert r.status_code == 200
+    import json
+
+    p = tmp_path / ".taisang" / "settings.json"
+    data = json.loads(p.read_text(encoding="utf-8"))
+    assert data["llm"]["debug"] is True
+
+
+def test_post_config_debug_defaults_false(tmp_path, monkeypatch):
+    """POST /api/config 不传 debug → 默认 False(向后兼容旧前端)。"""
+    monkeypatch.delenv("TAISANG_MOCK_LLM", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    from taisang.web.app import create_app
+
+    app = create_app(tmp_path)
+    client = TestClient(app)
+    r = client.post(
+        "/api/config",
+        json={"model": "m", "api_key": "k", "base_url": "https://x"},
+    )
+    assert r.status_code == 200
+    import json
+
+    p = tmp_path / ".taisang" / "settings.json"
+    data = json.loads(p.read_text(encoding="utf-8"))
+    assert data["llm"]["debug"] is False
+
+
+def test_post_config_test_ok(tmp_path, monkeypatch):
+    """POST /api/config/test 成功 → {ok: true, latency_ms, reply}。"""
+    monkeypatch.delenv("TAISANG_MOCK_LLM", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    from taisang.llm_client import LLMClient, LLMResponse
+    from taisang.web.app import create_app
+
+    def _fake_chat(self, messages, tools):
+        assert messages == [{"role": "user", "content": "hello"}]
+        assert tools == []
+        return LLMResponse(text="hi there", tool_calls=[])
+
+    monkeypatch.setattr(LLMClient, "chat", _fake_chat)
+    app = create_app(tmp_path)
+    client = TestClient(app)
+    r = client.post(
+        "/api/config/test",
+        json={"model": "m", "api_key": "k", "base_url": "https://x"},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["ok"] is True
+    assert data["latency_ms"] >= 0
+    assert data["reply"] == "hi there"
+
+
+def test_post_config_test_failure(tmp_path, monkeypatch):
+    """POST /api/config/test 失败 → {ok: false, error}。"""
+    monkeypatch.delenv("TAISANG_MOCK_LLM", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    from taisang.llm_client import LLMClient
+    from taisang.llm_errors import LLMTransientError
+    from taisang.web.app import create_app
+
+    def _fake_chat(self, messages, tools):
+        raise LLMTransientError("connection refused")
+
+    monkeypatch.setattr(LLMClient, "chat", _fake_chat)
+    app = create_app(tmp_path)
+    client = TestClient(app)
+    r = client.post(
+        "/api/config/test",
+        json={"model": "m", "api_key": "k", "base_url": "https://x"},
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["ok"] is False
+    assert "connection refused" in data["error"]
+
+
+def test_post_config_test_unchanged_api_key(tmp_path, monkeypatch):
+    """POST /api/config/test api_key='__unchanged__' → 用已存的 api_key。"""
+    monkeypatch.delenv("TAISANG_MOCK_LLM", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    from taisang.config import LLMConfig, save_config
+    from taisang.llm_client import LLMClient, LLMResponse
+    from taisang.web.app import create_app
+
+    seen_key = {}
+
+    def _fake_chat(self, messages, tools):
+        seen_key["key"] = self.cfg.api_key
+        return LLMResponse(text="ok", tool_calls=[])
+
+    monkeypatch.setattr(LLMClient, "chat", _fake_chat)
+    save_config(LLMConfig(base_url="https://x", api_key="sk-saved123456789", model="m"))
+    app = create_app(tmp_path)
+    client = TestClient(app)
+    r = client.post(
+        "/api/config/test",
+        json={"model": "m", "api_key": "__unchanged__", "base_url": "https://x"},
+    )
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+    assert seen_key["key"] == "sk-saved123456789"
+
+
 # --- Task 10: POST /interrupt 路由 ---
 
 def test_interrupt_endpoint_idle_session(client):
@@ -390,3 +533,163 @@ def test_interrupt_endpoint_unknown_session_404(client):
     """未知 session POST /interrupt 返回 404。"""
     r = client.post("/api/sessions/nonexistent-id/interrupt")
     assert r.status_code == 404
+
+
+# --- 导入项目目录功能:GET /info + POST /pick-directory + POST /switch-directory ---
+
+def test_get_session_info_returns_default_source_root(client, tmp_path):
+    """GET /api/sessions/{id}/info 返回 source_root(无切换时 = registry.source_root)。"""
+    sid = client.post("/api/sessions", json={"title": "s"}).json()["id"]
+    r = client.get(f"/api/sessions/{sid}/info")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["id"] == sid
+    # source_root 应解析为 tmp_path(传入 registry 的 root)
+    from pathlib import Path
+
+    assert Path(data["source_root"]).resolve() == tmp_path.resolve()
+
+
+def test_get_session_info_unknown_session_404(client):
+    """未知 session GET /info 返回 404。"""
+    r = client.get("/api/sessions/nonexistent-id/info")
+    assert r.status_code == 404
+
+
+def test_switch_directory_changes_source_root(client, tmp_path):
+    """POST /switch-directory 切换 source_root,后续 GET /info 反映新目录。"""
+    sid = client.post("/api/sessions", json={"title": "s"}).json()["id"]
+    new_dir = tmp_path / "imported_proj"
+    new_dir.mkdir()
+    r = client.post(
+        f"/api/sessions/{sid}/switch-directory",
+        json={"path": str(new_dir)},
+    )
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+    # 后续 GET /info 反映新目录
+    r2 = client.get(f"/api/sessions/{sid}/info")
+    assert r2.status_code == 200
+    from pathlib import Path
+
+    assert Path(r2.json()["source_root"]).resolve() == new_dir.resolve()
+
+
+def test_switch_directory_unknown_session_404(client, tmp_path):
+    """未知 session POST /switch-directory 返回 404。"""
+    r = client.post(
+        "/api/sessions/nonexistent-id/switch-directory",
+        json={"path": str(tmp_path)},
+    )
+    assert r.status_code == 404
+
+
+def test_switch_directory_nonexistent_path_400(client, tmp_path):
+    """切换到不存在的目录返回 400。"""
+    sid = client.post("/api/sessions", json={"title": "s"}).json()["id"]
+    r = client.post(
+        f"/api/sessions/{sid}/switch-directory",
+        json={"path": str(tmp_path / "does-not-exist")},
+    )
+    assert r.status_code == 400
+
+
+def test_switch_directory_persists_to_meta(client, tmp_path):
+    """切换后写 meta.json source_root;重新 get_or_load 后能恢复。
+    通过 GET /info 在 lazy 重建后仍读到新目录验证(需先 delete 内存实例 → 但不便)。
+    这里直接读 meta.json 文件验证持久化。
+    """
+    import json
+
+    sid = client.post("/api/sessions", json={"title": "s"}).json()["id"]
+    new_dir = tmp_path / "proj2"
+    new_dir.mkdir()
+    client.post(f"/api/sessions/{sid}/switch-directory", json={"path": str(new_dir)})
+    meta_path = tmp_path / ".taisang" / "sessions" / sid / "meta.json"
+    assert meta_path.exists()
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    assert "source_root" in meta
+    from pathlib import Path
+
+    assert Path(meta["source_root"]).resolve() == new_dir.resolve()
+
+
+def test_pick_directory_unknown_session_404(client):
+    """未知 session POST /pick-directory 返回 404(在 platform 检查前)。"""
+    r = client.post("/api/sessions/nonexistent-id/pick-directory")
+    assert r.status_code == 404
+
+
+def test_pick_directory_non_windows_returns_501(client, monkeypatch):
+    """非 Windows 平台 POST /pick-directory 返回 501(tkinter 仅 Windows)。"""
+    import sys
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    sid = client.post("/api/sessions", json={"title": "s"}).json()["id"]
+    r = client.post(f"/api/sessions/{sid}/pick-directory")
+    assert r.status_code == 501
+
+
+def test_pick_directory_cancelled(client, monkeypatch):
+    """用户取消目录选择器 → 返回 {cancelled: true}。monkeypatch tkinter 返回空。"""
+    import sys
+
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    # mock tkinter 整个调用链返回空字符串(用户取消)
+    import tkinter
+    import tkinter.filedialog as filedialog
+
+    class _FakeRoot:
+        def withdraw(self):
+            pass
+
+        def attributes(self, *args, **kwargs):
+            pass
+
+        def destroy(self):
+            pass
+
+    def _fake_askdirectory(title, parent):
+        return ""
+
+    monkeypatch.setattr(tkinter, "Tk", lambda: _FakeRoot())
+    monkeypatch.setattr(filedialog, "askdirectory", _fake_askdirectory)
+
+    sid = client.post("/api/sessions", json={"title": "s"}).json()["id"]
+    r = client.post(f"/api/sessions/{sid}/pick-directory")
+    assert r.status_code == 200
+    assert r.json()["cancelled"] is True
+
+
+def test_pick_directory_selected_returns_path(client, monkeypatch, tmp_path):
+    """用户选定目录 → 返回 {path: ...}。monkeypatch tkinter 返回固定路径。"""
+    import sys
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    import tkinter
+    import tkinter.filedialog as filedialog
+
+    target = tmp_path / "user_picked"
+
+    class _FakeRoot:
+        def withdraw(self):
+            pass
+
+        def attributes(self, *args, **kwargs):
+            pass
+
+        def destroy(self):
+            pass
+
+    def _fake_askdirectory(title, parent):
+        return str(target)
+
+    monkeypatch.setattr(tkinter, "Tk", lambda: _FakeRoot())
+    monkeypatch.setattr(filedialog, "askdirectory", _fake_askdirectory)
+
+    sid = client.post("/api/sessions", json={"title": "s"}).json()["id"]
+    r = client.post(f"/api/sessions/{sid}/pick-directory")
+    assert r.status_code == 200
+    data = r.json()
+    assert data.get("path", "").endswith("user_picked")

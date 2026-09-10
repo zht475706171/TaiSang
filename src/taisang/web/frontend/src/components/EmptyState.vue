@@ -5,7 +5,13 @@
       你的私人agent，有什么可以帮助你的吗？
     </p>
     <div class="input-wrap">
-      <MessageInput placeholder="输入问题,Enter 发送..." autofocus @send="handleSend" />
+      <MessageInput
+        placeholder="输入问题,Enter 发送..."
+        autofocus
+        :source-root="sourceRoot"
+        @send="handleSend"
+        @import-project="handleImportProject"
+      />
     </div>
   </div>
 </template>
@@ -13,10 +19,18 @@
 <script setup lang="ts">
 import MessageInput from './MessageInput.vue'
 
-const emit = defineEmits<{ send: [query: string] }>()
+defineProps<{ sourceRoot?: string | null }>()
+const emit = defineEmits<{
+  send: [query: string]
+  importProject: []
+}>()
 
 function handleSend(q: string) {
   emit('send', q)
+}
+
+function handleImportProject() {
+  emit('importProject')
 }
 </script>
 

@@ -11,6 +11,7 @@ export interface LLMConfig {
   base_url: string
   api_key: string
   api_key_set: boolean
+  debug: boolean
 }
 
 // 消息列表项(前端渲染用,从 SSE 事件 + history records 合并)

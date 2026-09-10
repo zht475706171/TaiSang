@@ -6,14 +6,19 @@
 - GET  /api/sessions         → 列会话 [{id, title, active}]
 - DELETE /api/sessions/{id}  → 删会话
 - POST /api/sessions/{id}/reset   → 重置上下文
-- POST /api/sessions/{id}/debug   → 切 debug {on: bool}
+- POST /api/sessions/{id}/reset   → 重置上下文
+- POST /api/sessions/{id}/debug   → 切 debug {on: bool}(已废弃,debug 改全局配置)
 - POST /api/sessions/{id}/messages → 发消息 {query},后台 run,事件经 SSE 推
 - GET  /api/sessions/{id}/messages → 取会话历史 messages(前端 resume 渲染用)
+- GET  /api/sessions/{id}/info     → 取会话元信息(source_root 当前工作目录)
+- POST /api/sessions/{id}/pick-directory  → 弹系统目录选择器(Windows tkinter)
+- POST /api/sessions/{id}/switch-directory → 切换会话工作目录 {path}
 - GET  /api/sessions/{id}/events   → SSE 流
 - POST /api/sessions/{id}/confirm/{token} → {approve: bool} 回应确认
 - POST /api/sessions/{id}/permission/{token} → {approve: bool} 回应权限请求
-- GET  /api/config           → 取 LLM 配置(api_key 打码)
-- POST /api/config           → 保存 LLM 配置 + 立即应用到所有 session
+- GET  /api/config           → 取 LLM 配置(api_key 打码 + debug)
+- POST /api/config           → 保存 LLM 配置 + debug + 立即应用到所有 session
+- POST /api/config/test      → 测试 LLM 连通性(不持久化)
 
 run 跑在线程池(AsyncExitStack + run_in_threadpool),on_event 回调把事件
 push 到该会话 EventBroker,SSE 端点从 broker 订阅队列 get + yield。
@@ -62,6 +67,25 @@ class ConfigReq(BaseModel):
     model: str
     api_key: str
     base_url: str
+    debug: bool = False
+
+
+class ConfigTestReq(BaseModel):
+    """测试连接请求体。
+
+    api_key = "__unchanged__" 表示用已存的 api_key(前端 readonly 提交这个 sentinel),
+    否则用表单传入的明文。
+    """
+
+    model: str
+    api_key: str
+    base_url: str
+
+
+class SwitchDirReq(BaseModel):
+    """切换会话当前工作目录请求体。path 是用户通过目录选择器选定的绝对路径。"""
+
+    path: str
 
 
 def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastAPI:
@@ -109,10 +133,12 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
 
     @app.post("/api/sessions/{session_id}/debug")
     async def set_debug(session_id: str, req: DebugReq) -> dict:
-        ok = registry.set_debug(session_id, req.on)
-        if not ok:
-            raise HTTPException(404, f"session not found: {session_id}")
-        return {"debug": req.on}
+        """per-session debug toggle(已废弃,debug 改全局配置)。
+
+        保留路由向后兼容旧前端,实际不动 session debug 状态。新前端走
+        POST /api/config 的 debug 字段统一管理。
+        """
+        return {"debug": req.on, "deprecated": True}
 
     @app.post("/api/sessions/{session_id}/messages")
     async def send_message(session_id: str, req: SendMessageReq) -> dict:
@@ -135,7 +161,9 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
                         req.query,
                         # Task 14: 把 agent_id 合并进 payload,前端据 agent_id 路由子事件到
                         # 对应的 Agent 工具卡片嵌套数组。主 agent 的 agent_id="" 不影响路由。
-                        on_event=lambda e: sess.broker.publish(e.type, {**e.payload, "agent_id": e.agent_id}),
+                        on_event=lambda e: sess.broker.publish(
+                            e.type, {**e.payload, "agent_id": e.agent_id}
+                        ),
                     )
                 except Exception as e:  # noqa: BLE001
                     log.exception("agent run failed: %s", e)
@@ -165,6 +193,75 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
             raise HTTPException(404, f"session not found: {session_id}")
         return sess.store.load_all()
 
+    @app.get("/api/sessions/{session_id}/info")
+    async def get_session_info(session_id: str) -> dict:
+        """返回会话元信息:当前工作目录 source_root。
+
+        前端打开会话时调此接口拿 source_root 展示在输入栏上方。优先内存 sess.source_root
+        (switch 后立即生效),其次 meta.json,最后 registry.source_root(全局默认)。
+        """
+        if registry.get_or_load(session_id) is None:
+            raise HTTPException(404, f"session not found: {session_id}")
+        sr = registry.get_source_root(session_id)
+        return {"id": session_id, "source_root": str(sr) if sr else None}
+
+    @app.post("/api/sessions/{session_id}/pick-directory")
+    async def pick_directory(session_id: str) -> dict:
+        """弹出系统目录选择器(Windows tkinter askdirectory),返回用户选定目录。
+
+        用 run_in_executor 跑 tkinter(阻塞调用),不卡 asyncio 事件循环。
+        用户取消返回 {cancelled: true};选定返回 {path: "..."}。
+        session 不存在返回 404。tkinter 仅 Windows 兼容,非 Windows 返回 501。
+        """
+        if registry.get_or_load(session_id) is None:
+            raise HTTPException(404, f"session not found: {session_id}")
+        import sys
+
+        if sys.platform != "win32":
+            raise HTTPException(501, "directory picker only supported on Windows")
+
+        def _pick() -> str | None:
+            # tkinter 必须在主线程外跑;run_in_executor 用默认线程池,可满足。
+            # 临时创建 + 销毁 Tk root,不污染进程全局 state。
+            import tkinter as tk
+            from tkinter import filedialog
+
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            try:
+                path = filedialog.askdirectory(
+                    title="选择项目目录",
+                    parent=root,
+                )
+                return path or None
+            finally:
+                root.destroy()
+
+        loop = asyncio.get_running_loop()
+        path = await loop.run_in_executor(None, _pick)
+        if not path:
+            return {"cancelled": True}
+        return {"path": path}
+
+    @app.post("/api/sessions/{session_id}/switch-directory")
+    async def switch_directory(session_id: str, req: SwitchDirReq) -> dict:
+        """切换会话当前工作目录到 req.path。
+
+        调 registry.switch_source_root:更新 agent.source_root + permission.approve_dir
+        + shell._cwd + _kill_and_restart + meta.json source_root。旧目录保留在
+        permission._approved,用户切回还能访问。
+        """
+        if registry.get_or_load(session_id) is None:
+            raise HTTPException(404, f"session not found: {session_id}")
+        new_root = Path(req.path)
+        if not new_root.is_dir():
+            raise HTTPException(400, f"directory not found or not a directory: {req.path}")
+        ok = registry.switch_source_root(session_id, new_root)
+        if not ok:
+            raise HTTPException(500, "switch failed")
+        return {"ok": True, "source_root": str(new_root.resolve())}
+
     @app.get("/api/config")
     async def get_config() -> dict:
         """返回当前 LLM 配置。api_key 打码。"""
@@ -174,6 +271,7 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
             "base_url": cfg.base_url,
             "api_key": mask_api_key(cfg.api_key),
             "api_key_set": bool(cfg.api_key),
+            "debug": cfg.debug,
         }
 
     @app.post("/api/config")
@@ -181,16 +279,48 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
         """保存 LLM 配置 + 立即应用到所有 session。
 
         api_key = "__unchanged__" 时保留原 api_key(前端 readonly 提交这个 sentinel)。
+        debug 字段一并持久化 + 应用到所有 session。
         """
         if req.api_key == "__unchanged__":
             old_cfg = load_config()
             api_key = old_cfg.api_key
         else:
             api_key = req.api_key
-        cfg = LLMConfig(model=req.model, api_key=api_key, base_url=req.base_url)
+        cfg = LLMConfig(model=req.model, api_key=api_key, base_url=req.base_url, debug=req.debug)
         save_config(cfg)
         registry.apply_llm_config(cfg)
         return {"ok": True}
+
+    @app.post("/api/config/test")
+    async def test_config_route(req: ConfigTestReq) -> dict:
+        """测试 LLM 连通性。用表单传入的 model/api_key/base_url 临时构造 client,
+        发一个最小请求(messages=[{role:user, content:"hello"}],无 system prompt,
+        无 tools,max_tokens=5),返回 {ok, latency_ms, reply} 或 {ok:false, error}。
+
+        api_key = "__unchanged__" 时用已存的 api_key(前端 readonly 提交这个 sentinel)。
+        不持久化任何配置,纯探测。
+        """
+        import time
+
+        from ..llm_client import LLMClient
+        from ..llm_errors import LLMError
+
+        if req.api_key == "__unchanged__":
+            old_cfg = load_config()
+            api_key = old_cfg.api_key
+        else:
+            api_key = req.api_key
+        probe_cfg = LLMConfig(model=req.model, api_key=api_key, base_url=req.base_url, debug=False)
+        t0 = time.perf_counter()
+        try:
+            client = LLMClient(probe_cfg)
+            resp = client.chat(messages=[{"role": "user", "content": "hello"}], tools=[])
+        except LLMError as e:
+            return {"ok": False, "error": str(e)}
+        except Exception as e:  # noqa: BLE001 — 任意未知错误也归为失败
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        latency_ms = int((time.perf_counter() - t0) * 1000)
+        return {"ok": True, "latency_ms": latency_ms, "reply": (resp.text or "")[:200]}
 
     @app.get("/api/sessions/{session_id}/events")
     async def event_stream(session_id: str) -> StreamingResponse:
@@ -254,18 +384,23 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
         return {"resolved": True}
 
     from .skills_api import register_skills_routes
+
     register_skills_routes(app, source_root)
 
     from .agents_api import register_agents_routes
+
     register_agents_routes(app, source_root)
 
     from .prompts_api import register_prompts_routes
+
     register_prompts_routes(app, registry)
 
     from .profile_api import register_profile_routes
+
     register_profile_routes(app)
 
     from .mcp_api import router as mcp_router
+
     app.include_router(mcp_router)
 
     @app.get("/{full_path:path}")

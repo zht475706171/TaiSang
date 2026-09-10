@@ -4,7 +4,7 @@
     <main class="app-main">
       <router-view />
     </main>
-    <ConfigModal v-model="configOpen" />
+    <ConfigModal v-model="configOpen" @debug-changed="handleDebugChanged" />
   </div>
 </template>
 
@@ -14,10 +14,16 @@ import { useRouter } from 'vue-router'
 import Sidebar from '@/components/Sidebar.vue'
 import ConfigModal from '@/components/ConfigModal.vue'
 import { useSessionStore } from '@/stores/session'
+import { useConfigStore } from '@/stores/config'
 
 const configOpen = ref(false)
 const store = useSessionStore()
+const configStore = useConfigStore()
 const router = useRouter()
+
+function handleDebugChanged(on: boolean) {
+  configStore.setDebug(on)
+}
 
 function handleNewSession() {
   // 不预创建 session:进首页草稿态,首条消息发出才建会话(handleEmptySend)
@@ -40,6 +46,7 @@ function handleGlobalKeydown(e: KeyboardEvent) {
 onMounted(() => {
   window.addEventListener('keydown', handleGlobalKeydown)
   store.fetchSessions()
+  configStore.load()
 })
 onUnmounted(() => {
   window.removeEventListener('keydown', handleGlobalKeydown)

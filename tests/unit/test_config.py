@@ -110,3 +110,48 @@ def test_mask_api_key():
     assert mask_api_key("") == "***"
     assert mask_api_key("12345678") == "***"  # 正好 8 字符,全 ***
     assert mask_api_key("123456789") == "123***6789"
+
+
+def test_debug_default_false(tmp_path, monkeypatch):
+    """LLMConfig.debug 默认 False,settings.json 无 debug 字段时 False。"""
+    _isolate_home(tmp_path, monkeypatch)
+    _clear_llm_env(monkeypatch)
+    cfg = load_config()
+    assert cfg.debug is False
+
+
+def test_debug_from_settings_file(tmp_path, monkeypatch):
+    """settings.json 有 debug:true → load_config 读到 True。"""
+    _isolate_home(tmp_path, monkeypatch)
+    _clear_llm_env(monkeypatch)
+    settings = tmp_path / ".taisang" / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text(
+        json.dumps(
+            {"llm": {"base_url": "https://x", "api_key": "k", "model": "m", "debug": True}}
+        )
+    )
+    cfg = load_config()
+    assert cfg.debug is True
+
+
+def test_save_config_writes_debug(tmp_path, monkeypatch):
+    """save_config 把 debug 字段写入 settings.json。"""
+    _isolate_home(tmp_path, monkeypatch)
+    _clear_llm_env(monkeypatch)
+    cfg = LLMConfig(base_url="https://x", api_key="k", model="m", debug=True)
+    save_config(cfg)
+    p = tmp_path / ".taisang" / "settings.json"
+    data = json.loads(p.read_text(encoding="utf-8"))
+    assert data["llm"]["debug"] is True
+
+
+def test_save_config_preserves_debug_false(tmp_path, monkeypatch):
+    """save_config debug=False 时写入 False(不是省略)。"""
+    _isolate_home(tmp_path, monkeypatch)
+    _clear_llm_env(monkeypatch)
+    cfg = LLMConfig(base_url="https://x", api_key="k", model="m", debug=False)
+    save_config(cfg)
+    p = tmp_path / ".taisang" / "settings.json"
+    data = json.loads(p.read_text(encoding="utf-8"))
+    assert data["llm"]["debug"] is False

@@ -1,7 +1,9 @@
 import { ref, type Ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import { MessagePlugin } from 'tdesign-vue-next'
 import type { ChatMessage, HistoryRecord, Todo, UsageData } from '@/types'
 import { getHistory, sendMessage, respondConfirm, respondPermission, interruptSession } from '@/api/chat'
+import { useConfigStore } from '@/stores/config'
 
 let _idCounter = 0
 function nextId(): string {
@@ -29,9 +31,21 @@ export function useChatStream(
   // TodoWrite:LLM 调 TodoWriteTool 后,顶部 sticky 区渲染 todo 列表。
   // 主 agent 的 todos 在顶层;子 agent 的 todos 嵌套到 Agent 工具卡片(不冒泡顶部)。
   const todos = ref<Todo[]>([])
+  // debug 模式(全局,从 configStore 读):开启时展示工具卡片 + 保留思考过程;
+  // 关闭时工具卡片不 push 到 messages,思考只在中间态显示最终答案出来后清掉。
+  // configStore 由 App.vue 启动时 load,ConfigModal 保存 debug 后写 store,
+  // 这里直接读 store 的 ref,gate 实时跟随。
+  const configStore = useConfigStore()
+  // storeToRefs 拿 ref 形式,保证 ConfigModal 改 store 后 gate 实时跟随
+  const { debug: debugEnabled } = storeToRefs(configStore)
   let eventSource: EventSource | null = null
   let reconnectCount = 0
   const MAX_RECONNECT = 5
+
+  /** 兼容旧接口:ConfigModal 保存 debug 后调,实际写 configStore。 */
+  function setDebugEnabled(on: boolean) {
+    configStore.setDebug(on)
+  }
 
   function safeParse<T>(data: string): T | null {
     try {
@@ -61,6 +75,14 @@ export function useChatStream(
 
   function pushAssistant(text: string) {
     messages.value.push({ id: nextId(), kind: 'assistant', text })
+  }
+
+  /** debug 模式下把累积的 reasoning 保留为一条 thinking 消息(插在最终答案前)。 */
+  function pushReasoningIfAny() {
+    if (!debugEnabled.value) return
+    const text = reasoningText.value.trim()
+    if (!text) return
+    messages.value.push({ id: nextId(), kind: 'thinking', text })
   }
 
   function pushToolCall(name: string, args: string) {
@@ -346,6 +368,9 @@ export function useChatStream(
       if (!d) return
       clearThinking()
       clearStreaming()
+      // debug 关闭时:工具卡片不展示(用户只看问答)。但 Agent 工具卡片例外 ——
+      // 子 agent 的最终答案会嵌套在里面,关掉会丢答案。所以 Agent 工具卡片始终展示。
+      if (!debugEnabled.value && d.name !== 'Agent') return
       if (d.agent_id) {
         // 子 agent 事件:嵌套到最近的 Agent 工具卡片
         const parent = findLastAgentToolCall()
@@ -367,6 +392,9 @@ export function useChatStream(
     eventSource.addEventListener('tool_result', (e: MessageEvent) => {
       const d = safeParse<{ name: string; preview: string; total_bytes: number; agent_id?: string }>(e.data)
       if (!d) return
+      // debug 关闭时:tool_result 也不展示(和 tool_call gate 同步)。
+      // 但 Agent 工具的 result 不展示会导致子 agent 答案没容器,故 Agent 例外。
+      if (!debugEnabled.value && d.name !== 'Agent') return
       if (d.agent_id) {
         const parent = findLastAgentToolCall()
         if (parent) {
@@ -379,6 +407,9 @@ export function useChatStream(
     eventSource.addEventListener('final_answer', (e: MessageEvent) => {
       const d = safeParse<{ text: string; interrupted?: boolean; agent_id?: string }>(e.data)
       if (!d) return
+      // debug 开启时:最终答案出来前把 reasoning 保留为一条 thinking 消息(插在答案前)。
+      // debug 关闭时:reasoning 不保留(只在中间态 ThinkingIndicator 显示过)。
+      pushReasoningIfAny()
       clearThinking()
       stopping.value = false  // 后台收尾结束,清停止中状态
       if (d.agent_id) {
@@ -508,11 +539,13 @@ export function useChatStream(
     streamingMessage,
     connectionState,
     todos,
+    debugEnabled,
     send,
     stop,
     loadHistory,
     openEventStream,
     closeEventStream,
     answerConfirm,
+    setDebugEnabled,
   }
 }

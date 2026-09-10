@@ -6,6 +6,9 @@
         <div class="content" v-html="renderMarkdown(m.text || '')"></div>
       </div>
       <ToolCard v-else-if="m.kind === 'tool_call' || m.kind === 'tool_result'" :msg="m" />
+      <div v-else-if="m.kind === 'thinking'" class="msg thinking">
+        <div class="content reasoning">{{ m.text }}</div>
+      </div>
       <div v-else-if="m.kind === 'compacted'" class="compacted">
         · context compacted via {{ m.via }}
       </div>
@@ -154,6 +157,22 @@ function renderMarkdown(text: string): string {
   font-family: var(--app-font-mono);
   padding: 4px;
   margin: 8px 0;
+}
+.msg.thinking {
+  align-self: flex-start;
+  background: var(--td-bg-color-secondarycontainer, #f5f5f5);
+  border-left: 3px solid var(--td-brand-color, #0052d9);
+  padding: 8px 12px;
+  margin: 4px 0;
+  border-radius: 4px;
+  max-width: 100%;
+}
+.msg.thinking .reasoning {
+  font-size: 13px;
+  color: var(--td-text-color-secondary, #666);
+  font-family: var(--app-font-mono);
+  white-space: pre-wrap;
+  line-height: 1.6;
 }
 .usage {
   margin: 4px 0;

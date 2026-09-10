@@ -51,6 +51,7 @@ class _Session:
     title: str = ""  # 空 → 首条消息发出时自动取 query 前 40 字
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
+    source_root: Path = None  # 当前工作目录(可被 switch_source_root 切换;None 时 fallback 到 registry.source_root)
 
 
 class SessionRegistry:
@@ -87,6 +88,7 @@ class SessionRegistry:
             initial_dirs=[self.source_root] + self.allow_dirs,
         )
         llm = self._make_llm()
+        cfg = load_config()
         session_mem = SessionMemoryService(
             llm=llm,
             memory_path=PathManager.session_memory_path(self.source_root, session_id),
@@ -117,6 +119,7 @@ class SessionRegistry:
             skills=skills,
             mcp_manager=self._mcp_manager,
             agents=agents,
+            debug=cfg.debug,
         )
         return _Session(
             session_id=session_id,
@@ -125,6 +128,7 @@ class SessionRegistry:
             confirmer=confirmer,
             permission=permission,
             store=store,
+            source_root=self.source_root,
         )
 
     def create(self, title: str = "") -> str:
@@ -186,6 +190,22 @@ class SessionRegistry:
             sess.title = meta["title"]
         else:
             sess.title = session_id
+        # resume source_root:meta.json 有 source_root 就切到该目录(用户上次导入的项目)
+        if meta is not None and meta.get("source_root"):
+            try:
+                sr = Path(meta["source_root"])
+                if sr.is_dir():
+                    sess.agent.source_root = sr.resolve()
+                    sess.agent.permission.approve_dir(sr.resolve())
+                    if hasattr(sess.agent.shell, "_cwd"):
+                        sess.agent.shell._cwd = sr.resolve()
+                        try:
+                            sess.agent.shell._kill_and_restart()
+                        except Exception:  # noqa: BLE001
+                            pass
+                    sess.source_root = sr.resolve()
+            except (OSError, ValueError):
+                pass  # 路径无效,fallback 到 registry.source_root
         with self._lock:
             # 并发下可能已被另一线程建了,保留先到那个
             existing = self._sessions.get(session_id)
@@ -304,19 +324,71 @@ class SessionRegistry:
         sess.agent.set_debug(on)
         return True
 
-    def apply_llm_config(self, cfg: LLMConfig) -> None:
-        """所有内存 session 的 LLMClient 用新 cfg 重建。立即生效。
+    def switch_source_root(self, session_id: str, new_root: Path) -> bool:
+        """切换 session 的当前工作目录到 new_root。
 
-        MockLLM 实例跳过(测试场景)。
+        影响:
+        - agent.source_root(文件工具 cwd 跟随,下一轮 run 的 ToolRegistry cwd 用新 root)
+        - permission.approve_dir(new_root)(agent 直接能读写新 root,不需首次问批准)
+        - shell._cwd + _kill_and_restart(Bash 持久 shell 重启到新 cwd)
+        - sess.source_root(供 API 返回)
+        - meta.json 加 source_root 字段(resume 时恢复)
+
+        不影响:
+        - skills/agents 加载(仍用 registry 启动时的全局配置 + registry.source_root 的 .taisang/skills)
+        - store 历史记录位置(仍在 registry.source_root/.taisang/sessions/<id>/)
+        - 已批准的旧目录(保留在 permission._approved,用户切回还能访问)
+        """
+        sess = self.get_or_load(session_id)
+        if sess is None:
+            return False
+        new_root_resolved = new_root.resolve()
+        sess.agent.source_root = new_root_resolved
+        sess.agent.permission.approve_dir(new_root_resolved)
+        # Bash 持久 shell 重启到新 cwd:更新 _cwd + _kill_and_restart 内部会重启进程
+        if hasattr(sess.agent.shell, "_cwd"):
+            sess.agent.shell._cwd = new_root_resolved
+            try:
+                sess.agent.shell._kill_and_restart()
+            except Exception:  # noqa: BLE001 — 重启失败不致命,下次 run 会 _ensure_alive
+                pass
+        sess.source_root = new_root_resolved
+        # 写 meta.json(保留现有字段 + 加 source_root)
+        meta = sess.store.load_meta() or {}
+        meta["source_root"] = str(new_root_resolved)
+        sess.store.write_meta(meta)
+        return True
+
+    def get_source_root(self, session_id: str) -> Path | None:
+        """返回 session 的当前工作目录。优先内存 sess.source_root,否则 meta.json,
+        否则 registry.source_root(全局默认)。
+        """
+        sess = self.get_or_load(session_id)
+        if sess is None:
+            return None
+        if sess.source_root is not None:
+            return sess.source_root
+        meta = sess.store.load_meta()
+        if meta is not None and meta.get("source_root"):
+            return Path(meta["source_root"])
+        return self.source_root
+
+    def apply_llm_config(self, cfg: LLMConfig) -> None:
+        """所有内存 session 应用新 cfg:LLMClient 重建 + debug 同步。
+
+        MockLLM 实例跳过 LLM 重建(测试场景),但 debug 仍 apply(测试也
+        需要观察 debug 输出)。
         正在跑的 run 持有 sess.lock,run 内部用旧 llm 跑完当前 LLM 调用;
         下一次 LLM 调用用新 llm —— 这是可接受的边界(model 中途切换)。
+        debug 是 set_debug() 改实例字段,立即生效,不影响正在跑的 LLM 调用
+        (下一个 emit 点才看新值)。
         """
         with self._lock:
             sessions = list(self._sessions.values())
         for sess in sessions:
-            if isinstance(sess.agent.llm, MockLLM):
-                continue
-            sess.agent.llm = LLMClient(cfg)
+            if not isinstance(sess.agent.llm, MockLLM):
+                sess.agent.llm = LLMClient(cfg)
+            sess.agent.set_debug(cfg.debug)
 
     def apply_prompts_config(self, key: str) -> None:
         """改 prompt 后广播到所有内存 session。

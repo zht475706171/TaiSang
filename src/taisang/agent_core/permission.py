@@ -122,6 +122,15 @@ class PermissionManager:
         """子类实现:问用户是否批准 path。返回 True/False。"""
         raise NotImplementedError
 
+    def approve_dir(self, path: Path) -> None:
+        """公开方法:直接把 path 加入已批准集合(不走 _find_project_root)。
+
+        用途:用户通过"导入项目"主动选目录后调此方法,绕过首次访问问批准。
+        path 本身就是要批准的确切目录(不是项目根推算)。
+        """
+        with self._lock:
+            self._approved.add(path.resolve())
+
     def approved_dirs(self) -> list[Path]:
         """返回已批准目录列表(调试/展示用)。"""
         with self._lock:
