@@ -132,12 +132,38 @@ export function useChatStream(
     })
   }
 
-  function pushCompacted(via: string) {
+  function pushCompacted(payload: {
+    via: string
+    replaced?: Array<{ tool_call_id: string; path: string }>
+    before_tokens?: number
+    after_tokens?: number
+    summary_messages?: number
+    trigger?: string
+    current_tokens?: number
+    delta_tokens?: number
+  }) {
     // 非 debug 模式不展示 compaction 标记:压缩是系统内部行为,用户感知到
     // 中间突然冒出"· context compacted via llm"很突兀,破坏阅读流。
     // debug 模式下保留(便于观察上下文管理行为)。
     if (!debugEnabled.value) return
-    messages.value.push({ id: nextId(), kind: 'compacted', via })
+    const stage = payload.via === 'tool_result_budget' ? 1
+      : (payload.via === 'llm' || payload.via === 'session_memory') ? 2
+      : 0
+    // session_memory post-sampling 触发属于第三道(独立于 autocompact)
+    const actualStage = payload.via === 'session_memory' ? 3 : stage
+    messages.value.push({
+      id: nextId(),
+      kind: 'compacted',
+      via: payload.via,
+      stage: actualStage,
+      replaced: payload.replaced,
+      beforeTokens: payload.before_tokens,
+      afterTokens: payload.after_tokens,
+      summaryMessages: payload.summary_messages,
+      trigger: payload.trigger,
+      currentTokens: payload.current_tokens,
+      deltaTokens: payload.delta_tokens,
+    })
   }
 
   function pushConfirm(token: string, filePath: string, old: string, newContent: string) {
@@ -279,7 +305,7 @@ export function useChatStream(
         }
       } else if (r.role === 'system' && typeof r.content === 'string' && r.content.startsWith('[compacted')) {
         const via = r.content.includes('session_memory') ? 'session_memory' : 'llm'
-        pushCompacted(via)
+        pushCompacted({ via })
       }
       // system role 的 SYSTEM_PROMPT 不渲染
     }
@@ -439,6 +465,30 @@ export function useChatStream(
       }
       fillToolResult(d.name, d.preview, d.total_bytes)
     })
+    eventSource.addEventListener('debug_tool_result', (e: MessageEvent) => {
+      const d = safeParse<{ name: string; observation: string; tool_call_id: string; step?: number; agent_id?: string }>(e.data)
+      if (!d) return
+      if (!debugEnabled.value) return
+      // debug 模式下:用完整 observation 覆盖 ToolCard 的 preview
+      // 找最后一个同名已填充的 tool_call,把完整内容塞进 toolFullContent
+      const target = d.agent_id
+        ? findLastAgentToolCall()?.subAgentEvents?.find(
+            m => m.kind === 'tool_call' && m.toolName === d.name && m.toolFilled
+          )
+        : (() => {
+            for (let i = messages.value.length - 1; i >= 0; i--) {
+              const m = messages.value[i]
+              if (m.kind === 'tool_call' && m.toolName === d.name && m.toolFilled) {
+                return m
+              }
+            }
+            return undefined
+          })()
+      if (target) {
+        target.toolFullContent = d.observation
+        target.toolBytes = new Blob([d.observation]).size
+      }
+    })
     eventSource.addEventListener('final_answer', (e: MessageEvent) => {
       const d = safeParse<{ text: string; interrupted?: boolean; agent_id?: string }>(e.data)
       if (!d) return
@@ -480,18 +530,40 @@ export function useChatStream(
       }
     })
     eventSource.addEventListener('compacted', (e: MessageEvent) => {
-      const d = safeParse<{ via: string; agent_id?: string }>(e.data)
+      const d = safeParse<{
+        via: string
+        agent_id?: string
+        replaced?: Array<{ tool_call_id: string; path: string }>
+        before_tokens?: number
+        after_tokens?: number
+        summary_messages?: number
+        trigger?: string
+        current_tokens?: number
+        delta_tokens?: number
+      }>(e.data)
       if (!d) return
       // 非 debug 模式不展示任何 compaction 标记(主 agent + 子 agent 同理)
       if (!debugEnabled.value) return
       if (d.agent_id) {
         const parent = findLastAgentToolCall()
         if (parent) {
-          pushSubEvent(parent, { id: nextId(), kind: 'compacted', via: d.via, agentId: d.agent_id })
+          pushSubEvent(parent, {
+            id: nextId(),
+            kind: 'compacted',
+            via: d.via,
+            trigger: d.trigger,
+            currentTokens: d.current_tokens,
+            deltaTokens: d.delta_tokens,
+            beforeTokens: d.before_tokens,
+            afterTokens: d.after_tokens,
+            summaryMessages: d.summary_messages,
+            replaced: d.replaced,
+            agentId: d.agent_id,
+          })
           return
         }
       }
-      pushCompacted(d.via)
+      pushCompacted(d)
     })
     eventSource.addEventListener('usage_report', (e: MessageEvent) => {
       const d = safeParse<UsageData & { agent_id?: string }>(e.data)
