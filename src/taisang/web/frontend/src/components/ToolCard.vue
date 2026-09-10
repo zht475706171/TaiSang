@@ -7,7 +7,7 @@
       <span v-if="msg.subAgentEvents?.length" class="sub-badge">{{ msg.subAgentEvents.length }} 子事件</span>
     </div>
     <div class="tool-card-body">
-      <div class="main-preview">{{ msg.toolPreview || '执行中...' }}</div>
+      <div class="main-preview">{{ msg.toolFullContent || msg.toolPreview || '执行中...' }}</div>
       <div v-if="msg.subAgentEvents?.length" class="sub-events">
         <div
           v-for="sub in msg.subAgentEvents"
