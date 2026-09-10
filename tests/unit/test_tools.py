@@ -395,3 +395,41 @@ def test_base_tool_default_max_result_size_chars():
         name = "dummy"
     t = _DummyTool()
     assert t.max_result_size_chars == 100_000
+
+
+def test_read_file_tool_max_result_size_chars_infinity(tmp_path):
+    """ReadFileTool max_result_size_chars=Infinity(opt-out 永不持久化,读回文件是循环)。"""
+    import math
+
+    tool = ReadFileTool(cwd=tmp_path, permission=_perm(tmp_path))
+    assert math.isinf(tool.max_result_size_chars)
+
+
+def test_grep_tool_max_result_size_chars_20k(tmp_path):
+    """GrepTool max_result_size_chars=20_000(对齐 claude-code GrepTool)。"""
+    tool = GrepTool(cwd=tmp_path, permission=_perm(tmp_path))
+    assert tool.max_result_size_chars == 20_000
+
+
+def test_glob_tool_max_result_size_chars_100k(tmp_path):
+    """GlobTool max_result_size_chars=100_000(默认,小结果工具)。"""
+    tool = GlobTool(cwd=tmp_path, permission=_perm(tmp_path))
+    assert tool.max_result_size_chars == 100_000
+
+
+def test_edit_tool_max_result_size_chars_100k(tmp_path):
+    """EditTool max_result_size_chars=100_000(默认)。"""
+    from taisang.agent_core.confirm import AutoDenyConfirmer
+    from taisang.agent_core.tools import EditTool
+
+    tool = EditTool(cwd=tmp_path, permission=_perm(tmp_path), confirmer=AutoDenyConfirmer())
+    assert tool.max_result_size_chars == 100_000
+
+
+def test_write_tool_max_result_size_chars_100k(tmp_path):
+    """WriteTool max_result_size_chars=100_000(默认)。"""
+    from taisang.agent_core.confirm import AutoDenyConfirmer
+    from taisang.agent_core.tools import WriteTool
+
+    tool = WriteTool(cwd=tmp_path, permission=_perm(tmp_path), confirmer=AutoDenyConfirmer())
+    assert tool.max_result_size_chars == 100_000

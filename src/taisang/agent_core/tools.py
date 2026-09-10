@@ -107,6 +107,10 @@ class _BaseTool:
 
 class ReadFileTool(_BaseTool):
     name = "read_file"
+    # Infinity:opt-out 持久化。Read 自管 256KB 抛错 + 按行读,
+    # 持久化 Read 结果到文件再被 LLM 读回是循环,永不持久化。
+    # 对齐 claude-code FileReadTool.ts:342 maxResultSizeChars: Infinity。
+    max_result_size_chars = float("inf")
 
     def __init__(self, cwd: Path, permission: PermissionManager, max_bytes: int = 32_000) -> None:
         self.cwd = cwd
@@ -185,6 +189,8 @@ class ReadFileTool(_BaseTool):
 
 class GrepTool(_BaseTool):
     name = "grep"
+    # 对齐 claude-code GrepTool maxResultSizeChars=20_000。
+    max_result_size_chars = 20_000
 
     def __init__(self, cwd: Path, permission: PermissionManager, max_matches: int = 200) -> None:
         self.cwd = cwd
@@ -276,6 +282,7 @@ class GrepTool(_BaseTool):
 
 class GlobTool(_BaseTool):
     name = "glob"
+    max_result_size_chars = 100_000
 
     def __init__(self, cwd: Path, permission: PermissionManager) -> None:
         self.cwd = cwd
@@ -330,6 +337,7 @@ class GlobTool(_BaseTool):
 
 class EditTool(_BaseTool):
     name = "Edit"
+    max_result_size_chars = 100_000
 
     def __init__(self, cwd: Path, permission: PermissionManager, confirmer) -> None:
         self.cwd = cwd
@@ -378,6 +386,7 @@ class EditTool(_BaseTool):
 
 class WriteTool(_BaseTool):
     name = "Write"
+    max_result_size_chars = 100_000
 
     def __init__(self, cwd: Path, permission: PermissionManager, confirmer) -> None:
         self.cwd = cwd
@@ -464,6 +473,10 @@ class BashTool(_BaseTool):
     """
 
     name = "Bash"
+    # 30_000:BashTool 自己已落盘超长输出到 .taisang/observations/,
+    # enforce_budget 见到的是 < 30KB 的 <persisted-output> 包装结果,不会重复持久化。
+    # 对齐 claude-code BashTool maxResultSizeChars=30_000。
+    max_result_size_chars = 30_000
 
     def __init__(
         self,
