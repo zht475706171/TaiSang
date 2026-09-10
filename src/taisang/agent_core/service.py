@@ -367,10 +367,23 @@ class AgentService:
         while steps < self.max_steps:
             steps += 1
             # 阶段 5: apply-tool-result-budget
-            new_msgs, _ = enforce_budget(
+            new_msgs, newly_replaced = enforce_budget(
                 self.ctx.messages(), self.compaction_state, observations_dir
             )
             self.ctx.replace_messages(new_msgs)
+            # stage 1 压缩事件:enforce_budget 持久化了 tool_result 时 emit
+            # (newly_replaced 非空 = 本轮有新持久化决策;空 = 未超预算 or 全 frozen)
+            if newly_replaced:
+                _emit(AgentEvent(
+                    type=COMPACTED,
+                    payload={
+                        "via": "tool_result_budget",
+                        "replaced": [
+                            {"tool_call_id": r["tool_call_id"], "path": r["path"]}
+                            for r in newly_replaced
+                        ],
+                    },
+                ))
             # 阶段 7: autocompact
             if self.ctx.should_compact():
                 if self._try_autocompact(transcript_path, _emit):

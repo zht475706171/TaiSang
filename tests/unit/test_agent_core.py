@@ -689,3 +689,49 @@ def test_session_memory_trigger_emits_compacted_event(tmp_path):
     assert p["via"] == "session_memory"
     assert p["trigger"] in ("init", "update", "idle_break")
     assert "current_tokens" in p
+
+
+def test_enforce_budget_emits_compacted_event(tmp_path, monkeypatch):
+    """enforce_budget 持久化大 tool_result 时 emit COMPACTED 事件(stage=1, via=tool_result_budget)。
+
+    构造超 50KB 的 tool_result,run 一轮,应看到 COMPACTED via=tool_result_budget payload。
+
+    需要调高 service 的 _MAX_OBSERVATION_BYTES(默认 32KB),否则 tool_result 进 ctx 前
+    就被截断到 32KB < 50KB persist_threshold,持久化分支不可达。
+    """
+    from taisang.agent_core import service as service_mod
+    from taisang.agent_core.events import COMPACTED
+
+    # 调高 observation 截断闸门,让 60KB tool_result 能完整进 ctx
+    monkeypatch.setattr(service_mod, "_MAX_OBSERVATION_BYTES", 200_000)
+
+    # 单轮 4 条 60KB tool_result(总 240KB > 200KB budget,单条 60KB > 50KB persist_threshold)
+    # 用 read_file 的 limit 参数绕过 ReadFileTool 自身的 32KB 字节闸门,拿全量内容
+    big_content = "x" * 60_000
+    for name in ("big1.txt", "big2.txt", "big3.txt", "big4.txt"):
+        (tmp_path / name).write_text(big_content, encoding="utf-8")
+    mock = MockLLM([
+        LLMResponse(text="", tool_calls=[
+            _tc("c1", "read_file", {"path": "big1.txt", "limit": 99999}),
+            _tc("c2", "read_file", {"path": "big2.txt", "limit": 99999}),
+            _tc("c3", "read_file", {"path": "big3.txt", "limit": 99999}),
+            _tc("c4", "read_file", {"path": "big4.txt", "limit": 99999}),
+        ]),
+        LLMResponse(text="done", tool_calls=[]),
+        LLMResponse(text="done2", tool_calls=[]),
+        LLMResponse(text="done3", tool_calls=[]),
+    ])
+    service = AgentService(llm=mock, source_root=tmp_path, confirmer=AutoApproveConfirmer())
+    events = []
+    service.run("读 big*.txt", on_event=lambda e: events.append(e))
+    budget_events = [
+        e for e in events
+        if e.type == COMPACTED and e.payload.get("via") == "tool_result_budget"
+    ]
+    assert len(budget_events) >= 1
+    p = budget_events[0].payload
+    assert p["via"] == "tool_result_budget"
+    assert "replaced" in p
+    assert isinstance(p["replaced"], list)
+    if p["replaced"]:
+        assert "tool_call_id" in p["replaced"][0]
