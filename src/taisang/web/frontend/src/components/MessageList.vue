@@ -10,7 +10,26 @@
         <div class="content reasoning">{{ m.text }}</div>
       </div>
       <div v-else-if="m.kind === 'compacted'" class="compacted">
-        · context compacted via {{ m.via }}
+        <template v-if="m.stage === 1">
+          · ① tool_result_budget 压缩:{{ m.replaced?.length || 0 }} 个大结果持久化到磁盘
+          <span v-if="m.replaced?.length" class="compacted-detail">
+            ({{ m.replaced.map(r => r.tool_call_id.slice(0, 8)).join(', ') }})
+          </span>
+        </template>
+        <template v-else-if="m.stage === 2">
+          · ② autocompact {{ m.via === 'llm' ? 'LLM 摘要' : 'session_memory 摘要' }}:
+          {{ m.beforeTokens }} → {{ m.afterTokens }} tokens
+          <span v-if="m.summaryMessages">({{ m.summaryMessages }} 条摘要)</span>
+        </template>
+        <template v-else-if="m.stage === 3">
+          · ③ session_memory 提取:触发 {{ m.trigger }} 分支
+          <span v-if="m.currentTokens != null">
+            (当前 {{ m.currentTokens }} tokens<template v-if="m.deltaTokens != null">, 增量 {{ m.deltaTokens }}</template>)
+          </span>
+        </template>
+        <template v-else>
+          · context compacted via {{ m.via }}
+        </template>
       </div>
       <ConfirmCard
         v-else-if="m.kind === 'confirm' || m.kind === 'permission'"
@@ -157,6 +176,10 @@ function renderMarkdown(text: string): string {
   font-family: var(--app-font-mono);
   padding: 4px;
   margin: 8px 0;
+}
+.compacted-detail {
+  color: var(--td-text-color-placeholder);
+  font-size: 11px;
 }
 .msg.thinking {
   align-self: flex-start;
