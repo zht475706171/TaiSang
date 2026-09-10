@@ -364,8 +364,17 @@ class AgentService:
         while steps < self.max_steps:
             steps += 1
             # 阶段 5: apply-tool-result-budget
+            # 收集 ToolRegistry 里所有工具的 max_result_size_chars,传给 enforce_budget
+            # 让 ReadFileTool(Infinity) opt-out 持久化,BashTool(30K) 等按各自阈值判断。
+            tool_size_limits = {
+                tool_name: getattr(tool, "max_result_size_chars", 100_000)
+                for tool_name, tool in registry._tools.items()
+            }
             new_msgs, newly_replaced = enforce_budget(
-                self.ctx.messages(), self.compaction_state, observations_dir
+                self.ctx.messages(),
+                self.compaction_state,
+                observations_dir,
+                tool_size_limits=tool_size_limits,
             )
             self.ctx.replace_messages(new_msgs)
             # stage 1 压缩事件:enforce_budget 持久化了 tool_result 时 emit

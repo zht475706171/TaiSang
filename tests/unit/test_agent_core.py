@@ -694,7 +694,7 @@ def test_session_memory_trigger_emits_compacted_event(tmp_path):
     assert "current_tokens" in p
 
 
-def test_enforce_budget_emits_compacted_event(tmp_path):
+def test_enforce_budget_emits_compacted_event(tmp_path, monkeypatch):
     """enforce_budget 持久化大 tool_result 时 emit COMPACTED 事件(stage=1, via=tool_result_budget)。
 
     构造超 50KB 的 tool_result,run 一轮,应看到 COMPACTED via=tool_result_budget payload。
@@ -704,6 +704,12 @@ def test_enforce_budget_emits_compacted_event(tmp_path):
     enforce_budget 50K persist_threshold 可达。
     """
     from taisang.agent_core.events import COMPACTED
+    from taisang.agent_core.tools import ReadFileTool
+
+    # 测试用 read_file 构造大 observation,但 ReadFileTool 默认 max_result_size_chars=Infinity
+    # 会被 enforce_budget 跳过(opt-out 持久化)。这里 monkeypatch 覆写类属性为 100_000,
+    # 让 read_file 在本测试里参与持久化,验证 enforce_budget 触发路径。
+    monkeypatch.setattr(ReadFileTool, "max_result_size_chars", 100_000)
 
     # 单轮 4 条 60KB tool_result(总 240KB > 200KB budget,单条 60KB > 50KB persist_threshold)
     # 用 read_file 的 limit 参数绕过 ReadFileTool 自身的 32KB 字节闸门,拿全量内容
@@ -768,3 +774,39 @@ def test_autocompact_emits_tokens_in_payload(tmp_path):
         assert "after_tokens" in p
         assert p["before_tokens"] > p["after_tokens"]
         assert "summary_messages" in p
+
+
+def test_service_passes_tool_size_limits_to_enforce_budget(tmp_path, monkeypatch):
+    """service.py 调 enforce_budget 时传 tool_size_limits={tool_name: max_result_size_chars}。
+
+    read_file=Infinity 应被 enforce_budget 跳过(opt-out 持久化)。
+    """
+    from taisang.agent_core import service as service_mod
+
+    # monkeypatch enforce_budget 捕获调用参数
+    captured = {}
+
+    def _fake_enforce_budget(messages, state, persist_dir, **kwargs):
+        captured.update(kwargs)
+        captured["messages_len"] = len(messages)
+        return messages, []
+
+    monkeypatch.setattr(service_mod, "enforce_budget", _fake_enforce_budget)
+
+    # 跑一轮(调一个 read_file tool_call)
+    (tmp_path / "a.py").write_text("x", encoding="utf-8")
+    mock = MockLLM([
+        LLMResponse(text="", tool_calls=[_tc("c1", "read_file", {"path": "a.py"})]),
+        LLMResponse(text="done", tool_calls=[]),
+    ])
+    service = AgentService(llm=mock, source_root=tmp_path, confirmer=AutoApproveConfirmer())
+    service.run("read a", on_event=lambda e: None)
+
+    # 断言 tool_size_limits 被传了
+    assert "tool_size_limits" in captured
+    limits = captured["tool_size_limits"]
+    # read_file 应该是 Infinity
+    assert limits.get("read_file") == float("inf")
+    # Bash 应该是 30_000(如果注册了)
+    if "Bash" in limits:
+        assert limits["Bash"] == 30_000
