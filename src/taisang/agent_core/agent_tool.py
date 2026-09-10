@@ -43,8 +43,28 @@ _FORK_AGENT = AgentDefinition(
 
 
 def _make_child_llm(parent_llm):
-    """默认子 agent 用父 LLM(同 client)。测试用 monkeypatch 替换。"""
-    return parent_llm
+    """子 agent LLM:启用且 model/base_url 完整 → 独立 LLMClient;否则 fallback parent_llm。
+
+    api_key 允许空(本地 endpoint 如 ollama 不需要 key)。
+    每次派子 agent 都读盘一次(派遣频率低,成本可接受;好处是改配置立即生效)。
+    测试仍可 monkeypatch 替换本函数,不读盘。
+    """
+    from ..config import LLMConfig, load_config, load_subagent_config
+    from ..llm_client import LLMClient
+    sub_cfg = load_subagent_config()
+    if not sub_cfg.enabled:
+        return parent_llm
+    if not (sub_cfg.model and sub_cfg.base_url):
+        return parent_llm
+    main_cfg = load_config()
+    # 子配置不继承 debug(debug 是主 agent 行为)
+    child_cfg = LLMConfig(
+        base_url=sub_cfg.base_url,
+        api_key=sub_cfg.api_key,  # 可空
+        model=sub_cfg.model,
+        debug=main_cfg.debug,
+    )
+    return LLMClient(child_cfg)
 
 
 class AgentTool(_BaseTool):

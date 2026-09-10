@@ -49,7 +49,11 @@ class LLMClient:
 
         self.cfg = cfg
         self.model = cfg.model
-        self._client = OpenAI(base_url=cfg.base_url, api_key=cfg.api_key)
+        # openai SDK 拒绝空 api_key(抛 OpenAIError)。ollama 等本地 endpoint
+        # 不需要 key,但 SDK 强制要求非空,传 placeholder "not-set" 让 SDK 不报错。
+        # 实际 endpoint 不会校验这个值。self.cfg.api_key 仍保留原始空值。
+        sdk_key = cfg.api_key if cfg.api_key else "not-set"
+        self._client = OpenAI(base_url=cfg.base_url, api_key=sdk_key)
 
     def chat(self, messages: list[dict], tools: list[dict]) -> LLMResponse:
         """发 chat completion 请求,返回 LLMResponse。
