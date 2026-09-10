@@ -74,6 +74,10 @@ export function useChatStream(
   }
 
   function pushAssistant(text: string) {
+    // 空 content 的 assistant 消息不 push:LLM 调工具时 content 为空,
+    // 只在 tool_calls 里发指令。这种空气泡展示出来是 bug(空白对话框)。
+    // debug 模式同样隐藏(空气泡无观察价值,工具调用走 tool_call 卡片)。
+    if (!text.trim()) return
     messages.value.push({ id: nextId(), kind: 'assistant', text })
   }
 
@@ -118,6 +122,10 @@ export function useChatStream(
   }
 
   function pushCompacted(via: string) {
+    // 非 debug 模式不展示 compaction 标记:压缩是系统内部行为,用户感知到
+    // 中间突然冒出"· context compacted via llm"很突兀,破坏阅读流。
+    // debug 模式下保留(便于观察上下文管理行为)。
+    if (!debugEnabled.value) return
     messages.value.push({ id: nextId(), kind: 'compacted', via })
   }
 
@@ -223,7 +231,14 @@ export function useChatStream(
     messages.value = []
     for (const r of records) {
       if (r.role === 'user') {
-        pushUser(r.content || '')
+        const content = r.content || ''
+        // 非 debug 模式跳过 compaction 注入的伪 user 消息(boundary + summary),
+        // 不让用户感知上下文压缩行为。debug 模式保留便于观察。
+        if (!debugEnabled.value) {
+          if (content.startsWith('[boundary:')) continue
+          if (content.startsWith('This session is being continued from a previous conversation')) continue
+        }
+        pushUser(content)
       } else if (r.role === 'assistant') {
         pushAssistant(r.content || '')
         if (r.tool_calls && r.tool_calls.length) {
@@ -235,13 +250,22 @@ export function useChatStream(
             } catch {
               args = '{}'
             }
-            pushToolCall(fn.name || '', args)
+            // debug-gate:非 debug 模式不展示工具卡片(用户只看问答)。
+            // Agent 工具例外:子 agent 最终答案嵌套在 Agent 卡片里,关掉会丢答案。
+            // 与实时 SSE 流的 tool_call 事件 gate 保持一致。
+            if (debugEnabled.value || fn.name === 'Agent') {
+              pushToolCall(fn.name || '', args)
+            }
           }
         }
       } else if (r.role === 'tool') {
-        const preview = (r.content || '').slice(0, 200)
-        const bytes = (r.content || '').length
-        fillToolResult(r.name || '', preview, bytes)
+        // debug-gate 同步:非 debug 时 tool_result 也不展示(Agent 例外)。
+        // 否则 resume 后会看到一堆 Bash 工具卡片但实时对话时看不到,行为不一致。
+        if (debugEnabled.value || r.name === 'Agent') {
+          const preview = (r.content || '').slice(0, 200)
+          const bytes = (r.content || '').length
+          fillToolResult(r.name || '', preview, bytes)
+        }
       } else if (r.role === 'system' && typeof r.content === 'string' && r.content.startsWith('[compacted')) {
         const via = r.content.includes('session_memory') ? 'session_memory' : 'llm'
         pushCompacted(via)
@@ -445,6 +469,8 @@ export function useChatStream(
     eventSource.addEventListener('compacted', (e: MessageEvent) => {
       const d = safeParse<{ via: string; agent_id?: string }>(e.data)
       if (!d) return
+      // 非 debug 模式不展示任何 compaction 标记(主 agent + 子 agent 同理)
+      if (!debugEnabled.value) return
       if (d.agent_id) {
         const parent = findLastAgentToolCall()
         if (parent) {
