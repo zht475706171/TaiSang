@@ -91,6 +91,12 @@ class _BaseTool:
     """工具基类。"""
 
     name: str = ""
+    # 单条 observation 持久化阈值(字符数)。对齐 claude-code maxResultSizeChars。
+    # - 默认 100_000:小结果工具(Edit/Write/Todo/Glob)
+    # - Infinity:ReadFileTool(opt-out 永不持久化,读回文件是循环)
+    # - 30_000:BashTool(自己已落盘,enforce_budget 见到的是包装结果)
+    # - 20_000:GrepTool(对齐 claude-code GrepTool)
+    max_result_size_chars: float = 100_000
 
     def schema(self) -> dict:
         raise NotImplementedError

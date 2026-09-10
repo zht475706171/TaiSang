@@ -386,3 +386,12 @@ def test_tool_registry_without_service_does_not_register_todo_write(tmp_path):
 
     registry = ToolRegistry(cwd=tmp_path)
     assert "TodoWrite" not in registry._tools  # noqa: SLF001
+
+
+def test_base_tool_default_max_result_size_chars():
+    """_BaseTool 子类默认 max_result_size_chars=100_000,可被覆写。"""
+    from taisang.agent_core.tools import _BaseTool
+    class _DummyTool(_BaseTool):
+        name = "dummy"
+    t = _DummyTool()
+    assert t.max_result_size_chars == 100_000
