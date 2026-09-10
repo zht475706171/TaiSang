@@ -106,6 +106,7 @@ def test_main_agent_can_dispatch_subagent_via_agent_tool(tmp_path: Path) -> None
         LLMResponse(text="根据子 agent 报告,utils.py 找到了", tool_calls=[]),
     ])
     import taisang.agent_core.agent_tool as at_mod
+    original_make = at_mod._make_child_llm
     at_mod._make_child_llm = lambda parent_llm: child_llm
     try:
         explore = AgentDefinition(
@@ -125,9 +126,7 @@ def test_main_agent_can_dispatch_subagent_via_agent_tool(tmp_path: Path) -> None
         tool_calls = [e for e in events if e.type == TOOL_CALL]
         assert any(e.payload.get("name") == "Agent" for e in tool_calls)
     finally:
-        import taisang.agent_core.agent_tool as at_mod2
-        import taisang.llm_client
-        at_mod2._make_child_llm = lambda parent_llm: parent_llm
+        at_mod._make_child_llm = original_make
 
 
 def test_disabled_agent_not_in_listing(tmp_path: Path) -> None:

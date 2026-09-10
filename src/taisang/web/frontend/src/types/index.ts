@@ -6,11 +6,33 @@ export interface Session {
   relative_time: string
 }
 
-export interface LLMConfig {
+export interface LLMConfigSection {
   model: string
   base_url: string
   api_key: string
   api_key_set: boolean
+  /** 仅 subagent 段有;main 段忽略 */
+  enabled?: boolean
+}
+
+export interface LLMConfig {
+  main: LLMConfigSection & { debug: boolean }
+  subagent: LLMConfigSection
+}
+
+/** POST /api/config 请求体:main + subagent + debug。每段 api_key='__unchanged__' 表示保留已存 key。 */
+export interface SaveConfigReq {
+  main: {
+    model: string
+    api_key: string
+    base_url: string
+  }
+  subagent?: {
+    enabled: boolean
+    model: string
+    api_key: string
+    base_url: string
+  }
   debug: boolean
 }
 

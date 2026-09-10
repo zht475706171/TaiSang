@@ -289,7 +289,7 @@ def test_apply_llm_config_skips_mock_sessions(tmp_path, monkeypatch):
 
 
 def test_get_config_returns_masked_api_key(tmp_path, monkeypatch):
-    """GET /api/config 返回 model/base_url + api_key 打码。"""
+    """GET /api/config 返回 main.model/base_url + api_key 打码。"""
     monkeypatch.delenv("TAISANG_MOCK_LLM", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
@@ -302,10 +302,10 @@ def test_get_config_returns_masked_api_key(tmp_path, monkeypatch):
     r = client.get("/api/config")
     assert r.status_code == 200
     data = r.json()
-    assert data["model"] == "m"
-    assert data["base_url"] == "https://api.x.com"
-    assert data["api_key"] == "sk-***4567"  # 打码
-    assert data["api_key_set"] is True
+    assert data["main"]["model"] == "m"
+    assert data["main"]["base_url"] == "https://api.x.com"
+    assert data["main"]["api_key"] == "sk-***4567"  # 打码
+    assert data["main"]["api_key_set"] is True
 
 
 def test_post_config_saves_and_applies(tmp_path, monkeypatch):
@@ -318,9 +318,11 @@ def test_post_config_saves_and_applies(tmp_path, monkeypatch):
     app = create_app(tmp_path)
     client = TestClient(app)
     r = client.post("/api/config", json={
-        "model": "new-model",
-        "api_key": "sk-newkey1234567890",
-        "base_url": "https://api.new.com",
+        "main": {
+            "model": "new-model",
+            "api_key": "sk-newkey1234567890",
+            "base_url": "https://api.new.com",
+        },
     })
     assert r.status_code == 200
     assert r.json() == {"ok": True}
@@ -343,15 +345,17 @@ def test_post_config_empty_api_key_allowed(tmp_path, monkeypatch):
     app = create_app(tmp_path)
     client = TestClient(app)
     r = client.post("/api/config", json={
-        "model": "m",
-        "api_key": "",
-        "base_url": "http://localhost:11434/v1",
+        "main": {
+            "model": "m",
+            "api_key": "",
+            "base_url": "http://localhost:11434/v1",
+        },
     })
     assert r.status_code == 200
 
 
 def test_post_config_unchanged_api_key_keeps_old(tmp_path, monkeypatch):
-    """POST /api/config api_key='__unchanged__' 时保留原 api_key。"""
+    """POST /api/config main.api_key='__unchanged__' 时保留原 api_key。"""
     monkeypatch.delenv("TAISANG_MOCK_LLM", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
@@ -362,9 +366,11 @@ def test_post_config_unchanged_api_key_keeps_old(tmp_path, monkeypatch):
     app = create_app(tmp_path)
     client = TestClient(app)
     r = client.post("/api/config", json={
-        "model": "new-m",
-        "api_key": "__unchanged__",
-        "base_url": "https://api.new.com",
+        "main": {
+            "model": "new-m",
+            "api_key": "__unchanged__",
+            "base_url": "https://api.new.com",
+        },
     })
     assert r.status_code == 200
     import json
@@ -375,7 +381,7 @@ def test_post_config_unchanged_api_key_keeps_old(tmp_path, monkeypatch):
 
 
 def test_get_config_returns_debug_field(tmp_path, monkeypatch):
-    """GET /api/config 返回 debug 字段。"""
+    """GET /api/config main 块返回 debug 字段。"""
     monkeypatch.delenv("TAISANG_MOCK_LLM", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
@@ -387,7 +393,7 @@ def test_get_config_returns_debug_field(tmp_path, monkeypatch):
     client = TestClient(app)
     r = client.get("/api/config")
     assert r.status_code == 200
-    assert r.json()["debug"] is True
+    assert r.json()["main"]["debug"] is True
 
 
 def test_post_config_saves_debug(tmp_path, monkeypatch):
@@ -402,9 +408,11 @@ def test_post_config_saves_debug(tmp_path, monkeypatch):
     r = client.post(
         "/api/config",
         json={
-            "model": "m",
-            "api_key": "k",
-            "base_url": "https://x",
+            "main": {
+                "model": "m",
+                "api_key": "k",
+                "base_url": "https://x",
+            },
             "debug": True,
         },
     )
@@ -417,7 +425,7 @@ def test_post_config_saves_debug(tmp_path, monkeypatch):
 
 
 def test_post_config_debug_defaults_false(tmp_path, monkeypatch):
-    """POST /api/config 不传 debug → 默认 False(向后兼容旧前端)。"""
+    """POST /api/config 不传 debug → 默认 False。"""
     monkeypatch.delenv("TAISANG_MOCK_LLM", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
@@ -427,7 +435,7 @@ def test_post_config_debug_defaults_false(tmp_path, monkeypatch):
     client = TestClient(app)
     r = client.post(
         "/api/config",
-        json={"model": "m", "api_key": "k", "base_url": "https://x"},
+        json={"main": {"model": "m", "api_key": "k", "base_url": "https://x"}},
     )
     assert r.status_code == 200
     import json
@@ -515,6 +523,35 @@ def test_post_config_test_unchanged_api_key(tmp_path, monkeypatch):
     assert r.status_code == 200
     assert r.json()["ok"] is True
     assert seen_key["key"] == "sk-saved123456789"
+
+
+def test_post_config_test_target_subagent_uses_subagent_key(tmp_path, monkeypatch):
+    """POST /api/config/test target=subagent + __unchanged__ → 用 subagent 段的已存 api_key。"""
+    monkeypatch.delenv("TAISANG_MOCK_LLM", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    from taisang.config import LLMConfig, SubAgentLLMConfig, save_config, save_subagent_config
+    from taisang.llm_client import LLMClient, LLMResponse
+    from taisang.web.app import create_app
+
+    seen_key = {}
+
+    def _fake_chat(self, messages, tools):
+        seen_key["key"] = self.cfg.api_key
+        return LLMResponse(text="ok", tool_calls=[])
+
+    monkeypatch.setattr(LLMClient, "chat", _fake_chat)
+    save_config(LLMConfig(base_url="https://main", api_key="sk-main123456789", model="m-main"))
+    save_subagent_config(SubAgentLLMConfig(enabled=True, base_url="https://sub", api_key="sk-sub123456789", model="m-sub"))
+    app = create_app(tmp_path)
+    client = TestClient(app)
+    r = client.post(
+        "/api/config/test",
+        json={"model": "m-sub", "api_key": "__unchanged__", "base_url": "https://sub", "target": "subagent"},
+    )
+    assert r.status_code == 200
+    assert r.json()["ok"] is True
+    assert seen_key["key"] == "sk-sub123456789"
 
 
 # --- Task 10: POST /interrupt 路由 ---
@@ -693,3 +730,109 @@ def test_pick_directory_selected_returns_path(client, monkeypatch, tmp_path):
     assert r.status_code == 200
     data = r.json()
     assert data.get("path", "").endswith("user_picked")
+
+
+def test_get_config_returns_main_and_subagent(tmp_path, monkeypatch):
+    """GET /api/config 返回 {main: {...}, subagent: {...}} 双块结构。"""
+    monkeypatch.delenv("TAISANG_MOCK_LLM", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    from taisang.config import LLMConfig, SubAgentLLMConfig, save_config, save_subagent_config
+    from taisang.web.app import create_app
+
+    save_config(LLMConfig(base_url="https://main", api_key="sk-main1234567890", model="m-main", debug=True))
+    save_subagent_config(SubAgentLLMConfig(enabled=True, base_url="https://sub", api_key="sk-sub1234567890", model="m-sub"))
+
+    app = create_app(tmp_path)
+    client = TestClient(app)
+    r = client.get("/api/config")
+    assert r.status_code == 200
+    data = r.json()
+    # main 块
+    assert data["main"]["model"] == "m-main"
+    assert data["main"]["base_url"] == "https://main"
+    assert data["main"]["api_key"] == "sk-***7890"  # masked
+    assert data["main"]["api_key_set"] is True
+    assert data["main"]["debug"] is True
+    # subagent 块
+    assert data["subagent"]["enabled"] is True
+    assert data["subagent"]["model"] == "m-sub"
+    assert data["subagent"]["base_url"] == "https://sub"
+    assert data["subagent"]["api_key"] == "sk-***7890"  # masked
+    assert data["subagent"]["api_key_set"] is True
+
+
+def test_post_config_saves_both_sections(tmp_path, monkeypatch):
+    """POST /api/config 同时写 main + subagent。"""
+    monkeypatch.delenv("TAISANG_MOCK_LLM", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    from taisang.web.app import create_app
+    import json
+
+    app = create_app(tmp_path)
+    client = TestClient(app)
+    r = client.post("/api/config", json={
+        "main": {"model": "m-main", "api_key": "sk-main1234567890", "base_url": "https://main"},
+        "subagent": {"enabled": True, "model": "m-sub", "api_key": "sk-sub1234567890", "base_url": "https://sub"},
+        "debug": True,
+    })
+    assert r.status_code == 200
+    p = tmp_path / ".taisang" / "settings.json"
+    data = json.loads(p.read_text(encoding="utf-8"))
+    assert data["llm"]["model"] == "m-main"
+    assert data["llm"]["base_url"] == "https://main"
+    assert data["llm"]["api_key"] == "sk-main1234567890"
+    assert data["llm"]["debug"] is True
+    assert data["llm_subagent"]["enabled"] is True
+    assert data["llm_subagent"]["model"] == "m-sub"
+    assert data["llm_subagent"]["base_url"] == "https://sub"
+    assert data["llm_subagent"]["api_key"] == "sk-sub1234567890"
+
+
+def test_post_config_unchanged_sentinel_per_section(tmp_path, monkeypatch):
+    """main 的 __unchanged__ 不动 main key,subagent 的 __unchanged__ 不动 sub key。"""
+    monkeypatch.delenv("TAISANG_MOCK_LLM", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    from taisang.config import LLMConfig, SubAgentLLMConfig, save_config, save_subagent_config
+    from taisang.web.app import create_app
+    import json
+
+    save_config(LLMConfig(base_url="https://main", api_key="sk-main-orig12345", model="m-main"))
+    save_subagent_config(SubAgentLLMConfig(enabled=True, base_url="https://sub", api_key="sk-sub-orig12345", model="m-sub"))
+
+    app = create_app(tmp_path)
+    client = TestClient(app)
+    r = client.post("/api/config", json={
+        "main": {"model": "m-main-new", "api_key": "__unchanged__", "base_url": "https://main-new"},
+        "subagent": {"enabled": True, "model": "m-sub-new", "api_key": "__unchanged__", "base_url": "https://sub-new"},
+    })
+    assert r.status_code == 200
+    p = tmp_path / ".taisang" / "settings.json"
+    data = json.loads(p.read_text(encoding="utf-8"))
+    # model/base_url 改了,key 保留
+    assert data["llm"]["model"] == "m-main-new"
+    assert data["llm"]["api_key"] == "sk-main-orig12345"  # 保留
+    assert data["llm_subagent"]["model"] == "m-sub-new"
+    assert data["llm_subagent"]["api_key"] == "sk-sub-orig12345"  # 保留
+
+
+def test_post_config_subagent_none_writes_empty(tmp_path, monkeypatch):
+    """POST /api/config 不传 subagent → 写空 subagent 配置(enabled=false)。"""
+    monkeypatch.delenv("TAISANG_MOCK_LLM", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    from taisang.web.app import create_app
+    import json
+
+    app = create_app(tmp_path)
+    client = TestClient(app)
+    r = client.post("/api/config", json={
+        "main": {"model": "m", "api_key": "k", "base_url": "https://x"},
+    })
+    assert r.status_code == 200
+    p = tmp_path / ".taisang" / "settings.json"
+    data = json.loads(p.read_text(encoding="utf-8"))
+    assert data["llm_subagent"]["enabled"] is False
+    assert data["llm_subagent"]["model"] == ""

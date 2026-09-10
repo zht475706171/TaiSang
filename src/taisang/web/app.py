@@ -40,7 +40,15 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from ..config import LLMConfig, load_config, mask_api_key, save_config
+from ..config import (
+    LLMConfig,
+    SubAgentLLMConfig,
+    load_config,
+    load_subagent_config,
+    mask_api_key,
+    save_config,
+    save_subagent_config,
+)
 from .session_registry import SessionRegistry
 
 log = logging.getLogger(__name__)
@@ -64,10 +72,25 @@ class ConfirmReq(BaseModel):
     approve: bool
 
 
+class ConfigSectionReq(BaseModel):
+    """单段(main 或 subagent)LLM 配置请求体。
+
+    api_key = "__unchanged__" 表示保留已存 api_key(前端 readonly 提交此 sentinel),
+    否则用表单传入的明文(含空字符串,空表示本地 endpoint 不要 key)。
+    enabled 只对 subagent 段有意义;main 段忽略此字段。
+    """
+
+    model: str = ""
+    api_key: str = ""
+    base_url: str = ""
+    enabled: bool = False
+
+
 class ConfigReq(BaseModel):
-    model: str
-    api_key: str
-    base_url: str
+    """POST /api/config 请求体:main + subagent 双段 + 全局 debug。"""
+
+    main: ConfigSectionReq
+    subagent: ConfigSectionReq | None = None
     debug: bool = False
 
 
@@ -76,11 +99,13 @@ class ConfigTestReq(BaseModel):
 
     api_key = "__unchanged__" 表示用已存的 api_key(前端 readonly 提交这个 sentinel),
     否则用表单传入的明文。
+    target = "main"(默认)或 "subagent",决定用哪段的已存 api_key fallback。
     """
 
     model: str
     api_key: str
     base_url: str
+    target: str = "main"
 
 
 class SwitchDirReq(BaseModel):
@@ -287,31 +312,66 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
 
     @app.get("/api/config")
     async def get_config() -> dict:
-        """返回当前 LLM 配置。api_key 打码。"""
+        """返回当前 LLM 配置:main 段 + subagent 段。api_key 打码。
+
+        debug 是全局开关(只在 main LLMConfig 上),挂在 main 块里方便前端。
+        """
         cfg = load_config()
+        sub = load_subagent_config()
         return {
-            "model": cfg.model,
-            "base_url": cfg.base_url,
-            "api_key": mask_api_key(cfg.api_key),
-            "api_key_set": bool(cfg.api_key),
-            "debug": cfg.debug,
+            "main": {
+                "model": cfg.model,
+                "base_url": cfg.base_url,
+                "api_key": mask_api_key(cfg.api_key),
+                "api_key_set": bool(cfg.api_key),
+                "debug": cfg.debug,
+            },
+            "subagent": {
+                "enabled": sub.enabled,
+                "model": sub.model,
+                "base_url": sub.base_url,
+                "api_key": mask_api_key(sub.api_key),
+                "api_key_set": bool(sub.api_key),
+            },
         }
 
     @app.post("/api/config")
     async def save_config_route(req: ConfigReq) -> dict:
-        """保存 LLM 配置 + 立即应用到所有 session。
+        """保存 LLM 配置:main 段 + subagent 段 + 全局 debug,立即应用到所有 session。
 
-        api_key = "__unchanged__" 时保留原 api_key(前端 readonly 提交这个 sentinel)。
-        debug 字段一并持久化 + 应用到所有 session。
+        每段 api_key = "__unchanged__" 时保留该段原 api_key(前端 readonly 提交此 sentinel)。
+        subagent 段缺失(None)时写空配置(enabled=false)。
         """
-        if req.api_key == "__unchanged__":
-            old_cfg = load_config()
-            api_key = old_cfg.api_key
+        # main 段
+        if req.main.api_key == "__unchanged__":
+            old_main = load_config()
+            main_key = old_main.api_key
         else:
-            api_key = req.api_key
-        cfg = LLMConfig(model=req.model, api_key=api_key, base_url=req.base_url, debug=req.debug)
+            main_key = req.main.api_key
+        cfg = LLMConfig(
+            model=req.main.model,
+            api_key=main_key,
+            base_url=req.main.base_url,
+            debug=req.debug,
+        )
         save_config(cfg)
         registry.apply_llm_config(cfg)
+
+        # subagent 段
+        if req.subagent is None:
+            save_subagent_config(SubAgentLLMConfig())
+        else:
+            if req.subagent.api_key == "__unchanged__":
+                old_sub = load_subagent_config()
+                sub_key = old_sub.api_key
+            else:
+                sub_key = req.subagent.api_key
+            save_subagent_config(SubAgentLLMConfig(
+                enabled=req.subagent.enabled,
+                model=req.subagent.model,
+                api_key=sub_key,
+                base_url=req.subagent.base_url,
+            ))
         return {"ok": True}
 
     @app.post("/api/config/test")
@@ -320,7 +380,7 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
         发一个最小请求(messages=[{role:user, content:"hello"}],无 system prompt,
         无 tools,max_tokens=5),返回 {ok, latency_ms, reply} 或 {ok:false, error}。
 
-        api_key = "__unchanged__" 时用已存的 api_key(前端 readonly 提交这个 sentinel)。
+        api_key = "__unchanged__" 时按 target 用对应段(main 或 subagent)的已存 api_key。
         不持久化任何配置,纯探测。
         """
         import time
@@ -329,8 +389,10 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
         from ..llm_errors import LLMError
 
         if req.api_key == "__unchanged__":
-            old_cfg = load_config()
-            api_key = old_cfg.api_key
+            if req.target == "subagent":
+                api_key = load_subagent_config().api_key
+            else:
+                api_key = load_config().api_key
         else:
             api_key = req.api_key
         probe_cfg = LLMConfig(model=req.model, api_key=api_key, base_url=req.base_url, debug=False)

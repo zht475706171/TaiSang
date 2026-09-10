@@ -15,7 +15,7 @@ export const useConfigStore = defineStore('config', () => {
   async function load() {
     try {
       const cfg = await getConfig()
-      debug.value = cfg.debug ?? false
+      debug.value = cfg.main.debug ?? false
       loaded.value = true
     } catch (e) {
       console.warn('load config failed:', e)
