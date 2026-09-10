@@ -289,7 +289,7 @@ def test_apply_llm_config_skips_mock_sessions(tmp_path, monkeypatch):
 
 
 def test_get_config_returns_masked_api_key(tmp_path, monkeypatch):
-    """GET /api/config 返回 main.model/base_url + api_key 打码。"""
+    """GET /api/config 返回 main.model/base_url + 完整 api_key(本地单机工具不 mask)。"""
     monkeypatch.delenv("TAISANG_MOCK_LLM", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
@@ -304,7 +304,7 @@ def test_get_config_returns_masked_api_key(tmp_path, monkeypatch):
     data = r.json()
     assert data["main"]["model"] == "m"
     assert data["main"]["base_url"] == "https://api.x.com"
-    assert data["main"]["api_key"] == "sk-***4567"  # 打码
+    assert data["main"]["api_key"] == "sk-abcdefghij1234567"  # 完整明文
     assert data["main"]["api_key_set"] is True
 
 
@@ -751,14 +751,14 @@ def test_get_config_returns_main_and_subagent(tmp_path, monkeypatch):
     # main 块
     assert data["main"]["model"] == "m-main"
     assert data["main"]["base_url"] == "https://main"
-    assert data["main"]["api_key"] == "sk-***7890"  # masked
+    assert data["main"]["api_key"] == "sk-main1234567890"  # 完整明文
     assert data["main"]["api_key_set"] is True
     assert data["main"]["debug"] is True
     # subagent 块
     assert data["subagent"]["enabled"] is True
     assert data["subagent"]["model"] == "m-sub"
     assert data["subagent"]["base_url"] == "https://sub"
-    assert data["subagent"]["api_key"] == "sk-***7890"  # masked
+    assert data["subagent"]["api_key"] == "sk-sub1234567890"  # 完整明文
     assert data["subagent"]["api_key_set"] is True
 
 

@@ -312,9 +312,10 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
 
     @app.get("/api/config")
     async def get_config() -> dict:
-        """返回当前 LLM 配置:main 段 + subagent 段。api_key 打码。
+        """返回当前 LLM 配置:main 段 + subagent 段。api_key 返回完整明文。
 
         debug 是全局开关(只在 main LLMConfig 上),挂在 main 块里方便前端。
+        本地单机工具,前端需要完整 key 让用户确认/查看,不 mask。
         """
         cfg = load_config()
         sub = load_subagent_config()
@@ -322,7 +323,7 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
             "main": {
                 "model": cfg.model,
                 "base_url": cfg.base_url,
-                "api_key": mask_api_key(cfg.api_key),
+                "api_key": cfg.api_key,
                 "api_key_set": bool(cfg.api_key),
                 "debug": cfg.debug,
             },
@@ -330,7 +331,7 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
                 "enabled": sub.enabled,
                 "model": sub.model,
                 "base_url": sub.base_url,
-                "api_key": mask_api_key(sub.api_key),
+                "api_key": sub.api_key,
                 "api_key_set": bool(sub.api_key),
             },
         }
