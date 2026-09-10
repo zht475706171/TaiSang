@@ -24,6 +24,10 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import structlog
+
+log = structlog.get_logger(__name__)
+
 from ..agent_core.permission import WebPermissionManager
 from ..agent_core.service import AgentService
 from ..config import LLMConfig, load_config
@@ -66,7 +70,15 @@ class SessionRegistry:
         # 无 enabled server 时 connect_all 是 no-op;连接失败的 server 标 failed 不阻塞。
         # 用 mcp_api.get_mcp_manager() 拿模块级单例,保证 API 路由和 agent 用同一个 manager。
         self._mcp_manager = get_mcp_manager()
-        asyncio.run(self._mcp_manager.connect_all())
+        # MCP server 连接改到 app.py lifespan hook 里用 asyncio.create_task 跑
+        # (而非这里 asyncio.run 同步阻塞),原因:
+        # mcp SDK 1.x + anyio 在 stdio 子进程启动失败时,stdio_client async generator
+        # 在 asyncio.run shutdown 阶段被 GC 清理,触发 anyio TaskGroup cancel scope
+        # 跨 task 退出抛 RuntimeError,这个异常在 asyncio 内部创建的 Task 里抛,
+        # 任何 except 都接不到,导致 asyncio.run 非零退出阻断服务启动。
+        # lifespan hook 在 FastAPI 主事件循环里 create_task,MCP 连接跑在主循环的
+        # 同一 task 上下文,失败时 connect_server 内部 except 已记 failed 状态,
+        # 不阻断服务。
 
     def _make_llm(self) -> LLMClient | MockLLM:
         """同 cli/main.py._make_llm:env 控制 MockLLM,否则真 LLM。"""

@@ -15,6 +15,15 @@ def client(tmp_path, monkeypatch):
     import taisang.mcp.manager as mgr_mod
 
     monkeypatch.setattr(mgr_mod, "_STATE_FILE", tmp_path / "mcp_servers.json")
+    # mock MCPClient.connect:不触达真实 mcp SDK(新版 SDK 在 stdio 子进程启动失败时
+    # 抛 BaseExceptionGroup + anyio TaskGroup 跨 task 退出 cancel scope 报 RuntimeError,
+    # TestClient 同步包装导致 enter/exit 跨 task,生产环境同 task 不会出这问题)。
+    # test_mcp_api 测的是路由层(参数校验/状态码/错误处理),connect 失败行为由
+    # test_mcp_client.py 用 mock transport 单独覆盖。
+    async def _fake_connect(self):
+        raise RuntimeError("mock: connect disabled in api test")
+
+    monkeypatch.setattr("taisang.mcp.manager.MCPClient.connect", _fake_connect)
     # 重置 mcp_api 模块级 singleton,确保测试间隔离。
     # 不用 monkeypatch.setattr 是因为 get_mcp_manager() 内部会重新赋值 _manager,
     # monkeypatch 的自动恢复会把它恢复成被改过的值而非 None,反而出问题。

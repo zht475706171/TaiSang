@@ -56,8 +56,11 @@ class StdioClientTransport:
         self.env = env or {}
 
     async def __aenter__(self) -> Any:
-        from mcp.client.stdio import stdio_client
-        self._ctx = stdio_client(command=self.command, args=self.args, env=self.env)
+        # mcp SDK API: stdio_client(server=StdioServerParameters(command, args, env), errlog=...)
+        # 旧版 SDK 接收散参 command=.../args=.../env=...,新版改成 StdioServerParameters 对象。
+        from mcp.client.stdio import stdio_client, StdioServerParameters
+        params = StdioServerParameters(command=self.command, args=self.args, env=self.env)
+        self._ctx = stdio_client(server=params)
         return await self._ctx.__aenter__()
 
     async def __aexit__(self, *exc: Any) -> None:
@@ -114,11 +117,47 @@ class Client:
         self._transport_ctx: Any = None
 
     async def connect(self) -> None:
-        """Open transport streams and create ClientSession."""
+        """Open transport streams and create ClientSession.
+
+        失败时主动清理 transport(调 __aexit__):不清理的话 stdio_client 这个
+        async generator 会在 asyncio 事件循环 shutdown 阶段被 GC 清理,触发
+        anyio TaskGroup 跨 task 退出抛 RuntimeError,阻断服务启动。
+        清理过程中的二次异常(anyio 跨 task)被吞掉,避免向上传播。
+        mcp SDK 1.x 异常常以 BaseExceptionGroup 包装,拆出真实错误重抛
+        (让 manager 的 except BaseExceptionGroup 接住记 failed 状态)。
+        """
         read, write = await self._transport.__aenter__()
         self._transport_ctx = self._transport
-        self._session = ClientSession(read, write)
-        await self._session.__aenter__()
+        try:
+            self._session = ClientSession(read, write)
+            await self._session.__aenter__()
+        except BaseExceptionGroup as eg:
+            await self._cleanup_transport()
+            raise eg.exceptions[0] from eg
+        except Exception:
+            await self._cleanup_transport()
+            raise
+
+    async def _cleanup_transport(self) -> None:
+        """失败时清理 transport,吞掉清理过程中的二次异常(anyio 跨 task 报错等)。
+
+        关键:不清理的话 stdio_client async generator 会被 asyncio shutdown GC,
+        抛 RuntimeError 阻断服务启动。这里在当前 task 主动清理,二次异常吞掉
+        (anyio TaskGroup cancel scope 跨 task 退出抛 RuntimeError 是已知问题,
+        但比 shutdown 阶段抛好,因为这里能接住)。
+        """
+        if self._session is not None:
+            try:
+                await self._session.__aexit__(None, None, None)
+            except BaseException:
+                pass
+            self._session = None
+        if self._transport_ctx is not None:
+            try:
+                await self._transport_ctx.__aexit__(None, None, None)
+            except BaseException:
+                pass
+            self._transport_ctx = None
 
     async def initialize(self) -> None:
         """Perform MCP handshake."""

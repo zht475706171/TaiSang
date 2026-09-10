@@ -143,6 +143,17 @@ class MCPManager:
                 resources=resources,
                 prompts=prompts,
             )
+        except BaseExceptionGroup as eg:
+            # mcp SDK 1.x + anyio:stdio 子进程启动失败/连接异常时抛 BaseExceptionGroup
+            # (包 RuntimeError/GeneratorExit/CancelledError 等),`except Exception` 抓不到。
+            # 拆出第一层真实错误信息记 failed 状态,不往上抛(保持 add_server 路由 200 行为)。
+            msg = "; ".join(str(e) for e in eg.exceptions) or str(eg)
+            log.error("Failed to connect MCP server '%s': %s", name, msg)
+            self._server_info[name] = McpServerInfo(
+                name=name,
+                status="failed",
+                error=msg,
+            )
         except Exception as e:
             log.error("Failed to connect MCP server '%s': %s", name, e)
             self._server_info[name] = McpServerInfo(

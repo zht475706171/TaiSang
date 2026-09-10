@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -90,8 +91,30 @@ class SwitchDirReq(BaseModel):
 
 def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastAPI:
     """构造 FastAPI app。source_root 是 agent 工作目录,allow_dirs 是允许访问的额外目录。"""
-    app = FastAPI(title="taisang web")
     registry = SessionRegistry(source_root, allow_dirs=allow_dirs or [])
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # 启动时后台连接所有 enabled MCP server。
+        # 用 create_task 而非 asyncio.run(同步阻塞):mcp SDK 1.x + anyio 在 stdio
+        # 子进程启动失败时,async generator(stdio_client)在临时事件循环 shutdown
+        # 阶段被 GC 清理,触发 anyio TaskGroup cancel scope 跨 task 退出抛 RuntimeError,
+        # 这个异常在 asyncio 内部 Task 里抛,except 接不到,导致 asyncio.run 非零退出
+        # 阻断服务启动。lifespan 在 FastAPI 主事件循环里 create_task,MCP 连接跑在
+        # 主循环 task 上下文,失败时 connect_server 内部 except 已记 failed 状态,
+        # 不阻断服务。失败的 server 前端 /mcp 页能看到,用户可手动重连。
+        mcp_manager = registry._mcp_manager
+        connect_task = asyncio.create_task(mcp_manager.connect_all())
+        # 不 await:fire-and-forget,服务立即就绪,MCP 在后台连
+        yield
+        # shutdown:cancel 后台连接任务(若还在跑),避免 lingering task
+        connect_task.cancel()
+        try:
+            await connect_task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    app = FastAPI(title="taisang web", lifespan=lifespan)
     # app.state 挂载,方便测试 + lifespan 访问
     app.state.registry = registry
 
