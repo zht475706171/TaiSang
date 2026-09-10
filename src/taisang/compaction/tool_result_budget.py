@@ -46,6 +46,7 @@ def enforce_budget(
     persist_dir: Path,
     budget_bytes: int = PER_MESSAGE_BUDGET_BYTES,
     persist_threshold: int = DEFAULT_PERSIST_THRESHOLD,
+    tool_size_limits: dict[str, float] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """对 messages 跑 apply-tool-result-budget。
 
@@ -53,8 +54,12 @@ def enforce_budget(
 
     三分区:
     - mustReapply:已在 seen_ids,套已存的 preview(若有)即可,无 I/O
-    - frozen/skip:在 SKIP_TOOL_NAMES,标记 seen 不替换
+    - frozen/skip:在 SKIP_TOOL_NAMES 或 max_result_size_chars=Infinity(Read opt-out),标记 seen 不替换
     - fresh:累加字节;若超预算,按"最大优先"持久化直到降到预算内
+
+    tool_size_limits: tool_name → max_result_size_chars 映射。
+        - None 或未列出的 tool:默认 100_000(参与持久化)
+        - float("inf"):opt-out 永不持久化(Read 工具,读回文件是循环)
     """
     new_messages = list(messages)
     newly_replaced: list[dict] = []
@@ -62,6 +67,7 @@ def enforce_budget(
     tool_indices = [i for i, m in enumerate(new_messages) if m["role"] == "tool"]
     fresh_to_check: list[int] = []
     total_bytes = 0
+    limits = tool_size_limits or {}
     for i in tool_indices:
         tcid = new_messages[i].get("tool_call_id", "")
         content = new_messages[i].get("content", "")
@@ -75,7 +81,9 @@ def enforce_budget(
             continue
         # fresh
         name = new_messages[i].get("name", "")
-        if name in SKIP_TOOL_NAMES:
+        # 跳过条件:SKIP_TOOL_NAMES 白名单 OR max_result_size_chars=Infinity(Read opt-out)
+        tool_limit = limits.get(name, 100_000)
+        if name in SKIP_TOOL_NAMES or tool_limit == float("inf"):
             state.seen_ids.add(tcid)
             continue
         fresh_to_check.append(i)

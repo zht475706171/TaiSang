@@ -128,3 +128,45 @@ def test_enforce_budget_persist_threshold_too_small(tmp_path):
     assert state.replacements == {}
     # content 原样
     assert new_messages[0]["content"] == "x" * 30_000
+
+
+def test_enforce_budget_skips_infinity_tools(tmp_path):
+    """max_result_size_chars=Infinity 的工具(如 read_file)永不持久化,即使 > 50K 阈值。
+
+    对齐 claude-code toolResultStorage.ts:59-64: Read opt-out 持久化,
+    理由"Read self-bounds; persisting its output to a file the model reads back
+    with Read is circular"。
+    """
+    state = ContentReplacementState()
+    messages = [
+        {"role": "tool", "tool_call_id": "tc1", "name": "read_file", "content": "x" * 60_000},
+        {"role": "tool", "tool_call_id": "tc2", "name": "Bash", "content": "y" * 60_000},
+    ]
+    tool_size_limits = {"read_file": float("inf"), "Bash": 30_000}
+    new_msgs, replaced = enforce_budget(
+        messages, state, tmp_path,
+        budget_bytes=50_000,
+        tool_size_limits=tool_size_limits,
+    )
+    # read_file(tc1) 不被持久化,content 原样
+    assert new_msgs[0]["content"] == "x" * 60_000
+    # Bash(tc2) 参与持久化(总 120K > 50K budget,60K > 50K threshold)
+    assert new_msgs[1]["content"] != "y" * 60_000
+    assert any(r["tool_call_id"] == "tc2" for r in replaced)
+    assert not any(r["tool_call_id"] == "tc1" for r in replaced)
+    # 两个都进 seen_ids(决策冻结)
+    assert "tc1" in state.seen_ids
+    assert "tc2" in state.seen_ids
+
+
+def test_enforce_budget_default_tool_size_limits_100k(tmp_path):
+    """没传 tool_size_limits 时,未知工具默认 100_000(参与持久化)。"""
+    state = ContentReplacementState()
+    messages = [
+        {"role": "tool", "tool_call_id": "tc1", "name": "unknown_tool", "content": "x" * 60_000},
+    ]
+    new_msgs, replaced = enforce_budget(
+        messages, state, tmp_path, budget_bytes=10_000,
+    )
+    # unknown_tool 默认 100K,60K > 50K persist_threshold,总 60K > 10K budget,持久化
+    assert len(replaced) == 1
