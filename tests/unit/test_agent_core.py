@@ -810,3 +810,76 @@ def test_service_passes_tool_size_limits_to_enforce_budget(tmp_path, monkeypatch
     # Bash 应该是 30_000(如果注册了)
     if "Bash" in limits:
         assert limits["Bash"] == 30_000
+
+
+def test_60kb_observation_triggers_enforce_budget_persist(tmp_path, monkeypatch):
+    """60KB observation(超 50K persist_threshold)在生产路径能触发 enforce_budget 持久化。
+
+    死代码复活验证:
+    - Task 4 移除 service.py 32K 硬截断 → 60KB observation 原样进 ctx
+    - Task 5-6 enforce_budget 传 tool_size_limits + 跳过 Infinity → read_file 默认 Infinity 被 opt-out
+    - 这里 monkeypatch ReadFileTool.max_result_size_chars=100_000,让 read_file 参与持久化
+    - 单轮 4 条 60KB tool_result(总 240KB > 200KB budget,单条 60KB > 50KB persist_threshold)
+    - 断言:磁盘有持久化文件 + ctx 里 tool message content 被替换成 <persisted-output> 占位符
+    """
+    from taisang.agent_core.events import COMPACTED
+    from taisang.agent_core.tools import ReadFileTool
+    from taisang.storage.paths import PathManager
+
+    # monkeypatch 让 read_file 参与持久化(默认 Infinity 被 opt-out)
+    monkeypatch.setattr(ReadFileTool, "max_result_size_chars", 100_000)
+
+    # 单轮 4 条 60KB tool_result(总 240KB > 200KB budget,单条 60KB > 50KB persist_threshold)
+    big_content = "x" * 60_000
+    for name in ("big1.txt", "big2.txt", "big3.txt", "big4.txt"):
+        (tmp_path / name).write_text(big_content, encoding="utf-8")
+    mock = MockLLM([
+        LLMResponse(text="", tool_calls=[
+            _tc("c1", "read_file", {"path": "big1.txt", "limit": 99999}),
+            _tc("c2", "read_file", {"path": "big2.txt", "limit": 99999}),
+            _tc("c3", "read_file", {"path": "big3.txt", "limit": 99999}),
+            _tc("c4", "read_file", {"path": "big4.txt", "limit": 99999}),
+        ]),
+        LLMResponse(text="done", tool_calls=[]),
+    ])
+    # token_budget 调大避免 240KB observation 触发 autocompact(stage-2)干扰本测试。
+    # 本测试聚焦 stage-1 enforce_budget 持久化,autocompact 是另一道压缩不该混入。
+    service = AgentService(
+        llm=mock, source_root=tmp_path, confirmer=AutoApproveConfirmer(),
+        token_budget=200_000,
+    )
+    events = []
+    service.run("读 big*.txt", on_event=lambda e: events.append(e))
+
+    # 断言 1:emit 了 COMPACTED via=tool_result_budget 事件
+    budget_events = [
+        e for e in events
+        if e.type == COMPACTED and e.payload.get("via") == "tool_result_budget"
+    ]
+    assert len(budget_events) >= 1, "应触发 stage-1 enforce_budget 持久化"
+
+    # 断言 2:payload 含 replaced 列表(持久化的 tool_call_id + path)
+    p = budget_events[0].payload
+    assert "replaced" in p
+    assert isinstance(p["replaced"], list)
+    assert len(p["replaced"]) >= 1
+    replaced_tcids = {r["tool_call_id"] for r in p["replaced"]}
+
+    # 断言 3:磁盘上有持久化文件(observations_dir 下有 {tcid}.txt)
+    observations_dir = PathManager.observations_dir(tmp_path)
+    persist_files = list(observations_dir.glob("*.txt"))
+    assert len(persist_files) >= 1, f"应至少持久化 1 个文件,实际 {persist_files}"
+
+    # 断言 4:持久化文件内容是原 60KB observation(全量,不截断)
+    for pf in persist_files:
+        content = pf.read_text(encoding="utf-8")
+        assert len(content) > 50_000, f"持久化文件应含全量 60KB observation,实际 {len(content)} 字节"
+        assert "x" * 100 in content  # 内容正确
+
+    # 断言 5:ctx 里 tool message content 被替换成 <persisted-output> 占位符
+    # 看最后一次 LLM 调用的 messages(应含被替换的 tool messages)
+    last_call_messages = mock.calls[-1]["messages"]
+    tool_msgs = [m for m in last_call_messages if m.get("role") == "tool"]
+    assert len(tool_msgs) == 4
+    persisted_tool_msgs = [m for m in tool_msgs if "[persisted-output]" in m.get("content", "")]
+    assert len(persisted_tool_msgs) >= 1, "至少 1 条 tool message 应被替换成 <persisted-output> 占位符"
