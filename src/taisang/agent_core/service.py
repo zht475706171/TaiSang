@@ -499,7 +499,7 @@ class AgentService:
                 # session memory post-sampling(idle_break 分支):
                 # LLM 给最终答案(无 tool_call)是自然对话断点,此时触发 extract。
                 # 对齐 Claude Code shouldExtractMemory 的 hasToolCallsInLastTurn=False 分支。
-                self._maybe_trigger_session_memory(last_turn_has_tool_calls=False)
+                self._maybe_trigger_session_memory(last_turn_has_tool_calls=False, _emit=_emit)
                 citations = self._extract_citations(accumulated_text)
                 # 最终答案也要落盘(走 on_append 写 jsonl),否则 resume 缺 assistant 回复
                 self.ctx.append_assistant(text=accumulated_text, tool_calls=None)
@@ -609,7 +609,7 @@ class AgentService:
             # session memory post-sampling(update 分支):
             # 工具执行完,此时本轮 resp 一定有 tool_calls(无 tool_calls 已在上面的 return 分支)。
             # 传 last_turn_has_tool_calls=True,走 update 触发分支(tokens + tool_calls 双满足)。
-            self._maybe_trigger_session_memory(last_turn_has_tool_calls=True)
+            self._maybe_trigger_session_memory(last_turn_has_tool_calls=True, _emit=_emit)
 
         self._emit_usage_report(_emit)
         return Answer(
@@ -671,7 +671,9 @@ class AgentService:
         new_system = build_system_prompt(skills_section, mcp_section, agents_section, profile_section)
         self.ctx.replace_system_prompt(new_system)
 
-    def _maybe_trigger_session_memory(self, last_turn_has_tool_calls: bool) -> None:
+    def _maybe_trigger_session_memory(
+        self, last_turn_has_tool_calls: bool, _emit: EventCallback | None = None
+    ) -> None:
         """session memory post-sampling:检查阈值,达标就异步触发后台 extract。
 
         两个触发点:
@@ -679,20 +681,37 @@ class AgentService:
         - update:工具执行完(本轮有 tool_call)→ last_turn_has_tool_calls=True
 
         触发后重置 _tool_calls_since_last_extract 计数器。
+        emit COMPACTED 事件(若 _emit 给定),payload: {via, trigger, current_tokens, delta_tokens}。
         """
         if not self.session_memory:
             return
         current_tokens = self.ctx.total_tokens()
-        if self.session_memory.should_extract(
+        trigger = self.session_memory.should_extract(
             current_tokens,
             self._tool_calls_since_last_extract,
             last_turn_has_tool_calls=last_turn_has_tool_calls,
-        ):
+        )
+        if trigger:
+            delta_tokens = (
+                current_tokens - self.session_memory._last_extracted_tokens
+                if self.session_memory.memory_path.exists()
+                else current_tokens
+            )
             self.session_memory._do_extract(
                 recent_conversation=self._recent_text(),
                 current_tokens=current_tokens,
             )
             self._tool_calls_since_last_extract = 0
+            if _emit is not None:
+                _emit(AgentEvent(
+                    type=COMPACTED,
+                    payload={
+                        "via": "session_memory",
+                        "trigger": trigger,
+                        "current_tokens": current_tokens,
+                        "delta_tokens": delta_tokens,
+                    },
+                ))
 
     def _recent_text(self) -> str:
         """取完整对话历史作为 session memory extract 输入。读 self.ctx。

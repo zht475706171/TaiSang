@@ -654,3 +654,38 @@ def test_todo_write_persists_across_runs(tmp_path):
     # reset 清空
     service.reset()
     assert service.todos == []
+
+
+def test_session_memory_trigger_emits_compacted_event(tmp_path):
+    """session_memory 触发 extract 时 emit COMPACTED 事件,payload 含 via + trigger。
+
+    用 MockLLM 让对话超过 init 阈值(MIN_TOKENS_TO_INIT=10000),should_extract 返回 "init",
+    _maybe_trigger_session_memory emit COMPACTED via=session_memory trigger=init。
+    """
+    from taisang.agent_core.events import COMPACTED
+    from taisang.session_memory.service import SessionMemoryService
+    from taisang.storage.paths import PathManager
+
+    # 构造大文本让 ctx tokens 超过 10000(init 阈值)
+    big_text = "x" * 40_000
+    mock = MockLLM([LLMResponse(text="ok", tool_calls=[])])
+    session_mem = SessionMemoryService(
+        llm=mock,
+        memory_path=PathManager.session_memory_path(tmp_path, "test-session"),
+    )
+    service = AgentService(
+        llm=mock,
+        source_root=tmp_path,
+        confirmer=AutoApproveConfirmer(),
+        session_memory=session_mem,
+    )
+    # 灌大文本进 ctx(直接 append,user 消息)
+    service.ctx.append_user(big_text)
+    events = []
+    service.run("继续", on_event=lambda e: events.append(e))
+    compacted = [e for e in events if e.type == COMPACTED and e.payload.get("via") == "session_memory"]
+    assert len(compacted) >= 1
+    p = compacted[0].payload
+    assert p["via"] == "session_memory"
+    assert p["trigger"] in ("init", "update", "idle_break")
+    assert "current_tokens" in p
