@@ -81,12 +81,23 @@ export function useChatStream(
     messages.value.push({ id: nextId(), kind: 'assistant', text })
   }
 
-  /** debug 模式下把累积的 reasoning 保留为一条 thinking 消息(插在最终答案前)。 */
-  function pushReasoningIfAny() {
+  /** debug 模式下把累积的 reasoning 保留为一条 thinking 消息。
+   *  beforeMessage 给定时,插在该消息之前(流式分支:streamingMessage 已在数组里,
+   *  thinking 要排在 assistant 前面才符合"先思考再回答"的展示顺序)。
+   *  beforeMessage 为空时 push 到末尾(非流式分支:assistant 还没 push,末尾即正确位置)。 */
+  function pushReasoningIfAny(beforeMessage?: ChatMessage) {
     if (!debugEnabled.value) return
     const text = reasoningText.value.trim()
     if (!text) return
-    messages.value.push({ id: nextId(), kind: 'thinking', text })
+    const thinkingMsg: ChatMessage = { id: nextId(), kind: 'thinking', text }
+    if (beforeMessage) {
+      const idx = messages.value.indexOf(beforeMessage)
+      if (idx > 0) {
+        messages.value.splice(idx, 0, thinkingMsg)
+        return
+      }
+    }
+    messages.value.push(thinkingMsg)
   }
 
   function pushToolCall(name: string, args: string) {
@@ -433,7 +444,9 @@ export function useChatStream(
       if (!d) return
       // debug 开启时:最终答案出来前把 reasoning 保留为一条 thinking 消息(插在答案前)。
       // debug 关闭时:reasoning 不保留(只在中间态 ThinkingIndicator 显示过)。
-      pushReasoningIfAny()
+      // 流式分支传 streamingMessage(已在数组里),pushReasoningIfAny 会 splice 到它前面;
+      // 非流式分支 streamingMessage 已 null,走 fallback push 末尾(此时 assistant 还没 push,顺序仍对)。
+      pushReasoningIfAny(streamingMessage.value || undefined)
       clearThinking()
       stopping.value = false  // 后台收尾结束,清停止中状态
       if (d.agent_id) {
