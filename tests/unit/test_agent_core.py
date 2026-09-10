@@ -96,9 +96,11 @@ def test_agent_malformed_tool_call_does_not_crash(tmp_path):
     assert ans.steps_used == 2
 
 
-def test_agent_observation_truncation(tmp_path):
-    """生成超大 observation,Agent 应截断并加 _truncated 标记。"""
-    # 构造一个超大文件,让 read_file 返回接近上限的内容
+def test_agent_observation_not_truncated(tmp_path):
+    """service.py 不再硬截断 observation,40KB 文件(< 256KB ReadFileTool 闸门)原样进 ctx。
+
+    大 observation 持久化由 enforce_budget 50K 阈值管(Task 5-6),service.py 不再再加 32K 截断。
+    """
     big_content = "x" * 40_000
     (tmp_path / "big.py").write_text(big_content, encoding="utf-8")
     mock = MockLLM(
@@ -110,11 +112,12 @@ def test_agent_observation_truncation(tmp_path):
     service = AgentService(llm=mock, source_root=tmp_path, confirmer=AutoApproveConfirmer())
     ans = service.run("read big")
     assert ans.text == "done"
-    # 验证 context 中 tool_result 被截断(查 messages 里的 tool role)
     tool_msgs = [m for m in mock.calls[1]["messages"] if m.get("role") == "tool"]
     assert len(tool_msgs) == 1
-    # 截断后 content 长度不应超过上限 + 标记后缀
-    assert len(tool_msgs[0]["content"]) <= 33_000  # 32k 截断 + 标记后缀
+    # observation 原样进 ctx,不被 32K 截断。40KB 文件 < 256KB ReadFileTool 闸门,能完整读。
+    # content 是 JSON {"content": "...", "truncated": false, "total_lines": N, "offset": 1, "error": null}
+    # 长度应包含完整 40KB 内容 + JSON 包装
+    assert len(tool_msgs[0]["content"]) > 40_000
 
 
 def test_agent_llm_protocol_error_terminates(tmp_path):
@@ -691,19 +694,16 @@ def test_session_memory_trigger_emits_compacted_event(tmp_path):
     assert "current_tokens" in p
 
 
-def test_enforce_budget_emits_compacted_event(tmp_path, monkeypatch):
+def test_enforce_budget_emits_compacted_event(tmp_path):
     """enforce_budget 持久化大 tool_result 时 emit COMPACTED 事件(stage=1, via=tool_result_budget)。
 
     构造超 50KB 的 tool_result,run 一轮,应看到 COMPACTED via=tool_result_budget payload。
 
-    需要调高 service 的 _MAX_OBSERVATION_BYTES(默认 32KB),否则 tool_result 进 ctx 前
-    就被截断到 32KB < 50KB persist_threshold,持久化分支不可达。
+    Task 4 已移除 service 的 _MAX_OBSERVATION_BYTES 32KB 硬截断,60KB tool_result 现在能
+    完整进 ctx(60KB < 256KB ReadFileTool 闸门能读,service.py 不再二次截断),
+    enforce_budget 50K persist_threshold 可达。
     """
-    from taisang.agent_core import service as service_mod
     from taisang.agent_core.events import COMPACTED
-
-    # 调高 observation 截断闸门,让 60KB tool_result 能完整进 ctx
-    monkeypatch.setattr(service_mod, "_MAX_OBSERVATION_BYTES", 200_000)
 
     # 单轮 4 条 60KB tool_result(总 240KB > 200KB budget,单条 60KB > 50KB persist_threshold)
     # 用 read_file 的 limit 参数绕过 ReadFileTool 自身的 32KB 字节闸门,拿全量内容

@@ -49,9 +49,6 @@ from .tools import ToolRegistry
 
 log = logging.getLogger(__name__)
 
-# observation 单条上限(字节)。超长截断以保护上下文预算。
-_MAX_OBSERVATION_BYTES = 32_000
-
 # citation 抽取正则,模块级预编译。
 _CITATION_RE = re.compile(r"\[([^\]\s]+\.py)(?::(\d+)(?:-(\d+))?)?\]")
 
@@ -584,8 +581,10 @@ class AgentService:
                     result = {"error": f"tool {name} failed: {e}"}
                 observation = json.dumps(result, ensure_ascii=False)
                 total_bytes = len(observation.encode("utf-8"))
-                if total_bytes > _MAX_OBSERVATION_BYTES:
-                    observation = observation[:_MAX_OBSERVATION_BYTES] + '...{"_truncated": true}'
+                # 移除 _MAX_OBSERVATION_BYTES 硬截断:
+                # 工具自己管截断/抛错(ReadFileTool 256KB 抛 error, BashTool 30KB 落盘),
+                # enforce_budget 50K 阈值在每轮 LLM 调用前持久化大 observation。
+                # service.py 不再加第二道 32KB 截断(会让 enforce_budget 50K 阈值永远触发不到)。
                 _emit(
                     AgentEvent(
                         type=TOOL_RESULT,
