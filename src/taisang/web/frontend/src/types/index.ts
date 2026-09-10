@@ -39,9 +39,22 @@ export interface ChatMessage {
   toolArgs?: string        // JSON.stringify(args)
   toolPreview?: string
   toolBytes?: number
+  toolFullContent?: string  // debug 模式下完整 observation(debug_tool_result 事件覆盖)
   toolFilled?: boolean     // tool_result 是否已填充
   // compacted
   via?: string
+  stage?: number           // 1=enforce_budget, 2=autocompact/llm, 3=session_memory
+  // compacted 统计字段(按 stage 不同):
+  //   stage 1: replaced?: Array<{tool_call_id: string; path: string}>
+  //   stage 2: before_tokens?: number; after_tokens?: number; summary_messages?: number
+  //   stage 3: trigger?: string; current_tokens?: number; delta_tokens?: number
+  replaced?: Array<{ tool_call_id: string; path: string }>
+  beforeTokens?: number
+  afterTokens?: number
+  summaryMessages?: number
+  trigger?: string
+  currentTokens?: number
+  deltaTokens?: number
   // confirm / permission
   token?: string
   filePath?: string
