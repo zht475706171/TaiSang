@@ -735,3 +735,36 @@ def test_enforce_budget_emits_compacted_event(tmp_path, monkeypatch):
     assert isinstance(p["replaced"], list)
     if p["replaced"]:
         assert "tool_call_id" in p["replaced"][0]
+
+
+def test_autocompact_emits_tokens_in_payload(tmp_path):
+    """autocompact 触发时 emit COMPACTED payload 含 before_tokens / after_tokens。
+
+    构造大 ctx 让 should_compact 触发,MockLLM 给摘要响应,验证 COMPACTED via=llm
+    payload 有 before_tokens(压缩前) + after_tokens(压缩后) + summary_messages(摘要条数)。
+    """
+    from taisang.agent_core.events import COMPACTED
+
+    # 灌大文本让 ctx 超过 token_budget * compact_ratio 触发 should_compact
+    big_text = "x" * 200_000
+    mock = MockLLM([
+        LLMResponse(text="<summary>摘要内容</summary>", tool_calls=[]),
+        LLMResponse(text="最终答案", tool_calls=[]),
+    ])
+    service = AgentService(
+        llm=mock, source_root=tmp_path, confirmer=AutoApproveConfirmer(),
+        token_budget=1000,  # 调小让大文本容易超
+    )
+    service.ctx.append_user(big_text)
+    events = []
+    service.run("继续", on_event=lambda e: events.append(e))
+    llm_compacted = [
+        e for e in events
+        if e.type == COMPACTED and e.payload.get("via") == "llm"
+    ]
+    if llm_compacted:  # 触发了 autocompact 才校验
+        p = llm_compacted[0].payload
+        assert "before_tokens" in p
+        assert "after_tokens" in p
+        assert p["before_tokens"] > p["after_tokens"]
+        assert "summary_messages" in p

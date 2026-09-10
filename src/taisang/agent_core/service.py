@@ -638,6 +638,7 @@ class AgentService:
         返回 True 表示做了压缩(messages 已替换),调用方应重置 tool_calls 计数并 continue。
         操作 self.ctx(实例属性,跨 run() 保留)。
         """
+        before_tokens = self.ctx.total_tokens()
         # 先试 session memory(零 LLM 调用)
         if self.session_memory is not None:
             summary = self.session_memory.read_for_compaction()
@@ -654,10 +655,17 @@ class AgentService:
                         f"portion.\n\nSummary:\n{summary}"
                     ),
                 }
-                self.ctx.replace_messages([boundary, summary_msg], compaction_via="session_memory")
+                new_msgs = [boundary, summary_msg]
+                self.ctx.replace_messages(new_msgs, compaction_via="session_memory")
+                after_tokens = self.ctx.total_tokens()
                 # 画像搭便车:autocompact 已废 cache,顺手重注入最新画像
                 self._reinject_profile_into_system()
-                _emit(AgentEvent(type=COMPACTED, payload={"via": "session_memory"}))
+                _emit(AgentEvent(type=COMPACTED, payload={
+                    "via": "session_memory",
+                    "before_tokens": before_tokens,
+                    "after_tokens": after_tokens,
+                    "summary_messages": len(new_msgs),
+                }))
                 return True
 
         # fallback: LLM 摘要
@@ -665,9 +673,15 @@ class AgentService:
 
         new_msgs = do_autocompact(self.ctx.messages(), self.llm, transcript_path)
         self.ctx.replace_messages(new_msgs, compaction_via="llm")
+        after_tokens = self.ctx.total_tokens()
         # 画像搭便车:autocompact 已废 cache,顺手重注入最新画像
         self._reinject_profile_into_system()
-        _emit(AgentEvent(type=COMPACTED, payload={"via": "llm"}))
+        _emit(AgentEvent(type=COMPACTED, payload={
+            "via": "llm",
+            "before_tokens": before_tokens,
+            "after_tokens": after_tokens,
+            "summary_messages": len(new_msgs),
+        }))
         return True
 
     def _reinject_profile_into_system(self) -> None:
