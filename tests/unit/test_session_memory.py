@@ -33,15 +33,15 @@ def test_should_extract_first_time_under_threshold(tmp_path):
     """笔记不存在 + 累积 tokens < 10000 → 不提取。"""
     memory_path = tmp_path / "summary.md"
     service = SessionMemoryService(llm=MockLLM([]), memory_path=memory_path)
-    # current_tokens=5000 < MIN_TOKENS_TO_INIT(10000)
-    assert service.should_extract(current_tokens=5_000, tool_calls_since_last=0) is False
+    # current_tokens=5000 < MIN_TOKENS_TO_INIT(10000) → 返回空串(不触发)
+    assert service.should_extract(current_tokens=5_000, tool_calls_since_last=0) == ""
 
 
 def test_should_extract_first_time_over_threshold(tmp_path):
     """笔记不存在 + 累积 tokens >= 10000 → 提取(初始化)。"""
     memory_path = tmp_path / "summary.md"
     service = SessionMemoryService(llm=MockLLM([]), memory_path=memory_path)
-    assert service.should_extract(current_tokens=15_000, tool_calls_since_last=0) is True
+    assert service.should_extract(current_tokens=15_000, tool_calls_since_last=0) == "init"
 
 
 def test_should_extract_after_init_needs_both_gates(tmp_path):
@@ -50,18 +50,18 @@ def test_should_extract_after_init_needs_both_gates(tmp_path):
     service = SessionMemoryService(llm=MockLLM([]), memory_path=memory_path)
     service.ensure_file()
     service._last_extracted_tokens = 0
-    # delta 6000 >= 5000 但 tool_calls=1 < 3 → False
-    assert service.should_extract(current_tokens=6_000, tool_calls_since_last=1) is False
-    # tool_calls=3 >= 3 且 delta 6000 >= 5000 → True
-    assert service.should_extract(current_tokens=6_000, tool_calls_since_last=3) is True
-    # 临界:delta=5000 正好等于阈值 → True
-    assert service.should_extract(current_tokens=5_000, tool_calls_since_last=3) is True
-    # 临界:tool_calls=3 正好等于阈值,delta=5000 → True
+    # delta 6000 >= 5000 但 tool_calls=1 < 3 → 空串(不触发)
+    assert service.should_extract(current_tokens=6_000, tool_calls_since_last=1) == ""
+    # tool_calls=3 >= 3 且 delta 6000 >= 5000 → "update"
+    assert service.should_extract(current_tokens=6_000, tool_calls_since_last=3) == "update"
+    # 临界:delta=5000 正好等于阈值 → "update"
+    assert service.should_extract(current_tokens=5_000, tool_calls_since_last=3) == "update"
+    # 临界:tool_calls=3 正好等于阈值,delta=5000 → "update"
     assert (
         service.should_extract(
             current_tokens=5_000, tool_calls_since_last=TOOL_CALLS_BETWEEN_UPDATES
         )
-        is True
+        == "update"
     )
 
 
@@ -71,8 +71,8 @@ def test_should_extract_after_init_insufficient_delta(tmp_path):
     service = SessionMemoryService(llm=MockLLM([]), memory_path=memory_path)
     service.ensure_file()
     service._last_extracted_tokens = 4_000
-    # delta=1000 < 5000,tool_calls=5 够 → False
-    assert service.should_extract(current_tokens=5_000, tool_calls_since_last=5) is False
+    # delta=1000 < 5000,tool_calls=5 够 → 空串(不触发)
+    assert service.should_extract(current_tokens=5_000, tool_calls_since_last=5) == ""
 
 
 def test_read_for_compaction_returns_none_for_empty_template(tmp_path):
@@ -303,7 +303,7 @@ def test_extract_failure_does_not_propagate(tmp_path):
 
 
 def test_extract_skipped_when_already_running(tmp_path):
-    """已在提取中(_extracting=True)时,should_extract 返回 False,不重复触发。"""
+    """已在提取中(_extracting=True)时,should_extract 返回空串,不重复触发。"""
     memory_path = tmp_path / "summary.md"
     memory_path.parent.mkdir(parents=True, exist_ok=True)
     memory_path.write_text("# Session Title\n*desc*\n(old)\n", encoding="utf-8")
@@ -311,8 +311,8 @@ def test_extract_skipped_when_already_running(tmp_path):
     service = SessionMemoryService(llm=MockLLM([]), memory_path=memory_path)
     # 模拟上一次还在跑
     service._extracting = True
-    # should_extract 应返回 False(已在跑)
-    assert service.should_extract(current_tokens=20_000, tool_calls_since_last=10) is False
+    # should_extract 应返回空串(已在跑)
+    assert service.should_extract(current_tokens=20_000, tool_calls_since_last=10) == ""
     # _do_extract 也应跳过(不启动新线程)
     service._do_extract(
         recent_conversation="test", current_tokens=20_000
@@ -438,23 +438,23 @@ def test_should_extract_idle_break_branch(tmp_path):
     service = SessionMemoryService(llm=MockLLM([]), memory_path=memory_path)
     service.ensure_file()
     service._last_extracted_tokens = 0
-    # tool_calls=0(不够 3),但 last_turn_has_tool_calls=False
+    # tool_calls=0(不够 3),但 last_turn_has_tool_calls=False → "idle_break"
     assert (
         service.should_extract(
             current_tokens=6_000,
             tool_calls_since_last=0,
             last_turn_has_tool_calls=False,
         )
-        is True
+        == "idle_break"
     )
-    # 对比:同条件但 last_turn_has_tool_calls=True → 不触发(因为 tool_calls 不够)
+    # 对比:同条件但 last_turn_has_tool_calls=True → 空串(不触发,因为 tool_calls 不够)
     assert (
         service.should_extract(
             current_tokens=6_000,
             tool_calls_since_last=0,
             last_turn_has_tool_calls=True,
         )
-        is False
+        == ""
     )
 
 
@@ -471,7 +471,7 @@ def test_should_extract_idle_break_needs_token_threshold(tmp_path):
             tool_calls_since_last=0,
             last_turn_has_tool_calls=False,
         )
-        is False
+        == ""
     )
 
 
@@ -508,10 +508,10 @@ def test_init_branch_not_bypassed_by_early_ensure_file(tmp_path):
     service = SessionMemoryService(llm=MockLLM([]), memory_path=memory_path)
     # 不调 ensure_file(模拟启动时不预建)
     assert not memory_path.exists()
-    # tokens=6000 < MIN_TOKENS_TO_INIT(10000)→ 不触发
-    assert service.should_extract(current_tokens=6_000, tool_calls_since_last=10) is False
-    # tokens=12000 >= 10000 → 触发 init
-    assert service.should_extract(current_tokens=12_000, tool_calls_since_last=0) is True
+    # tokens=6000 < MIN_TOKENS_TO_INIT(10000)→ 空串(不触发)
+    assert service.should_extract(current_tokens=6_000, tool_calls_since_last=10) == ""
+    # tokens=12000 >= 10000 → "init"
+    assert service.should_extract(current_tokens=12_000, tool_calls_since_last=0) == "init"
 
 
 def test_do_extract_records_last_extracted_tokens(tmp_path):
@@ -563,17 +563,17 @@ def test_do_extract_records_last_extracted_tokens(tmp_path):
         time.sleep(0.01)
     # worker 完成后 _last_extracted_tokens 仍 = 15000(不被覆盖)
     assert service._last_extracted_tokens == 15_000
-    # 下次 should_extract:delta = 18000 - 15000 = 3000 < 5000 → 不触发
+    # 下次 should_extract:delta = 18000 - 15000 = 3000 < 5000 → 空串(不触发)
     assert (
         service.should_extract(
             current_tokens=18_000, tool_calls_since_last=5, last_turn_has_tool_calls=True
         )
-        is False
+        == ""
     )
-    # delta = 21000 - 15000 = 6000 >= 5000 + tool_calls >= 3 → 触发
+    # delta = 21000 - 15000 = 6000 >= 5000 + tool_calls >= 3 → "update"
     assert (
         service.should_extract(
             current_tokens=21_000, tool_calls_since_last=5, last_turn_has_tool_calls=True
         )
-        is True
+        == "update"
     )

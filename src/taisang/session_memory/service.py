@@ -56,28 +56,20 @@ class SessionMemoryService:
         current_tokens: int,
         tool_calls_since_last: int,
         last_turn_has_tool_calls: bool = True,
-    ) -> bool:
+    ) -> str:
         """3 道阈值门控 + idle_break 分支:笔记不存在走 init,存在走 update/idle_break。
 
-        参数:
-            current_tokens: 当前 ctx 总 token 数
-            tool_calls_since_last: 上次提取后累计工具调用次数
-            last_turn_has_tool_calls: 最后一轮 LLM 响应是否包含 tool_call
-                True=有工具调用(还在干活);False=没有(自然对话断点)
-                默认 True(保守:不知道就当有,不触发 idle_break)
+        返回 trigger 原因字符串(非 bool):
+        - "init":笔记不存在 + tokens >= MIN_TOKENS_TO_INIT
+        - "update":笔记存在 + delta_tokens + tool_calls 双满足
+        - "idle_break":笔记存在 + delta_tokens 满足 + 最后一轮无工具调用
+        - "":不触发(调用方 `if reason:` 即可判断)
 
-        已在提取中(_extracting=True)时直接返回 False,避免并发触发。
-
-        触发条件(对齐 Claude Code shouldExtractMemory):
-        1. 笔记不存在 + current_tokens >= MIN_TOKENS_TO_INIT → init 触发
-        2. 笔记存在 + delta_tokens >= MIN_TOKENS_BETWEEN_UPDATE
-           + tool_calls_since_last >= TOOL_CALLS_BETWEEN_UPDATES → update 触发
-        3. 笔记存在 + delta_tokens >= MIN_TOKENS_BETWEEN_UPDATE
-           + last_turn_has_tool_calls=False → idle_break 触发(自然断点)
+        已在提取中(_extracting=True)时返回 "",避免并发触发。
         """
         if self._extracting:
             log.info("session memory TRIGGER skipped: already running")
-            return False
+            return ""
 
         if not self.memory_path.exists():
             if current_tokens >= MIN_TOKENS_TO_INIT:
@@ -87,14 +79,13 @@ class SessionMemoryService:
                     MIN_TOKENS_TO_INIT,
                     self.memory_path.name,
                 )
-                return True
-            return False
+                return "init"
+            return ""
 
         delta_tokens = current_tokens - self._last_extracted_tokens
         has_met_token = delta_tokens >= MIN_TOKENS_BETWEEN_UPDATE
         has_met_tools = tool_calls_since_last >= TOOL_CALLS_BETWEEN_UPDATES
 
-        # 分支 2: 满足 token + 工具调用次数
         if has_met_token and has_met_tools:
             log.info(
                 "session memory TRIGGER update: delta_tokens=%d (>= %d), "
@@ -105,9 +96,8 @@ class SessionMemoryService:
                 TOOL_CALLS_BETWEEN_UPDATES,
                 self.memory_path.name,
             )
-            return True
+            return "update"
 
-        # 分支 3: 满足 token + 最后一轮无工具调用(自然对话断点)
         if has_met_token and not last_turn_has_tool_calls:
             log.info(
                 "session memory TRIGGER idle_break: delta_tokens=%d (>= %d), "
@@ -116,9 +106,9 @@ class SessionMemoryService:
                 MIN_TOKENS_BETWEEN_UPDATE,
                 self.memory_path.name,
             )
-            return True
+            return "idle_break"
 
-        return False
+        return ""
 
     def read_for_compaction(self) -> str | None:
         """autocompact 触发时调用:读笔记内容作为摘要。返回 None 则 fallback 到 LLM 摘要。"""
