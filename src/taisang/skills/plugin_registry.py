@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -56,6 +57,10 @@ def load_plugins(plugins_file: Path) -> dict[str, InstalledPlugin]:
     for name, p in plugins_raw.items():
         if not isinstance(p, dict):
             continue
+        raw_skills = p.get("skills", [])
+        if not isinstance(raw_skills, list):
+            log.warning("plugin %s 的 skills 字段不是 list,丢弃: %r", name, type(raw_skills))
+            raw_skills = []
         try:
             result[name] = InstalledPlugin(
                 name=p.get("name", name),
@@ -63,9 +68,10 @@ def load_plugins(plugins_file: Path) -> dict[str, InstalledPlugin]:
                 version=p.get("version", ""),
                 git_commit_sha=p.get("git_commit_sha", ""),
                 installed_at=p.get("installed_at", ""),
-                skills=list(p.get("skills", [])),
+                skills=[str(s) for s in raw_skills],
             )
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as e:
+            log.warning("plugin 条目 %s 解析失败,跳过: %s", name, e)
             continue
     return result
 
@@ -77,13 +83,20 @@ def save_plugins(plugins_file: Path, plugins: dict[str, InstalledPlugin]) -> Non
         "version": 1,
         "plugins": {name: asdict(p) for name, p in plugins.items()},
     }
-    tmp = plugins_file.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp = plugins_file.with_suffix(f".{os.getpid()}.{uuid.uuid4().hex}.tmp")
     try:
-        os.chmod(tmp, 0o600)
-    except OSError:
-        pass  # Windows 无 chmod
-    os.replace(tmp, plugins_file)
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:
+            pass  # Windows 无 chmod
+        os.replace(tmp, plugins_file)
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def upsert_plugin(plugins_file: Path, plugin: InstalledPlugin) -> None:

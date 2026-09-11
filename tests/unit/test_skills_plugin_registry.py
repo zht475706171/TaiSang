@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -37,8 +38,10 @@ def test_load_plugins_missing_file(tmp_path):
 def test_load_plugins_corrupted_returns_empty(tmp_path, caplog):
     f = tmp_path / "plugins.json"
     f.write_text("{not valid json", encoding="utf-8")
-    result = load_plugins(f)
+    with caplog.at_level(logging.WARNING):
+        result = load_plugins(f)
     assert result == {}
+    assert "损坏" in caplog.text
 
 
 def test_save_and_load_roundtrip(tmp_path):
