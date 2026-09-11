@@ -104,3 +104,21 @@ def test_system_dirs_empty_disables_builtin():
     """显式传 system_dirs=[] 时不加载内置(测试隔离用)。"""
     skills = load_skills(user_dirs=[], project_dirs=[], system_dirs=[])
     assert skills == []
+
+
+def test_skill_dataclass_has_plugin_name_default_none():
+    """Skill dataclass 必须有 plugin_name 字段,默认 None。"""
+    from pathlib import Path
+
+    from taisang.skills.types import Skill
+
+    s = Skill(
+        name="x",
+        description="d",
+        when_to_use="",
+        allowed_tools=None,
+        dir_path=Path("/tmp"),
+        content="",
+        source="user",
+    )
+    assert s.plugin_name is None

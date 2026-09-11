@@ -14,3 +14,4 @@ class Skill:
     content: str
     source: str
     disabled: bool = False
+    plugin_name: str | None = None
