@@ -29,6 +29,9 @@ from .plugin_registry import (
     remove_plugin,
     upsert_plugin,
 )
+from .loader import _FRONTMATTER_RE
+
+import yaml
 
 log = logging.getLogger(__name__)
 
@@ -140,25 +143,23 @@ def _copy_skills_dir_form(clone_dir: Path, dest_plugin_dir: Path) -> list[str]:
 
 
 def _parse_skill_name_from_frontmatter(skill_md: Path) -> str | None:
-    """从 SKILL.md YAML frontmatter 解析 name 字段;失败返回 None。"""
+    """从 SKILL.md frontmatter 解析 name 字段;无 frontmatter 或解析失败返回 None。
+
+    复用 loader._FRONTMATTER_RE + yaml.safe_load,和 loader/importer 行为一致。
+    """
     try:
         text = skill_md.read_text(encoding="utf-8")
     except OSError:
         return None
-    if not text.startswith("---"):
+    m = _FRONTMATTER_RE.match(text)
+    if not m:
         return None
-    # 找闭合 ---
-    end = text.find("\n---", 3)
-    if end == -1:
+    try:
+        fm = yaml.safe_load(m.group(1)) or {}
+    except yaml.YAMLError:
         return None
-    front = text[3:end]
-    for line in front.splitlines():
-        if ":" not in line:
-            continue
-        key, _, value = line.partition(":")
-        if key.strip() == "name":
-            return value.strip().strip('"').strip("'")
-    return None
+    name = fm.get("name")
+    return str(name).strip() if name else None
 
 
 def _copy_single_skill_form(clone_dir: Path, dest_plugin_dir: Path) -> list[str]:
@@ -197,6 +198,8 @@ def install_plugin(
             )
         except FileNotFoundError as e:
             raise PluginInstallError("系统未安装 git,请先安装 git") from e
+        except subprocess.TimeoutExpired as e:
+            raise PluginInstallError(f"git clone 超时(120s),仓库过大或网络慢: {clone_url}") from e
         if result.returncode != 0:
             stderr = result.stderr.decode("utf-8", errors="replace").strip()
             raise PluginInstallError(f"git clone 失败: {stderr or '未知错误'}")
@@ -215,7 +218,12 @@ def install_plugin(
         # 3. 覆盖式升级:先删旧目录
         dest_plugin_dir = user_skills_dir / plugin_name
         if dest_plugin_dir.exists():
-            shutil.rmtree(dest_plugin_dir)
+            try:
+                shutil.rmtree(dest_plugin_dir)
+            except OSError as e:
+                raise PluginInstallError(
+                    f"删除旧 plugin 目录失败,可能被占用: {dest_plugin_dir}"
+                ) from e
         dest_plugin_dir.mkdir(parents=True, exist_ok=True)
 
         # 4. 复制 skills
@@ -228,11 +236,11 @@ def install_plugin(
             raise PluginInstallError("未找到可导入的 skill")
 
         # 5. 读 version + sha
-        version = _read_version(tmp_dir) or _read_head_sha(tmp_dir)[:12]
         sha = _read_head_sha(tmp_dir)
+        version = _read_version(tmp_dir) or sha
         installed_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # 6. 更新 installed_plugins.json(覆盖式)
+    # 6. 更新 installed_plugins.json(覆盖式) — 失败时回滚已复制的目录
     plugin = InstalledPlugin(
         name=plugin_name,
         source=canonical,
@@ -241,7 +249,11 @@ def install_plugin(
         installed_at=installed_at,
         skills=skills,
     )
-    upsert_plugin(plugins_file, plugin)
+    try:
+        upsert_plugin(plugins_file, plugin)
+    except OSError as e:
+        shutil.rmtree(dest_plugin_dir, ignore_errors=True)
+        raise PluginInstallError(f"写入 plugin 注册表失败: {e}") from e
     return plugin
 
 
@@ -255,5 +267,10 @@ def uninstall_plugin(
     if not dest.exists() and name not in load_plugins(plugins_file):
         raise PluginInstallError(f"未安装: {name}")
     if dest.exists():
-        shutil.rmtree(dest)
+        try:
+            shutil.rmtree(dest)
+        except OSError as e:
+            raise PluginInstallError(
+                f"删除 plugin 目录失败,可能被占用: {dest}"
+            ) from e
     remove_plugin(plugins_file, name)

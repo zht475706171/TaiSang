@@ -52,11 +52,18 @@ def _make_fake_clone(target_dir: Path, structure: Path):
             shutil.copy2(item, dest)
 
 
-def _setup_fake_clone(fixture_root: Path):
+def _setup_fake_clone(fixture_root: Path, expected_url: str | None = None):
     """返回一个函数,用作 mock subprocess.run 的 side_effect:
-    把 fixture_root 的内容复制到命令行指定的目标目录。"""
+    把 fixture_root 的内容复制到命令行指定的目标目录。
+    expected_url: 如果提供,断言 git clone 的 URL 匹配(验证命令构造)。"""
     def _fake_run(cmd, *args, **kwargs):
         # cmd = ["git", "clone", url, tmpdir]
+        assert cmd[0] == "git", f"expected git, got {cmd[0]}"
+        assert cmd[1] == "clone", f"expected clone, got {cmd[1]}"
+        assert cmd[2].startswith("https://github.com/"), f"expected github URL, got {cmd[2]}"
+        assert cmd[2].endswith(".git"), f"expected .git suffix, got {cmd[2]}"
+        if expected_url is not None:
+            assert cmd[2] == expected_url, f"expected {expected_url}, got {cmd[2]}"
         target = Path(cmd[3])
         target.mkdir(parents=True, exist_ok=True)
         _make_fake_clone(target, fixture_root)
@@ -109,7 +116,7 @@ def test_install_plugin_superpowers_form(tmp_path):
     fixture = _make_superpowers_fixture(tmp_path)
     user_dir = tmp_path / "user_skills"
     plugins_file = tmp_path / "plugins.json"
-    with patch("taisang.skills.installer.subprocess.run", side_effect=_setup_fake_clone(fixture)):
+    with patch("taisang.skills.installer.subprocess.run", side_effect=_setup_fake_clone(fixture, "https://github.com/obra/superpowers.git")):
         with patch("taisang.skills.installer.subprocess.check_output", return_value=b"abc123def456\n"):
             result = install_plugin("obra/superpowers", user_dir, plugins_file)
     assert isinstance(result, InstalledPlugin)
@@ -131,7 +138,7 @@ def test_install_plugin_single_skill_form(tmp_path):
     fixture = _make_single_skill_fixture(tmp_path)
     user_dir = tmp_path / "user_skills"
     plugins_file = tmp_path / "plugins.json"
-    with patch("taisang.skills.installer.subprocess.run", side_effect=_setup_fake_clone(fixture)):
+    with patch("taisang.skills.installer.subprocess.run", side_effect=_setup_fake_clone(fixture, "https://github.com/solo/repo.git")):
         with patch("taisang.skills.installer.subprocess.check_output", return_value=b"sha123\n"):
             result = install_plugin("solo/repo", user_dir, plugins_file)
     assert result.name == "repo"
@@ -144,7 +151,7 @@ def test_install_plugin_marketplace_form_errors(tmp_path):
     fixture = _make_marketplace_fixture(tmp_path)
     user_dir = tmp_path / "user_skills"
     plugins_file = tmp_path / "plugins.json"
-    with patch("taisang.skills.installer.subprocess.run", side_effect=_setup_fake_clone(fixture)):
+    with patch("taisang.skills.installer.subprocess.run", side_effect=_setup_fake_clone(fixture, "https://github.com/foo/bar.git")):
         with pytest.raises(PluginInstallError, match="marketplace"):
             install_plugin("foo/bar", user_dir, plugins_file)
 
@@ -153,7 +160,7 @@ def test_install_plugin_no_skills_errors(tmp_path):
     fixture = _make_empty_fixture(tmp_path)
     user_dir = tmp_path / "user_skills"
     plugins_file = tmp_path / "plugins.json"
-    with patch("taisang.skills.installer.subprocess.run", side_effect=_setup_fake_clone(fixture)):
+    with patch("taisang.skills.installer.subprocess.run", side_effect=_setup_fake_clone(fixture, "https://github.com/foo/bar.git")):
         with pytest.raises(PluginInstallError, match="未找到可导入"):
             install_plugin("foo/bar", user_dir, plugins_file)
 
@@ -164,7 +171,7 @@ def test_install_plugin_overwrite_upgrades(tmp_path):
     user_dir = tmp_path / "user_skills"
     plugins_file = tmp_path / "plugins.json"
     # 第一次安装
-    with patch("taisang.skills.installer.subprocess.run", side_effect=_setup_fake_clone(fixture)):
+    with patch("taisang.skills.installer.subprocess.run", side_effect=_setup_fake_clone(fixture, "https://github.com/obra/superpowers.git")):
         with patch("taisang.skills.installer.subprocess.check_output", return_value=b"aaa111222333\n"):
             install_plugin("obra/superpowers", user_dir, plugins_file)
     # 在旧 skill 目录里塞一个"垃圾"文件,验证升级时被清空
@@ -172,7 +179,7 @@ def test_install_plugin_overwrite_upgrades(tmp_path):
     junk.write_text("should be removed on upgrade", encoding="utf-8")
     # 第二次安装(升级) — fixture 改一下版本
     (fixture / "package.json").write_text('{"version": "5.2.0"}', encoding="utf-8")
-    with patch("taisang.skills.installer.subprocess.run", side_effect=_setup_fake_clone(fixture)):
+    with patch("taisang.skills.installer.subprocess.run", side_effect=_setup_fake_clone(fixture, "https://github.com/obra/superpowers.git")):
         with patch("taisang.skills.installer.subprocess.check_output", return_value=b"bbb444555666\n"):
             result = install_plugin("obra/superpowers", user_dir, plugins_file)
     assert result.version == "5.2.0"
@@ -209,7 +216,7 @@ def test_install_plugin_no_package_json_uses_sha_as_version(tmp_path):
     (fixture / "package.json").unlink()  # 删掉 package.json
     user_dir = tmp_path / "user_skills"
     plugins_file = tmp_path / "plugins.json"
-    with patch("taisang.skills.installer.subprocess.run", side_effect=_setup_fake_clone(fixture)):
+    with patch("taisang.skills.installer.subprocess.run", side_effect=_setup_fake_clone(fixture, "https://github.com/obra/superpowers.git")):
         with patch("taisang.skills.installer.subprocess.check_output", return_value=b"abcdef123456\n"):
             result = install_plugin("obra/superpowers", user_dir, plugins_file)
     # version 用 commit sha 前 12 位
@@ -220,7 +227,7 @@ def test_uninstall_plugin_removes_dir_and_entry(tmp_path):
     fixture = _make_superpowers_fixture(tmp_path)
     user_dir = tmp_path / "user_skills"
     plugins_file = tmp_path / "plugins.json"
-    with patch("taisang.skills.installer.subprocess.run", side_effect=_setup_fake_clone(fixture)):
+    with patch("taisang.skills.installer.subprocess.run", side_effect=_setup_fake_clone(fixture, "https://github.com/obra/superpowers.git")):
         with patch("taisang.skills.installer.subprocess.check_output", return_value=b"sha\n"):
             install_plugin("obra/superpowers", user_dir, plugins_file)
     assert (user_dir / "superpowers").exists()
@@ -235,3 +242,54 @@ def test_uninstall_plugin_missing_errors(tmp_path):
     plugins_file = tmp_path / "plugins.json"
     with pytest.raises(PluginInstallError, match="未安装"):
         uninstall_plugin("nonexistent", user_dir, plugins_file)
+
+
+def test_install_plugin_clone_timeout(tmp_path):
+    """git clone 超时 → PluginInstallError(友好消息,不是 raw TimeoutExpired)。"""
+    user_dir = tmp_path / "user_skills"
+    plugins_file = tmp_path / "plugins.json"
+    def _timeout(cmd, *a, **kw):
+        raise subprocess.TimeoutExpired(cmd, 120)
+    with patch("taisang.skills.installer.subprocess.run", side_effect=_timeout):
+        with pytest.raises(PluginInstallError, match="超时"):
+            install_plugin("obra/superpowers", user_dir, plugins_file)
+
+
+def test_install_plugin_upsert_failure_rolls_back(tmp_path):
+    """upsert_plugin 失败 → 回滚已复制的 plugin 目录。"""
+    fixture = _make_superpowers_fixture(tmp_path)
+    user_dir = tmp_path / "user_skills"
+    plugins_file = tmp_path / "plugins.json"
+    with patch("taisang.skills.installer.subprocess.run", side_effect=_setup_fake_clone(fixture, "https://github.com/obra/superpowers.git")):
+        with patch("taisang.skills.installer.subprocess.check_output", return_value=b"abc123\n"):
+            with patch("taisang.skills.installer.upsert_plugin", side_effect=OSError("disk full")):
+                with pytest.raises(PluginInstallError, match="写入 plugin 注册表失败"):
+                    install_plugin("obra/superpowers", user_dir, plugins_file)
+    # 回滚:plugin 目录不应残留
+    assert not (user_dir / "superpowers").exists()
+
+
+def test_install_plugin_skips_invalid_skill_dir_name(tmp_path):
+    """skills/ 下有不合法目录名(含空格) → 跳过该 skill,其他 skill 正常导入。"""
+    fixture = tmp_path / "fixture"
+    (fixture / "skills" / "brainstorming").mkdir(parents=True)
+    (fixture / "skills" / "brainstorming" / "SKILL.md").write_text(
+        "---\nname: brainstorming\ndescription: d\n---\nbody", encoding="utf-8"
+    )
+    # 不合法目录名(含空格,不匹配 _SAFE_NAME_RE)
+    (fixture / "skills" / "bad name").mkdir(parents=True)
+    (fixture / "skills" / "bad name" / "SKILL.md").write_text(
+        "---\nname: bad\ndescription: d\n---\nbody", encoding="utf-8"
+    )
+    (fixture / "package.json").write_text('{"version": "1.0.0"}', encoding="utf-8")
+    user_dir = tmp_path / "user_skills"
+    plugins_file = tmp_path / "plugins.json"
+    with patch("taisang.skills.installer.subprocess.run", side_effect=_setup_fake_clone(fixture, "https://github.com/obra/superpowers.git")):
+        with patch("taisang.skills.installer.subprocess.check_output", return_value=b"abc123\n"):
+            result = install_plugin("obra/superpowers", user_dir, plugins_file)
+    # 合法 skill 被导入
+    assert "brainstorming" in result.skills
+    assert (user_dir / "superpowers" / "brainstorming" / "SKILL.md").exists()
+    # 不合法 skill 被跳过
+    assert "bad name" not in result.skills
+    assert not (user_dir / "superpowers" / "bad name").exists()
