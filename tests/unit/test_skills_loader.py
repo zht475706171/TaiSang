@@ -122,3 +122,56 @@ def test_skill_dataclass_has_plugin_name_default_none():
         source="user",
     )
     assert s.plugin_name is None
+
+
+def test_load_plugin_form_skills_subdir(tmp_path):
+    """plugin 形态:user_dir/superpowers/<skill>/SKILL.md 二层结构。"""
+    user_dir = tmp_path / "user"
+    _write(
+        user_dir / "superpowers" / "brainstorming" / "SKILL.md",
+        "---\nname: brainstorming\ndescription: d\n---\nbody",
+    )
+    _write(
+        user_dir / "superpowers" / "writing-plans" / "SKILL.md",
+        "---\nname: writing-plans\ndescription: d2\n---\nbody2",
+    )
+    skills = load_skills(user_dirs=[user_dir], project_dirs=[], system_dirs=[])
+    names = {s.name for s in skills}
+    assert "brainstorming" in names
+    assert "writing-plans" in names
+    # plugin_name 字段填充
+    bp = next(s for s in skills if s.name == "brainstorming")
+    assert bp.plugin_name == "superpowers"
+    wp = next(s for s in skills if s.name == "writing-plans")
+    assert wp.plugin_name == "superpowers"
+
+
+def test_load_plugin_form_and_single_form_coexist(tmp_path):
+    """plugin 二层和旧单层结构在同一 user_dir 下共存。"""
+    user_dir = tmp_path / "user"
+    # 旧单层
+    _write(user_dir / "legacy" / "SKILL.md", "---\nname: legacy\ndescription: d\n---\nbody")
+    # plugin 二层
+    _write(
+        user_dir / "superpowers" / "brainstorming" / "SKILL.md",
+        "---\nname: brainstorming\ndescription: d\n---\nbody",
+    )
+    skills = load_skills(user_dirs=[user_dir], project_dirs=[], system_dirs=[])
+    by_name = {s.name: s for s in skills}
+    assert "legacy" in by_name
+    assert "brainstorming" in by_name
+    assert by_name["legacy"].plugin_name is None
+    assert by_name["brainstorming"].plugin_name == "superpowers"
+
+
+def test_load_plugin_form_subdir_without_skill_md_skipped(tmp_path):
+    """plugin 目录下没有 SKILL.md 的子目录跳过(不是 skill)。"""
+    user_dir = tmp_path / "user"
+    _write(
+        user_dir / "superpowers" / "brainstorming" / "SKILL.md",
+        "---\nname: brainstorming\ndescription: d\n---\nbody",
+    )
+    # 没装好的子目录,无 SKILL.md
+    (user_dir / "superpowers" / "incomplete").mkdir(parents=True)
+    skills = load_skills(user_dirs=[user_dir], project_dirs=[], system_dirs=[])
+    assert {s.name for s in skills} == {"brainstorming"}
