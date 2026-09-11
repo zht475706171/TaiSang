@@ -112,9 +112,33 @@ def _read_head_sha(clone_dir: Path) -> str:
         return "unknown"
 
 
+def _marketplace_self_plugin(clone_dir: Path) -> bool:
+    """marketplace.json 里是否有 source 为 './' 或 '.' 的 plugin(指向仓库根本身)。
+
+    这种仓库既是 marketplace 又是 plugin:obra/superpowers 就是这种结构。
+    """
+    mp = clone_dir / ".claude-plugin" / "marketplace.json"
+    if not mp.is_file():
+        return False
+    try:
+        data = json.loads(mp.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    for p in data.get("plugins", []):
+        src = str(p.get("source", "")).strip()
+        if src in ("./", ".", "."):
+            return True
+    return False
+
+
 def _detect_plugin_form(clone_dir: Path) -> str:
-    """识别 plugin 形态,返回 'skills_dir' | 'single_skill' | 'marketplace' | 'empty'。"""
+    """识别 plugin 形态,返回 'skills_dir' | 'single_skill' | 'marketplace' | 'empty'。
+
+    marketplace 仓库若含 source='./' 的 plugin(指向仓库根本身),视为 skills_dir 形态。
+    """
     if (clone_dir / ".claude-plugin" / "marketplace.json").is_file():
+        if _marketplace_self_plugin(clone_dir) and (clone_dir / "skills").is_dir():
+            return "skills_dir"
         return "marketplace"
     if (clone_dir / "skills").is_dir() and any((clone_dir / "skills").glob("*/SKILL.md")):
         return "skills_dir"

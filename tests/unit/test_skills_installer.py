@@ -106,6 +106,28 @@ def _make_marketplace_fixture(tmp_path: Path) -> Path:
     return root
 
 
+def _make_marketplace_self_plugin_fixture(tmp_path: Path) -> Path:
+    """marketplace 仓库本身也是 plugin:marketplace.json 里有 source='./' 的 plugin,
+    且仓库根有 skills/ 子目录。obra/superpowers 就是这种结构。
+    """
+    root = tmp_path / "fixture"
+    (root / "skills" / "brainstorming").mkdir(parents=True)
+    (root / "skills" / "brainstorming" / "SKILL.md").write_text(
+        "---\nname: brainstorming\ndescription: d1\n---\nbody1", encoding="utf-8"
+    )
+    (root / "skills" / "writing-plans").mkdir(parents=True)
+    (root / "skills" / "writing-plans" / "SKILL.md").write_text(
+        "---\nname: writing-plans\ndescription: d2\n---\nbody2", encoding="utf-8"
+    )
+    (root / ".claude-plugin").mkdir(parents=True)
+    (root / ".claude-plugin" / "marketplace.json").write_text(
+        '{"name":"mp","plugins":[{"name":"superpowers","source":"./"}]}',
+        encoding="utf-8",
+    )
+    (root / "package.json").write_text('{"version": "6.3.0"}', encoding="utf-8")
+    return root
+
+
 def _make_empty_fixture(tmp_path: Path) -> Path:
     root = tmp_path / "fixture"
     root.mkdir()
@@ -154,6 +176,22 @@ def test_install_plugin_marketplace_form_errors(tmp_path):
     with patch("taisang.skills.installer.subprocess.run", side_effect=_setup_fake_clone(fixture, "https://github.com/foo/bar.git")):
         with pytest.raises(PluginInstallError, match="marketplace"):
             install_plugin("foo/bar", user_dir, plugins_file)
+
+
+def test_install_plugin_marketplace_self_plugin(tmp_path):
+    """marketplace 仓库本身也是 plugin(source='./')→ 当 skills_dir 形态安装。"""
+    fixture = _make_marketplace_self_plugin_fixture(tmp_path)
+    user_dir = tmp_path / "user_skills"
+    plugins_file = tmp_path / "plugins.json"
+    with patch("taisang.skills.installer.subprocess.run", side_effect=_setup_fake_clone(fixture, "https://github.com/obra/superpowers.git")):
+        with patch("taisang.skills.installer.subprocess.check_output", return_value=b"abc123def456\n"):
+            result = install_plugin("obra/superpowers", user_dir, plugins_file)
+    assert result.name == "superpowers"
+    assert result.version == "6.3.0"
+    assert (user_dir / "superpowers" / "brainstorming" / "SKILL.md").exists()
+    assert (user_dir / "superpowers" / "writing-plans" / "SKILL.md").exists()
+    assert "brainstorming" in result.skills
+    assert "writing-plans" in result.skills
 
 
 def test_install_plugin_no_skills_errors(tmp_path):
