@@ -223,3 +223,146 @@ def test_delete_unknown_404(tmp_path, monkeypatch):
     client = TestClient(app)
     resp = client.delete("/api/skills/nonexistent")
     assert resp.status_code == 404
+
+
+# ---------- Plugin API ----------
+import subprocess
+from unittest.mock import patch
+
+
+def _make_superpowers_fixture(tmp_path) -> Path:
+    root = tmp_path / "fixture"
+    (root / "skills" / "brainstorming").mkdir(parents=True)
+    (root / "skills" / "brainstorming" / "SKILL.md").write_text(
+        "---\nname: brainstorming\ndescription: d\n---\nbody", encoding="utf-8"
+    )
+    (root / "skills" / "writing-plans").mkdir(parents=True)
+    (root / "skills" / "writing-plans" / "SKILL.md").write_text(
+        "---\nname: writing-plans\ndescription: d2\n---\nbody2", encoding="utf-8"
+    )
+    (root / "package.json").write_text('{"version": "5.1.0"}', encoding="utf-8")
+    return root
+
+
+def _fake_clone_factory(fixture_root: Path):
+    def _fake(cmd, *a, **kw):
+        target = Path(cmd[3])
+        target.mkdir(parents=True, exist_ok=True)
+        import shutil
+        shutil.copytree(fixture_root, target, dirs_exist_ok=True)
+        return subprocess.CompletedProcess(cmd, 0, b"", b"")
+    return _fake
+
+
+def _plugin_api_env(tmp_path, monkeypatch):
+    """和 _skill_api_env 一样,但额外把 plugins_file 指到 tmp。"""
+    user_dir = _skill_api_env(tmp_path, monkeypatch)
+    plugins_file = tmp_path / "installed_plugins.json"
+    monkeypatch.setattr("taisang.web.skills_api._PLUGINS_FILE", plugins_file)
+    return user_dir, plugins_file
+
+
+def test_install_plugin_api_success(tmp_path, monkeypatch):
+    user_dir, plugins_file = _plugin_api_env(tmp_path, monkeypatch)
+    fixture = _make_superpowers_fixture(tmp_path)
+    app = create_app(source_root=tmp_path)
+    client = TestClient(app)
+    with patch("taisang.skills.installer.subprocess.run", side_effect=_fake_clone_factory(fixture)):
+        with patch("taisang.skills.installer.subprocess.check_output", return_value=b"abc123def456\n"):
+            resp = client.post("/api/skills/install-plugin", json={"source": "obra/superpowers"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["plugin"] == "superpowers"
+    assert data["version"] == "5.1.0"
+    assert "brainstorming" in data["skills"]
+    # 落盘
+    assert (user_dir / "superpowers" / "brainstorming" / "SKILL.md").exists()
+
+
+def test_install_plugin_api_invalid_source_400(tmp_path, monkeypatch):
+    _plugin_api_env(tmp_path, monkeypatch)
+    app = create_app(source_root=tmp_path)
+    client = TestClient(app)
+    resp = client.post("/api/skills/install-plugin", json={"source": "not-a-url"})
+    assert resp.status_code == 400
+    assert "格式" in resp.json()["detail"] or "地址" in resp.json()["detail"]
+
+
+def test_install_plugin_api_clone_failure_400(tmp_path, monkeypatch):
+    _plugin_api_env(tmp_path, monkeypatch)
+    app = create_app(source_root=tmp_path)
+    client = TestClient(app)
+    def _fail(cmd, *a, **kw):
+        return subprocess.CompletedProcess(cmd, 128, b"", b"fatal: not found")
+    with patch("taisang.skills.installer.subprocess.run", side_effect=_fail):
+        resp = client.post("/api/skills/install-plugin", json={"source": "nobody/nope"})
+    assert resp.status_code == 400
+    assert "git clone" in resp.json()["detail"]
+
+
+def test_list_plugins_api_empty(tmp_path, monkeypatch):
+    _plugin_api_env(tmp_path, monkeypatch)
+    app = create_app(source_root=tmp_path)
+    client = TestClient(app)
+    resp = client.get("/api/skills/plugins")
+    assert resp.status_code == 200
+    assert resp.json() == {"plugins": []}
+
+
+def test_list_plugins_api_after_install(tmp_path, monkeypatch):
+    _plugin_api_env(tmp_path, monkeypatch)
+    fixture = _make_superpowers_fixture(tmp_path)
+    app = create_app(source_root=tmp_path)
+    client = TestClient(app)
+    with patch("taisang.skills.installer.subprocess.run", side_effect=_fake_clone_factory(fixture)):
+        with patch("taisang.skills.installer.subprocess.check_output", return_value=b"abc123\n"):
+            client.post("/api/skills/install-plugin", json={"source": "obra/superpowers"})
+    resp = client.get("/api/skills/plugins")
+    data = resp.json()
+    assert len(data["plugins"]) == 1
+    p = data["plugins"][0]
+    assert p["name"] == "superpowers"
+    assert p["version"] == "5.1.0"
+    assert "brainstorming" in p["skills"]
+
+
+def test_uninstall_plugin_api_success(tmp_path, monkeypatch):
+    user_dir, plugins_file = _plugin_api_env(tmp_path, monkeypatch)
+    fixture = _make_superpowers_fixture(tmp_path)
+    app = create_app(source_root=tmp_path)
+    client = TestClient(app)
+    with patch("taisang.skills.installer.subprocess.run", side_effect=_fake_clone_factory(fixture)):
+        with patch("taisang.skills.installer.subprocess.check_output", return_value=b"abc123\n"):
+            client.post("/api/skills/install-plugin", json={"source": "obra/superpowers"})
+    resp = client.delete("/api/skills/plugin/superpowers")
+    assert resp.status_code == 200
+    assert not (user_dir / "superpowers").exists()
+    # 再 list 应空
+    resp = client.get("/api/skills/plugins")
+    assert resp.json() == {"plugins": []}
+
+
+def test_uninstall_plugin_api_missing_404(tmp_path, monkeypatch):
+    _plugin_api_env(tmp_path, monkeypatch)
+    app = create_app(source_root=tmp_path)
+    client = TestClient(app)
+    resp = client.delete("/api/skills/plugin/nonexistent")
+    assert resp.status_code == 404
+
+
+def test_list_skills_returns_plugin_name(tmp_path, monkeypatch):
+    user_dir, _ = _plugin_api_env(tmp_path, monkeypatch)
+    fixture = _make_superpowers_fixture(tmp_path)
+    app = create_app(source_root=tmp_path)
+    client = TestClient(app)
+    with patch("taisang.skills.installer.subprocess.run", side_effect=_fake_clone_factory(fixture)):
+        with patch("taisang.skills.installer.subprocess.check_output", return_value=b"abc123\n"):
+            client.post("/api/skills/install-plugin", json={"source": "obra/superpowers"})
+    resp = client.get("/api/skills")
+    skills = resp.json()["skills"]
+    bp = next(s for s in skills if s["name"] == "brainstorming")
+    assert bp["plugin_name"] == "superpowers"
+    # 非 plugin skill 的 plugin_name 为 None
+    if any(s["name"] == "commit" for s in skills):
+        commit = next(s for s in skills if s["name"] == "commit")
+        assert commit["plugin_name"] is None

@@ -22,10 +22,17 @@ from ..skills.importer import (
     import_skill_md,
     import_skill_zip,
 )
+from ..skills.installer import (
+    PluginInstallError,
+    install_plugin,
+    uninstall_plugin,
+)
 from ..skills.loader import load_skills
+from ..skills.plugin_registry import load_plugins
 from ..skills.types import Skill
 
 _STATE_FILE = Path.home() / ".taisang" / "skills_state.json"
+_PLUGINS_FILE = Path.home() / ".taisang" / "installed_plugins.json"
 
 
 def _load_disabled_state() -> dict[str, bool]:
@@ -84,7 +91,7 @@ def register_skills_routes(app, source_root: Path) -> None:
 
     @app.get("/api/skills")
     async def list_skills() -> dict:
-        """列出所有 skill(name/description/when_to_use/source/allowed_tools/disabled)。"""
+        """列出所有 skill(name/description/when_to_use/source/allowed_tools/disabled/plugin_name)。"""
         skills = load_skills_with_state(source_root)
         return {"skills": [
             {
@@ -94,6 +101,7 @@ def register_skills_routes(app, source_root: Path) -> None:
                 "source": s.source,
                 "allowed_tools": s.allowed_tools,
                 "disabled": s.disabled,
+                "plugin_name": s.plugin_name,
             }
             for s in skills
         ]}
@@ -157,3 +165,48 @@ def register_skills_routes(app, source_root: Path) -> None:
             del state[name]
             _save_disabled_state(state)
         return {"ok": True, "deleted": name}
+
+    @app.post("/api/skills/install-plugin")
+    async def install_plugin_route(body: dict) -> dict:
+        """安装 plugin:git clone + 批量导入 skills 到 user 源。"""
+        source = (body or {}).get("source", "").strip()
+        if not source:
+            raise HTTPException(400, "source 不能为空")
+        root = _import_root()
+        try:
+            plugin = install_plugin(source, root, _PLUGINS_FILE)
+        except PluginInstallError as e:
+            raise HTTPException(400, str(e)) from e
+        return {
+            "plugin": plugin.name,
+            "version": plugin.version,
+            "sha": plugin.git_commit_sha,
+            "source": plugin.source,
+            "skills": plugin.skills,
+        }
+
+    @app.get("/api/skills/plugins")
+    async def list_plugins_route() -> dict:
+        """列出已安装的 plugin。"""
+        plugins = load_plugins(_PLUGINS_FILE)
+        return {"plugins": [
+            {
+                "name": p.name,
+                "source": p.source,
+                "version": p.version,
+                "git_commit_sha": p.git_commit_sha,
+                "installed_at": p.installed_at,
+                "skills": p.skills,
+            }
+            for p in plugins.values()
+        ]}
+
+    @app.delete("/api/skills/plugin/{name}")
+    async def uninstall_plugin_route(name: str) -> dict:
+        """卸载 plugin:删 user 源下该 plugin 目录 + 删 installed_plugins.json 条目。"""
+        root = _import_root()
+        try:
+            uninstall_plugin(name, root, _PLUGINS_FILE)
+        except PluginInstallError as e:
+            raise HTTPException(404, str(e)) from e
+        return {"ok": True, "uninstalled": name}
