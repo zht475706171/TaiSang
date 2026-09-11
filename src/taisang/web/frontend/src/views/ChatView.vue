@@ -145,10 +145,17 @@ async function handleAnswer(token: string, approve: boolean) {
   await answerConfirm(token, approve)
 }
 
-/** 导入项目:弹系统目录选择器 → 选定后切换会话工作目录 → 更新本地展示。 */
+/** 导入项目:弹系统目录选择器 → 选定后切换会话工作目录 → 更新本地展示。
+ *  新对话无 currentId 时:先创建会话 + 跳转路由(同 handleSendNew),再弹选择器。 */
 async function handleImportProject() {
-  const id = currentId.value
-  if (!id) return
+  let id = currentId.value
+  if (!id) {
+    id = await store.createNew()
+    store.select(id)
+    router.push(`/chat/${id}`)
+    // 等路由跳转 + watch 加载完(loadHistory + openEventStream + getSessionInfo)
+    await new Promise((r) => setTimeout(r, 100))
+  }
   try {
     const pick = await pickDirectory(id)
     if (pick.cancelled || !pick.path) return
