@@ -13,12 +13,8 @@ source 规范化:
 
 from __future__ import annotations
 
-import logging
 import re
-from dataclasses import dataclass, field
-from pathlib import Path
-
-log = logging.getLogger(__name__)
+from urllib.parse import urlparse
 
 
 class PluginInstallError(ValueError):
@@ -46,14 +42,13 @@ def parse_github_source(source: str) -> str:
 
     if s.startswith(("http://", "https://")):
         # 必须是 https://github.com/owner/repo 形式
-        from urllib.parse import urlparse
         parsed = urlparse(s)
         if parsed.netloc != "github.com":
             raise PluginInstallError(f"只支持 github.com 仓库,收到: {parsed.netloc}")
         path = parsed.path.strip("/")
         # 去掉 .git 后缀和末尾斜杠
         if path.endswith(".git"):
-            path = path[:-4].rstrip("/")
+            path = path[:-4]
         if not _OWNER_REPO_RE.match(path):
             raise PluginInstallError(f"github 路径格式错误,期望 owner/repo: {path}")
         return f"github:{path}"

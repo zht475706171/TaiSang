@@ -15,13 +15,16 @@ def test_parse_github_source_valid(raw, expected):
 
 
 @pytest.mark.parametrize("bad", [
-    "",  # 空
-    "not-a-url",  # 非 url 且非 owner/repo
+    "",
+    "not-a-url",
     "https://gitlab.com/obra/superpowers",  # 非 github
     "https://github.com/onlyowner",  # 缺 repo
     "https://github.com//superpowers",  # 空 owner
     "ftp://github.com/obra/superpowers",  # 非 http(s)
-    "javascript:alert(1)",  # 注入尝试
+    # 安全边界:以下三个测试真实威胁路径
+    "https://evil.com@github.com/owner/repo",  # userinfo 伪装,netloc=evil.com@github.com 被 !=
+    "https://github.com:8080/owner/repo",  # 端口绕过,netloc=github.com:8080 被 !=
+    "https://github.com/owner/repo;rm -rf /",  # 分号注入,regex 拒绝
 ])
 def test_parse_github_source_invalid(bad):
     with pytest.raises(PluginInstallError):
