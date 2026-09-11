@@ -18,9 +18,11 @@ export interface LLMConfigSection {
 export interface LLMConfig {
   main: LLMConfigSection & { debug: boolean }
   subagent: LLMConfigSection
+  /** 模型 context window 映射(单位 tokens):key 是模型名,"default" 是兜底。空 dict 表示全走 200K。 */
+  model_context_window?: Record<string, number>
 }
 
-/** POST /api/config 请求体:main + subagent + debug。每段 api_key='__unchanged__' 表示保留已存 key。 */
+/** POST /api/config 请求体:main + subagent + debug + model_context_window。每段 api_key='__unchanged__' 表示保留已存 key。model_context_window=null(字段缺失)表示不改,dict(含空)表示覆盖。 */
 export interface SaveConfigReq {
   main: {
     model: string
@@ -34,6 +36,8 @@ export interface SaveConfigReq {
     base_url: string
   }
   debug: boolean
+  /** null=不改;dict=覆盖(空 dict 清空,全走 200K 兜底) */
+  model_context_window?: Record<string, number> | null
 }
 
 // 消息列表项(前端渲染用,从 SSE 事件 + history records 合并)

@@ -11,17 +11,18 @@ def test_estimate_tokens_approximate():
 
 
 def test_within_budget_no_compaction():
-    cm = ContextManager(token_budget=32000)
+    # 阈值 = 200K - 20K - 13K = 167K,空 messages 远低于阈值,不触发
+    cm = ContextManager(token_budget=200_000)
     cm.append_system("system prompt")
     cm.append_user("question")
     assert cm.should_compact() is False
 
 
 def test_compaction_triggers_near_limit():
-    cm = ContextManager(token_budget=1000)
+    # 阈值 = 50K - 20K - 13K = 17K;塞 60K chars(estimate_tokens 取 char//3 = 20K)> 17K 触发
+    cm = ContextManager(token_budget=50_000)
     cm.append_system("system")
-    # 塞大量内容触发
-    cm.append_tool_result("x" * 4000, name="read_file")
+    cm.append_tool_result("x" * 60_000, name="read_file")
     assert cm.should_compact() is True
 
 
@@ -153,32 +154,71 @@ def test_load_from_records_multiple_boundaries_keeps_only_last():
 
 
 def test_load_from_records_no_boundary_returns_all():
-    """无 boundary(从未压缩过的新会话):灌回全部 records。"""
+    """无 boundary(从未压缩过的新会话):灌回全部非 system records。
+
+    新契约:system prompt 不从 jsonl 灌回(由 __init__ 的 append_system 负责建最新)。
+    所以 records 里的 system 被跳过,只灌回 user/assistant。
+    这里 ctx 没调 append_system,所以 messages 里没 system。
+    """
     ctx = ContextManager()
     records = [
-        {"role": "system", "content": "system prompt"},
+        {"role": "system", "content": "system prompt"},  # 跳过(由 __init__ 负责)
         {"role": "user", "content": "q1"},
         {"role": "assistant", "content": "a1"},
     ]
     ctx.load_from_records(records)
-    assert ctx.messages() == records
-
-
-def test_load_from_records_dedupes_repeated_system():
-    """多次重启累积多条相同 SYSTEM_PROMPT,灌回时只保留第一条 system。
-    场景:每次进程重启 AgentService.__init__ 都 append_system 一条到 jsonl,
-    多次重启后 jsonl 有 N 条相同 system。灌回 ctx 只保留第一条,避免 LLM 困惑。"""
-    ctx = ContextManager()
-    records = [
-        {"role": "system", "content": "system prompt"},  # 保留
+    # system 不灌回,只留 user/assistant
+    assert ctx.messages() == [
         {"role": "user", "content": "q1"},
         {"role": "assistant", "content": "a1"},
-        {"role": "system", "content": "system prompt"},  # 重启累积,丢弃
-        {"role": "system", "content": "system prompt"},  # 再次重启,丢弃
+    ]
+
+
+def test_load_from_records_preserves_init_system_skips_jsonl_system():
+    """新契约:__init__ 建的 system 保留,jsonl 里的 system 全跳过。
+
+    场景:进程重启,AgentService.__init__ 调 append_system 写了"最新 system"到 ctx,
+    然后 load_from_records 灌回 jsonl(里面有旧 system + 重启时重复 append 的 system)。
+    应该:保留 __init__ 的最新 system,跳过 jsonl 里所有 system(旧的、重复的、boundary 标记)。
+    这修了"重启后用旧 system"的坑——永远用 __init__ 建的最新。
+    """
+    ctx = ContextManager()
+    ctx.append_system("最新 system")  # __init__ 时建的
+    records = [
+        {"role": "system", "content": "旧 system"},  # 跳过
+        {"role": "user", "content": "q1"},
+        {"role": "assistant", "content": "a1"},
+        {"role": "system", "content": "旧 system"},  # 重启累积,跳过
         {"role": "user", "content": "q2"},
     ]
     ctx.load_from_records(records)
-    # 只保留第一条 system,其余 system 丢弃
+    msgs = ctx.messages()
+    # 只保留 __init__ 的那条 system,内容是"最新 system"
+    system_msgs = [m for m in msgs if m["role"] == "system"]
+    assert len(system_msgs) == 1
+    assert system_msgs[0]["content"] == "最新 system"
+    # user / assistant 都保留
+    roles = [m["role"] for m in msgs]
+    assert roles.count("user") == 2
+    assert roles.count("assistant") == 1
+
+
+def test_load_from_records_dedupes_repeated_system():
+    """[已废弃] 旧契约:多条 system 只保留第一条。
+    新契约:system 全跳过,由 __init__ 的 append_system 负责。
+    保留测试名供 fixture 兼容,内部改成验证新契约(等价于上一个测试的简化版)。"""
+    ctx = ContextManager()
+    ctx.append_system("最新 system")
+    records = [
+        {"role": "system", "content": "system prompt"},  # 跳过
+        {"role": "user", "content": "q1"},
+        {"role": "assistant", "content": "a1"},
+        {"role": "system", "content": "system prompt"},  # 跳过
+        {"role": "system", "content": "system prompt"},  # 跳过
+        {"role": "user", "content": "q2"},
+    ]
+    ctx.load_from_records(records)
+    # 只保留 __init__ 那条 system
     system_count = sum(1 for m in ctx.messages() if m["role"] == "system")
     assert system_count == 1
     # user / assistant 都保留

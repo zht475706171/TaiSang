@@ -44,9 +44,11 @@ from ..config import (
     LLMConfig,
     SubAgentLLMConfig,
     load_config,
+    load_model_context_window,
     load_subagent_config,
     mask_api_key,
     save_config,
+    save_model_context_window,
     save_subagent_config,
 )
 from .session_registry import SessionRegistry
@@ -87,11 +89,15 @@ class ConfigSectionReq(BaseModel):
 
 
 class ConfigReq(BaseModel):
-    """POST /api/config 请求体:main + subagent 双段 + 全局 debug。"""
+    """POST /api/config 请求体:main + subagent 双段 + 全局 debug + model_context_window。"""
 
     main: ConfigSectionReq
     subagent: ConfigSectionReq | None = None
     debug: bool = False
+    # 模型 context window 映射表(单位 tokens):key 是模型名,"default" 是兜底。
+    # 前端传空 dict 表示清空配置(全走兜底 200K)。
+    # None(字段缺失)表示不改(保留已存配置);空 dict {} 表示清空。
+    model_context_window: dict[str, int] | None = None
 
 
 class ConfigTestReq(BaseModel):
@@ -312,13 +318,15 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
 
     @app.get("/api/config")
     async def get_config() -> dict:
-        """返回当前 LLM 配置:main 段 + subagent 段。api_key 返回完整明文。
+        """返回当前 LLM 配置:main 段 + subagent 段 + model_context_window。api_key 返回完整明文。
 
         debug 是全局开关(只在 main LLMConfig 上),挂在 main 块里方便前端。
         本地单机工具,前端需要完整 key 让用户确认/查看,不 mask。
+        model_context_window:模型名 → context window tokens 映射,空 dict 表示用兜底 200K。
         """
         cfg = load_config()
         sub = load_subagent_config()
+        ctx_window = load_model_context_window()
         return {
             "main": {
                 "model": cfg.model,
@@ -334,14 +342,16 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
                 "api_key": sub.api_key,
                 "api_key_set": bool(sub.api_key),
             },
+            "model_context_window": ctx_window,
         }
 
     @app.post("/api/config")
     async def save_config_route(req: ConfigReq) -> dict:
-        """保存 LLM 配置:main 段 + subagent 段 + 全局 debug,立即应用到所有 session。
+        """保存 LLM 配置:main 段 + subagent 段 + 全局 debug + model_context_window。
 
         每段 api_key = "__unchanged__" 时保留该段原 api_key(前端 readonly 提交此 sentinel)。
         subagent 段缺失(None)时写空配置(enabled=false)。
+        model_context_window 缺失(None)时保留原配置;空 dict {} 时清空(全走兜底 200K)。
         """
         # main 段
         if req.main.api_key == "__unchanged__":
@@ -373,6 +383,10 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
                 api_key=sub_key,
                 base_url=req.subagent.base_url,
             ))
+
+        # model_context_window:None 表示不改,dict(含空)表示覆盖
+        if req.model_context_window is not None:
+            save_model_context_window(req.model_context_window)
         return {"ok": True}
 
     @app.post("/api/config/test")

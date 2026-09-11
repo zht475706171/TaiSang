@@ -127,6 +127,46 @@ def save_subagent_config(cfg: SubAgentLLMConfig) -> None:
     os.replace(tmp, p)
 
 
+# === Model context window 配置 ===
+# settings.json 的 model_context_window 字段:dict[str, int]
+# key 是模型名(精确匹配),value 是 context window token 数。
+# 特殊 key "default" 作为兜底(模型名没匹配上时用)。
+# 整个字段为空/不存在时,AgentService.__init__ 兜底 200K(见 context_window.py)。
+
+
+def load_model_context_window() -> dict[str, int]:
+    """加载 settings.json 的 model_context_window 字段。
+
+    返回 dict(模型名 → context window tokens)。字段不存在或损坏时返回空 dict。
+    AgentService 拿到后按 llm.model 精确匹配,没匹配走 "default" key,再没走兜底 200K。
+    """
+    raw = _load_settings_file().get("model_context_window")
+    if not isinstance(raw, dict):
+        return {}
+    result: dict[str, int] = {}
+    for k, v in raw.items():
+        try:
+            result[str(k)] = int(v)
+        except (TypeError, ValueError):
+            continue  # 坏值跳过,不抛
+    return result
+
+
+def save_model_context_window(table: dict[str, int]) -> None:
+    """原子写 settings.json 的 model_context_window 字段,保留其他字段。权限 600。"""
+    p = _settings_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    existing = _load_settings_file()
+    existing["model_context_window"] = {str(k): int(v) for k, v in table.items()}
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+    try:
+        os.chmod(tmp, 0o600)
+    except OSError:
+        pass  # Windows 无 chmod
+    os.replace(tmp, p)
+
+
 class SkillsConfig(BaseModel):
     """Skill 加载配置。"""
 

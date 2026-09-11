@@ -27,6 +27,11 @@ from ..skills.types import Skill
 from ..storage.paths import PathManager
 from ..types import Answer, Citation
 from .context import ContextManager
+from .context_window import (
+    DEFAULT_CONTEXT_WINDOW,
+    MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES,
+    get_context_window,
+)
 from .events import (
     COMPACTED,
     DEBUG_REQUEST,
@@ -148,7 +153,8 @@ class AgentService:
         compaction_state: ContentReplacementState 实例(可选);为 None 则
             __init__ 里建默认实例
         max_steps: 循环步数上限,防 LLM 一直调工具不回答
-        token_budget: 上下文 token 预算(用于 ctx should_compact / enforce_budget)
+        token_budget: 上下文 token 预算(用于 ctx should_compact / enforce_budget)。
+            None 时按 settings.json 的 model_context_window 解析,兜底 200K。
     """
 
     def __init__(
@@ -159,7 +165,7 @@ class AgentService:
         session_memory=None,
         compaction_state: ContentReplacementState | None = None,
         max_steps: int = 50,
-        token_budget: int = 32_000,
+        token_budget: int | None = None,
         debug: bool = False,
         permission: PermissionManager | None = None,
         allow_dirs: list[Path] | None = None,
@@ -178,7 +184,19 @@ class AgentService:
             compaction_state if compaction_state is not None else ContentReplacementState()
         )
         self.max_steps = max_steps
+        # token_budget 默认 None:按 settings.json 的 model_context_window 解析
+        # (按 llm.model 精确匹配,没配走 default key,再没走环境变量,最后兜底 200K)。
+        # 显式传值时跳过解析(测试场景用小 budget 触发 autocompact)。
+        if token_budget is None:
+            settings_path = Path.home() / ".taisang" / "settings.json"
+            model = getattr(llm, "model", "") or ""
+            token_budget = get_context_window(model, settings_path)
         self.token_budget = token_budget
+        # autocompact 熔断器:连续失败计数,跨 run() 保留(reset 不清零)。
+        # 达到 MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES 后跳过后续 autocompact 尝试,
+        # 避免不可恢复的 context(如 prompt_too_long)反复浪费 API 调用。
+        # resume/重启时在 get_or_load 清零(新进程 = 重新计数)。
+        self._consecutive_compact_failures = 0
         self.debug = debug  # /debug 模式:emit DEBUG_REQUEST/DEBUG_RESPONSE/DEBUG_TOOL_RESULT
         # 权限管理:首次访问新目录问用户批准。默认 None 时用 AutoApprove
         # (测试场景);CLI 传 CliPermissionManager,Web 传 WebPermissionManager。
@@ -338,6 +356,9 @@ class AgentService:
         self._cancel_event = threading.Event()
         # 重置此轮 token 累加器(session 累计不清,跨 run 保留)
         self._turn_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+        # 本轮是否已 compact 过:防 autocompact 死循环(system 超预算时压对话降不下来)。
+        # 每次 run() 新建,跨 turn 不保留(下一轮可以再 compact)。
+        self._compacted_this_turn = False
         self.ctx.append_user(query)
 
         registry = ToolRegistry(
@@ -391,10 +412,20 @@ class AgentService:
                     },
                 ))
             # 阶段 7: autocompact
-            if self.ctx.should_compact():
-                if self._try_autocompact(transcript_path, _emit):
+            # _compacted_this_turn 防死循环:本轮已 compact 过就不再 compact,
+            # 哪怕 should_compact 还 True(可能是 system prompt 本身就超 budget,
+            # 压对话历史降不下来)。直接放行到 LLM 调用,让用户拿到回复。
+            if self.ctx.should_compact() and not self._compacted_this_turn:
+                result = self._try_autocompact(transcript_path, _emit)
+                if result:
                     self._tool_calls_since_last_extract = 0
+                    self._compacted_this_turn = True
                     continue
+                else:
+                    # 压缩失败(或熔断器 tripped):本轮不再尝试,
+                    # 放行到 LLM 调用让用户拿到回复/API 报错。
+                    # 熔断器计数会在后续轮次继续累积,达到 3 次后彻底跳过。
+                    self._compacted_this_turn = True
             _emit(AgentEvent(type=LLM_THINKING))
             if self.debug:
                 _emit(
@@ -644,13 +675,35 @@ class AgentService:
         """先试 session memory,失败 fallback 到 autocompact LLM 摘要。
 
         返回 True 表示做了压缩(messages 已替换),调用方应重置 tool_calls 计数并 continue。
+        返回 False 表示未压缩(熔断器 tripped 或压缩失败),调用方应放行到 LLM 调用。
         操作 self.ctx(实例属性,跨 run() 保留)。
+
+        熔断器:连续失败 MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES(3) 次后跳过后续尝试,
+        避免不可恢复的 context(如 prompt_too_long)反复浪费 API 调用。成功时重置计数。
+
+        system prompt 保留策略:压缩前先 _refresh_system_prompt() 刷成最新
+        (画像/skill/mcp/agents 可能运行中更新过),刷好的 system 留在 ctx.messages()[0],
+        autocompact/session_memory 路径都会把它原样带回来。配置类内容不参与压缩。
         """
+        # 熔断器:连续失败达上限直接跳过,让主循环放行到 LLM 调用
+        # (API 会返回 prompt_too_long 错误,用户看到明确报错,比死循环重试好)
+        if self._consecutive_compact_failures >= MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES:
+            log.warning(
+                "autocompact circuit breaker tripped: %d consecutive failures, skipping",
+                self._consecutive_compact_failures,
+            )
+            return False
         before_tokens = self.ctx.total_tokens()
-        # 先试 session memory(零 LLM 调用)
+        # 压缩前先把 system prompt 刷成最新(画像/skill 可能更新过)
+        # 刷完后 ctx.messages()[0] 是最新 system,后面 autocompact/session_memory
+        # 都会把 system 原样保留,不再丢能力清单。
+        self._refresh_system_prompt()
+        # 先试 session memory(零 LLM 调用,不会失败,不走熔断器)
         if self.session_memory is not None:
             summary = self.session_memory.read_for_compaction()
             if summary:
+                # system 原样带回来:从当前 ctx 摘出 system_msgs
+                system_msgs = [m for m in self.ctx.messages() if m.get("role") == "system"]
                 boundary = {
                     "role": "user",
                     "content": "[boundary: session memory compaction occurred here]",
@@ -663,40 +716,65 @@ class AgentService:
                         f"portion.\n\nSummary:\n{summary}"
                     ),
                 }
-                new_msgs = [boundary, summary_msg]
+                new_msgs = system_msgs + [boundary, summary_msg]
                 self.ctx.replace_messages(new_msgs, compaction_via="session_memory")
                 after_tokens = self.ctx.total_tokens()
-                # 画像搭便车:autocompact 已废 cache,顺手重注入最新画像
-                self._reinject_profile_into_system()
                 _emit(AgentEvent(type=COMPACTED, payload={
                     "via": "session_memory",
                     "before_tokens": before_tokens,
                     "after_tokens": after_tokens,
                     "summary_messages": len(new_msgs),
                 }))
+                # session_memory 路径零 LLM 调用,视为成功,重置熔断器
+                self._consecutive_compact_failures = 0
                 return True
 
-        # fallback: LLM 摘要
+        # fallback: LLM 摘要(do_autocompact 内部会把 system 原样带回来)
         from ..compaction.autocompact import autocompact as do_autocompact
 
-        new_msgs = do_autocompact(self.ctx.messages(), self.llm, transcript_path)
-        self.ctx.replace_messages(new_msgs, compaction_via="llm")
-        after_tokens = self.ctx.total_tokens()
-        # 画像搭便车:autocompact 已废 cache,顺手重注入最新画像
-        self._reinject_profile_into_system()
-        _emit(AgentEvent(type=COMPACTED, payload={
-            "via": "llm",
-            "before_tokens": before_tokens,
-            "after_tokens": after_tokens,
-            "summary_messages": len(new_msgs),
-        }))
-        return True
+        try:
+            new_msgs = do_autocompact(self.ctx.messages(), self.llm, transcript_path)
+            self.ctx.replace_messages(new_msgs, compaction_via="llm")
+            after_tokens = self.ctx.total_tokens()
+            _emit(AgentEvent(type=COMPACTED, payload={
+                "via": "llm",
+                "before_tokens": before_tokens,
+                "after_tokens": after_tokens,
+                "summary_messages": len(new_msgs),
+            }))
+            # 成功:重置熔断器
+            self._consecutive_compact_failures = 0
+            return True
+        except Exception as e:  # noqa: BLE001 — 熔断器要捕获所有异常
+            self._consecutive_compact_failures += 1
+            log.warning(
+                "autocompact failed (%d/%d): %s",
+                self._consecutive_compact_failures,
+                MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES,
+                e,
+            )
+            if self._consecutive_compact_failures >= MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES:
+                log.error(
+                    "autocompact circuit breaker tripped after %d consecutive failures, "
+                    "future attempts will be skipped",
+                    self._consecutive_compact_failures,
+                )
+            return False
 
-    def _reinject_profile_into_system(self) -> None:
-        """autocompact 后重注入最新画像(搭便车,cache 本就废了)。
+    def _refresh_system_prompt(self) -> None:
+        """重建最新 system prompt 并原地替换 ctx 里第一条 system 消息。
 
-        重建完整 system prompt(基础 + 画像 + skills + mcp + agents),
-        通过 ctx.replace_system_prompt 覆盖。
+        用途:
+        - autocompact 触发前调一次:保证压缩时 ctx.messages()[0] 是最新 system
+          (画像/skill/mcp/agents 运行中可能更新过),autocompact 把它原样带回来,
+          不丢能力清单。
+        - prompt 配置变更广播到活跃 session 时也可调。
+
+        与旧 _reinject_profile_into_system 的区别:
+        - 旧方法在 replace_messages 之后调,此时 ctx 里已无 system,replace_system_prompt
+          找不到 system 可替换 → no-op,system 永远丢。
+        - 新方法在 replace_messages 之前调,ctx 里还有 system,replace_system_prompt
+          能成功替换。
         """
         skills_section = format_skill_listing(self.skills)
         mcp_section = format_mcp_section(self._mcp_manager) if self._mcp_manager else ""

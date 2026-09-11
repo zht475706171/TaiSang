@@ -89,7 +89,7 @@ def test_autocompact_reinject_path_loads_latest(tmp_path):
     # agent 在 session 中调 update_profile(不碰 ctx)
     save_profile_content("### 技术栈\nGo", source="agent", session_id="s", settings_path=sp)
 
-    # autocompact 触发 → _reinject_profile_into_system 重建 system prompt
+    # autocompact 触发 → _refresh_system_prompt 重建 system prompt(压缩前刷新)
     profile_after = load_profile(settings_path=sp)
     system_after = build_system_prompt("", "", "", format_profile_section(profile_after))
 

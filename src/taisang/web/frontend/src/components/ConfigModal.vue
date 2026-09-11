@@ -136,6 +136,28 @@
         </div>
       </div>
 
+      <div class="card-divider"></div>
+
+      <!-- Context Window 卡 -->
+      <div class="config-card">
+        <div class="card-title-row">
+          <span class="card-accent-bar"></span>
+          <span class="card-title">Context Window</span>
+        </div>
+        <t-form-item label="默认窗口" name="ctx_window">
+          <t-input
+            v-model="ctxWindowInput"
+            placeholder="200"
+            type="number"
+          >
+            <template #suffix>K tokens</template>
+          </t-input>
+        </t-form-item>
+        <div class="ctx-desc">
+          模型上下文窗口大小(单位 K tokens)。留空走默认 200K;autocompact 触发阈值 = 窗口 - 20K - 13K。
+        </div>
+      </div>
+
       <div v-if="msg" class="cfg-msg" :class="{ error: msgError }">{{ msg }}</div>
 
       <!-- 操作区 -->
@@ -172,6 +194,10 @@ interface SectionForm {
 const mainForm = ref<SectionForm>({ model: '', api_key: '', base_url: '' })
 const subForm = ref<SectionForm & { enabled: boolean }>({ enabled: false, model: '', api_key: '', base_url: '' })
 const debugForm = ref(false)
+/** 默认 context window(单位 K)。空串 = 走 200K 兜底。显示用 string,保存时转 int。 */
+const ctxWindowInput = ref('')
+/** load 拿到的完整 model_context_window dict,保存时合并 default key 后回写。 */
+const ctxWindowRaw = ref<Record<string, number>>({})
 
 const mainKeyReadonly = ref(true)
 const subKeyReadonly = ref(true)
@@ -215,6 +241,12 @@ async function loadConfig() {
     subKeySet.value = cfg.subagent.api_key_set
     subKeyMasked.value = cfg.subagent.api_key || ''
     subKeyReadonly.value = true
+
+    // context window:只暴露 default key 给前端编辑,保留其他 per-model key
+    const rawCtx = cfg.model_context_window ?? {}
+    ctxWindowRaw.value = { ...rawCtx }
+    const defaultK = rawCtx['default']
+    ctxWindowInput.value = defaultK ? String(Math.round(defaultK / 1000)) : ''
   } catch (e) {
     msg.value = '加载配置失败: ' + (e as Error).message
     msgError.value = true
@@ -291,6 +323,22 @@ async function handleSubmit() {
   const mainApiKey = mainKeyReadonly.value ? '__unchanged__' : mainForm.value.api_key
   const subApiKey = subKeyReadonly.value ? '__unchanged__' : subForm.value.api_key
 
+  // context window:合并 default key,保留其他 per-model key
+  // 输入空串 → 删 default key(走 200K 兜底);输入数字 → 写 default key(单位 K → tokens)
+  const mergedCtx: Record<string, number> = { ...ctxWindowRaw.value }
+  const ctxInputTrim = ctxWindowInput.value.trim()
+  if (ctxInputTrim === '') {
+    delete mergedCtx['default']
+  } else {
+    const k = Number(ctxInputTrim)
+    if (!Number.isFinite(k) || k <= 0) {
+      msg.value = 'Context Window 必须是正数(单位 K)'
+      msgError.value = true
+      return
+    }
+    mergedCtx['default'] = Math.round(k * 1000)
+  }
+
   saving.value = true
   try {
     await saveConfig({
@@ -299,6 +347,7 @@ async function handleSubmit() {
         ? { enabled: true, model: subForm.value.model.trim(), api_key: subApiKey, base_url: subForm.value.base_url.trim() }
         : { enabled: false, model: '', api_key: '', base_url: '' },
       debug: debugForm.value,
+      model_context_window: mergedCtx,
     })
     if (debugForm.value !== debugOriginal.value) {
       emit('debug-changed', debugForm.value)
@@ -464,6 +513,14 @@ watch(() => subForm.value.enabled, () => {
 .test-result {
   font-size: 12px;
   line-height: 1.5;
+}
+
+/* Context Window 描述 */
+.ctx-desc {
+  font-size: 12px;
+  color: var(--td-text-color-placeholder);
+  line-height: 1.5;
+  margin-top: 4px;
 }
 .test-result.ok {
   color: var(--td-success-color, #2ba471);

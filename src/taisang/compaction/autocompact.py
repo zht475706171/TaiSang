@@ -24,16 +24,21 @@ def autocompact(
     """调旁路 LLM 生成 9 章节摘要,替换 state.messages。
 
     流程:
-    1. 把整个 messages 拼成 user prompt,加 preamble + BASE_COMPACT_PROMPT + trailer
-    2. 调 LLM(不带 tools,纯文本回复)
-    3. 删 <analysis> 块,只留 <summary> 块
-    4. 构造新 messages:[boundaryMarker, summaryUserMessage]
-    5. transcript 路径提示加到 summary 末尾(供后续 read 回查)
+    1. 把 system 消息摘出来不压(配置类内容:人设/工具/skill/mcp/agents/画像,
+       可重建、固定开销,压它没意义还丢能力清单)
+    2. 只把 non_system 消息拼成 user prompt,加 preamble + BASE_COMPACT_PROMPT + trailer
+    3. 调 LLM(不带 tools,纯文本回复)
+    4. 删 <analysis> 块,只留 <summary> 块
+    5. 构造新 messages:system_msgs 原样 + [boundaryMarker, summaryUserMessage]
+    6. transcript 路径提示加到 summary 末尾(供后续 read 回查)
     """
-    # 1. 拼 prompt(读 config,支持用户自定义)
-    conversation_text = _messages_to_text(messages)
+    # 1. 摘出 system(不参与摘要),只压对话历史
+    system_msgs = [m for m in messages if m.get("role") == "system"]
+    non_system = [m for m in messages if m.get("role") != "system"]
+    # 2. 拼 prompt(只用 non_system,读 config 支持用户自定义)
+    conversation_text = _messages_to_text(non_system)
     full_prompt = get_autocompact_prompt(conversation_text)
-    # 2. 调 LLM(不带 tools)
+    # 3. 调 LLM(不带 tools)
     resp = llm.chat(
         messages=[
             {"role": "system", "content": "你是对话摘要助手。"},
@@ -42,9 +47,9 @@ def autocompact(
         tools=[],  # 强制不调工具
     )
     raw = resp.text
-    # 3. 删 <analysis> 块,抽 <summary> 块
+    # 4. 删 <analysis> 块,抽 <summary> 块
     summary = _extract_summary(raw)
-    # 4. 构造新 messages
+    # 5. 构造新 messages:system 原样放最前 + boundary + summary
     boundary_marker = {
         "role": "user",
         "content": "[boundary: autocompact occurred here]",
@@ -54,14 +59,14 @@ def autocompact(
         "The summary below covers the earlier portion of the conversation.\n\n"
         f"Summary:\n{summary}"
     )
-    # 5. transcript 路径提示
+    # 6. transcript 路径提示
     if transcript_path:
         summary_content += (
             f"\n\nIf you need specific details from before compaction, "
             f"read the full transcript at: {transcript_path}"
         )
     summary_msg = {"role": "user", "content": summary_content}
-    return [boundary_marker, summary_msg]
+    return system_msgs + [boundary_marker, summary_msg]
 
 
 def _messages_to_text(messages: list[dict]) -> str:

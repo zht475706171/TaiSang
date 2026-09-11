@@ -37,16 +37,21 @@ def test_autocompact_generates_summary_and_replaces_messages(tmp_path):
         llm=mock,
         transcript_path=tmp_path / "transcript.jsonl",
     )
-    # 新 messages 第一条是 boundaryMarker
-    assert "compacted" in result[0]["content"].lower() or "boundary" in result[0]["content"].lower()
+    # system 原样保留在 result[0](配置类内容不压缩)
+    assert result[0]["role"] == "system"
+    assert result[0]["content"] == "system"
+    # boundary 紧跟 system 后
+    boundary = result[1]
+    assert "boundary" in boundary["content"].lower()
     # <analysis> 块被删掉了
     summary_msg = next(
-        m for m in result if m["role"] == "user" and m["content"] != result[0]["content"]
+        m for m in result if m["role"] == "user"
+        and "Summary" in m["content"]
     )
     assert "<analysis>" not in summary_msg["content"]
     assert "用户的目标" in summary_msg["content"]
     # 原对话没了
-    assert not any(m["content"] == "x" * 200_000 for m in result if m["role"] == "tool")
+    assert not any(m.get("content") == "x" * 200_000 for m in result if m["role"] == "tool")
 
 
 def test_autocompact_extracts_summary_block(tmp_path):
