@@ -2,7 +2,7 @@ import { ref, type Ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { MessagePlugin } from 'tdesign-vue-next'
 import type { ChatMessage, HistoryRecord, Todo, UsageData } from '@/types'
-import { getHistory, sendMessage, respondConfirm, respondPermission, interruptSession } from '@/api/chat'
+import { getHistory, sendMessage, respondConfirm, respondPermission, interruptSession, getQueue } from '@/api/chat'
 import { useConfigStore } from '@/stores/config'
 
 let _idCounter = 0
@@ -27,6 +27,7 @@ export function useChatStream(
   // 立刻切回发送按钮(thinking=false),但显示"停止中…"提示,final_answer 来了再清。
   // 对标 Claude Code:前端翻 flag 立刻反馈,不等后端真的停。
   const stopping = ref(false)
+  const pendingQueue = ref<string[]>([])  // 镜像后端队列(用于本地气泡管理)
   const connectionState = ref<'connected' | 'reconnecting' | 'failed'>('connected')
   // TodoWrite:LLM 调 TodoWriteTool 后,顶部 sticky 区渲染 todo 列表。
   // 主 agent 的 todos 在顶层;子 agent 的 todos 嵌套到 Agent 工具卡片(不冒泡顶部)。
@@ -258,7 +259,13 @@ export function useChatStream(
   // 对标 Claude Code:前端同步翻 flag 立刻反馈,后台异步收尾。
   function stop() {
     if (!sessionId.value) return
-    if (!thinking.value && !stopping.value) return  // 没在跑,忽略
+    if (!thinking.value && !stopping.value && pendingQueue.value.length === 0) return
+    // 本地立即删排队气泡
+    const toRemove = new Set(pendingQueue.value)
+    messages.value = messages.value.filter(
+      m => !(m.kind === 'user' && m.text && toRemove.has(m.text))
+    )
+    pendingQueue.value = []
     thinking.value = false
     stopping.value = true
     interruptSession(sessionId.value).catch((e) => console.error('interrupt failed:', e))
@@ -606,6 +613,16 @@ export function useChatStream(
     eventSource.addEventListener('session_title_updated', () => {
       if (onTitleUpdated) onTitleUpdated()
     })
+    eventSource.addEventListener('queue_updated', (e: MessageEvent) => {
+      const data = safeParse<{ queue: string[]; len: number }>(e.data)
+      if (!data) return
+      // 后端队列变化: 同步本地镜像
+      // 注意: queue_updated([]) 有两种来源
+      //   - interrupt 清空(stop() 已本地删气泡, 这里不动)
+      //   - flush 处理(气泡保留作为已发送, 这里也不动)
+      // 所以这里只同步 pendingQueue 镜像, 不操作 messages
+      pendingQueue.value = data.queue || []
+    })
   }
 
   function closeEventStream() {
@@ -625,6 +642,9 @@ export function useChatStream(
     try {
       const records = await getHistory(id)
       renderHistory(records)
+      // 重建队列状态
+      const q = await getQueue(id)
+      pendingQueue.value = q.queue || []
     } catch (e) {
       pushRunError(`加载历史失败: ${(e as Error).message}`)
     }
@@ -632,11 +652,17 @@ export function useChatStream(
 
   async function send(query: string) {
     if (!sessionId.value) return
-    pushUser(query)
+    pushUser(query)  // 立即 push user 气泡(无 thinking 守卫)
+    pendingQueue.value.push(query)  // 本地镜像
     try {
       await sendMessage(sessionId.value, query)
-      // SSE 流会自动推事件
     } catch (e) {
+      // 发送失败: 从 pendingQueue 移除刚 push 的 query
+      pendingQueue.value = pendingQueue.value.filter(q => q !== query)
+      // 同时从 messages 删除刚 push 的 user 气泡
+      messages.value = messages.value.filter(
+        m => !(m.kind === 'user' && m.text === query)
+      )
       pushRunError(`发送失败: ${(e as Error).message}`)
     }
   }
@@ -651,6 +677,7 @@ export function useChatStream(
     connectionState,
     todos,
     debugEnabled,
+    pendingQueue,
     send,
     stop,
     loadHistory,
