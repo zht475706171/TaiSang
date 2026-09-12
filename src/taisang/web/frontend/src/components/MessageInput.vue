@@ -31,7 +31,7 @@
         ref="taRef"
         v-model="text"
         class="query-textarea"
-        :placeholder="placeholder"
+        :placeholder="streaming ? '思考中,可继续输入消息排队等待...' : placeholder"
         rows="1"
         aria-label="输入消息,Enter 发送,Shift+Enter 换行"
         @keydown="handleKeydown"
