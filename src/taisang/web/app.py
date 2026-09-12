@@ -120,6 +120,47 @@ class SwitchDirReq(BaseModel):
     path: str
 
 
+def _run_next(registry: SessionRegistry, sess, session_id: str) -> None:
+    """尝试跑下一个 turn: 拿锁 + 拼接 queue + 跑。
+    拿不到锁(return False) → 已有 turn 在跑, run_end 会自动调本函数。
+    """
+    if not sess.queue:  # 空队列没东西跑
+        return
+    if not sess.lock.acquire(blocking=False):  # 已锁(run 在跑或 flush 在跑)
+        return
+    # 拿到锁: 拼接 queue 为一条 prompt
+    queries = list(sess.queue)
+    sess.queue.clear()
+    sess.broker.publish("queue_updated", {"queue": [], "len": 0})
+    prompt = "\n".join(queries)
+
+    def _run():
+        try:
+            sess.agent.run(
+                prompt,
+                on_event=lambda e: sess.broker.publish(
+                    e.type, {**e.payload, "agent_id": e.agent_id}
+                ),
+            )
+        except Exception as e:  # noqa: BLE001
+            log.exception("agent run failed: %s", e)
+            sess.broker.publish("run_error", {"error": f"agent run failed: {e}"})
+        finally:
+            try:
+                registry.update_meta_after_turn(session_id, prompt)
+            except Exception as e:  # noqa: BLE001
+                log.warning("update_meta_after_turn failed: %s", e)
+            sess.broker.publish(
+                "session_title_updated",
+                {"id": session_id, "title": sess.title},
+            )
+            sess.broker.publish("run_end", {})
+            sess.lock.release()
+            _run_next(registry, sess, session_id)  # 递归 drain
+
+    asyncio.get_running_loop().run_in_executor(None, _run)
+
+
 def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastAPI:
     """构造 FastAPI app。source_root 是 agent 工作目录,allow_dirs 是允许访问的额外目录。"""
     registry = SessionRegistry(source_root, allow_dirs=allow_dirs or [])
@@ -193,6 +234,7 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
         POST /api/config 的 debug 字段统一管理。
         """
         return {"debug": req.on, "deprecated": True}
+
 
     @app.post("/api/sessions/{session_id}/messages")
     async def send_message(session_id: str, req: SendMessageReq) -> dict:
