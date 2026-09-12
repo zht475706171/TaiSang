@@ -98,3 +98,32 @@ def test_interrupt_clears_queue_even_when_idle(client, tmp_path):
         assert data["interrupted"] is False  # lock 未锁,没中断
     assert sess.queue == []  # 队列仍清空
     mock_interrupt.assert_not_called()
+
+
+def test_get_queue_returns_current_state(client, tmp_path):
+    """queue 有 2 条,GET 返回 {queue: [...], len: 2}。"""
+    sid = client.post("/api/sessions", json={"title": ""}).json()["id"]
+    sess = client.app.state.registry.get_or_load(sid)
+    sess.queue.append("消息1")
+    sess.queue.append("消息2")
+    r = client.get(f"/api/sessions/{sid}/queue")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["queue"] == ["消息1", "消息2"]
+    assert data["len"] == 2
+
+
+def test_get_queue_empty(client, tmp_path):
+    """queue 空,GET 返回 {queue: [], len: 0}。"""
+    sid = client.post("/api/sessions", json={"title": ""}).json()["id"]
+    r = client.get(f"/api/sessions/{sid}/queue")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["queue"] == []
+    assert data["len"] == 0
+
+
+def test_get_queue_session_not_found(client):
+    """不存在的 session_id → 404。"""
+    r = client.get("/api/sessions/nonexistent/queue")
+    assert r.status_code == 404

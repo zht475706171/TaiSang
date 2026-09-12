@@ -483,6 +483,14 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
         sess.agent.interrupt()
         return {"ok": True, "interrupted": True}
 
+    @app.get("/api/sessions/{session_id}/queue")
+    async def get_queue(session_id: str) -> dict:
+        """返回当前排队队列(前端刷新页面 SSE 重连后恢复 pendingQueue 用)。"""
+        sess = registry.get_or_load(session_id)
+        if sess is None:
+            raise HTTPException(404, f"session not found: {session_id}")
+        return {"queue": list(sess.queue), "len": len(sess.queue)}
+
     @app.post("/api/sessions/{session_id}/confirm/{token}")
     async def confirm(session_id: str, token: str, req: ConfirmReq) -> dict:
         sess = registry.get_or_load(session_id)
