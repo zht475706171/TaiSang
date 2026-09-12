@@ -20,3 +20,7 @@ export function respondPermission(id: string, token: string, approve: boolean): 
 export function interruptSession(id: string): Promise<{ ok: boolean; interrupted: boolean }> {
   return apiPost<{ ok: boolean; interrupted: boolean }>(`/api/sessions/${id}/interrupt`, {})
 }
+
+export function getQueue(id: string): Promise<{ queue: string[]; len: number }> {
+  return apiGet<{ queue: string[]; len: number }>(`/api/sessions/${id}/queue`)
+}
