@@ -466,7 +466,7 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
 
     @app.post("/api/sessions/{session_id}/interrupt")
     async def interrupt_session(session_id: str) -> dict:
-        """请求中断当前 turn。set agent._cancel_event。
+        """请求中断当前 turn: 先清队列, 再设 agent._cancel_event。
 
         幂等:turn 已结束或未开始时调用无副作用(返回 interrupted=False)。
         并发安全:threading.Event.set() thread-safe。
@@ -475,6 +475,9 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
         sess = registry.get_or_load(session_id)
         if sess is None:
             raise HTTPException(404, f"session not found: {session_id}")
+        # 先清队列(即使 lock 未锁也要清,用户可能发了排队消息但 turn 刚好结束还没 flush)
+        sess.queue.clear()
+        sess.broker.publish("queue_updated", {"queue": [], "len": 0})
         if not sess.lock.locked():
             return {"ok": True, "interrupted": False}
         sess.agent.interrupt()
