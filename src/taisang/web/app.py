@@ -238,48 +238,24 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
 
     @app.post("/api/sessions/{session_id}/messages")
     async def send_message(session_id: str, req: SendMessageReq) -> dict:
-        """发消息:后台线程跑 agent.run,事件经 SSE 推。立即返回 {ok: true}。
+        """发消息: 无条件 append 到 queue, 尝试 _run_next。
 
-        前端 POST 后立刻去订阅 /events 收事件流。run 异步,不阻塞此响应。
-        turn 结束(成功或异常)后更新 meta.json(title=最后 query 前40字)。
+        turn 在跑时消息进队列, turn 结束后 _run_next 自动 drain。
+        turn 没在跑时直接拿锁跑 turn。
+        返回 {ok: true, queued: bool}(queued=True 表示进了队列, False 表示直接跑了)。
         """
         sess = registry.get_or_load(session_id)
         if sess is None:
             raise HTTPException(404, f"session not found: {session_id}")
-        if sess.lock.locked():
-            raise HTTPException(409, "session busy: previous run still active")
 
-        # 后台线程跑 run。on_event 把事件 push 到 broker。
-        def _run():
-            with sess.lock:
-                try:
-                    sess.agent.run(
-                        req.query,
-                        # Task 14: 把 agent_id 合并进 payload,前端据 agent_id 路由子事件到
-                        # 对应的 Agent 工具卡片嵌套数组。主 agent 的 agent_id="" 不影响路由。
-                        on_event=lambda e: sess.broker.publish(
-                            e.type, {**e.payload, "agent_id": e.agent_id}
-                        ),
-                    )
-                except Exception as e:  # noqa: BLE001
-                    log.exception("agent run failed: %s", e)
-                    sess.broker.publish("run_error", {"error": f"agent run failed: {e}"})
-                finally:
-                    # turn 结束更新 meta.json(title=最后 query 前40字)
-                    try:
-                        registry.update_meta_after_turn(session_id, req.query)
-                    except Exception as e:  # noqa: BLE001
-                        log.warning("update_meta_after_turn failed: %s", e)
-                    # 通知前端更新顶栏 + 会话列表项(title 可能变了)
-                    sess.broker.publish(
-                        "session_title_updated",
-                        {"id": session_id, "title": sess.title},
-                    )
-                    # run 结束哨兵:前端据此停止 thinking 动画
-                    sess.broker.publish("run_end", {})
-
-        asyncio.get_running_loop().run_in_executor(None, _run)
-        return {"ok": True}
+        # 先记录 lock 状态: 已锁 → turn 在跑 → 这条消息排队
+        was_locked = sess.lock.locked()
+        sess.queue.append(req.query)
+        sess.broker.publish("queue_updated", {
+            "queue": list(sess.queue), "len": len(sess.queue)
+        })
+        _run_next(registry, sess, session_id)  # 尝试跑(没拿到锁会 return)
+        return {"ok": True, "queued": was_locked}
 
     @app.get("/api/sessions/{session_id}/messages")
     async def get_messages(session_id: str) -> list[dict]:
