@@ -127,3 +127,60 @@ def test_get_queue_session_not_found(client):
     """不存在的 session_id → 404。"""
     r = client.get("/api/sessions/nonexistent/queue")
     assert r.status_code == 404
+
+
+def test_send_message_queues_then_drains(client, tmp_path):
+    """思考时发 2 条 → queue 增长 → turn 结束 → _run_next 自动 drain 跑下一轮。"""
+    sid = client.post("/api/sessions", json={"title": ""}).json()["id"]
+    sess = client.app.state.registry.get_or_load(sid)
+    # 先手动模拟 turn 在跑: 拿锁, 发 2 条排队消息
+    sess.lock.acquire(blocking=False)
+    try:
+        r1 = client.post(f"/api/sessions/{sid}/messages", json={"query": "先改A"})
+        r2 = client.post(f"/api/sessions/{sid}/messages", json={"query": "再改B"})
+        assert r1.json()["queued"] is True
+        assert r2.json()["queued"] is True
+        assert sess.queue == ["先改A", "再改B"]
+    finally:
+        sess.lock.release()
+    # 锁释放后, 发一条新消息触发 _run_next, drain 掉排队的 2 条
+    client.post(f"/api/sessions/{sid}/messages", json={"query": "trigger"})
+    # 等 _run_next drain 跑完(锁释放 + queue 清空)
+    deadline = time.time() + 5
+    while sess.lock.locked() and time.time() < deadline:
+        time.sleep(0.01)
+    # drain 后 queue 已清空
+    assert sess.queue == []
+
+
+def test_run_next_lock_busy_return(client, tmp_path):
+    """lock 已锁,_run_next 不阻塞直接 return。"""
+    sid = client.post("/api/sessions", json={"title": ""}).json()["id"]
+    registry = client.app.state.registry
+    sess = registry.get_or_load(sid)
+    sess.queue.append("消息")
+    sess.lock.acquire(blocking=False)
+    try:
+        from taisang.web.app import _run_next
+        _run_next(registry, sess, sid)
+        # queue 没被消费(没拿到锁)
+        assert sess.queue == ["消息"]
+    finally:
+        sess.lock.release()
+
+
+def test_send_message_appends_to_queue_when_busy(client, tmp_path):
+    """lock 已锁,POST 返回 {ok, queued: true},queue 增长。"""
+    sid = client.post("/api/sessions", json={"title": ""}).json()["id"]
+    sess = client.app.state.registry.get_or_load(sid)
+    sess.lock.acquire(blocking=False)
+    try:
+        r = client.post(f"/api/sessions/{sid}/messages", json={"query": "q1"})
+        assert r.status_code == 200
+        assert r.json()["queued"] is True
+        assert "q1" in sess.queue
+        r2 = client.post(f"/api/sessions/{sid}/messages", json={"query": "q2"})
+        assert r2.json()["queued"] is True
+        assert sess.queue == ["q1", "q2"]
+    finally:
+        sess.lock.release()
