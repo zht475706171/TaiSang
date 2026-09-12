@@ -52,6 +52,7 @@ class _Session:
     permission: WebPermissionManager
     store: ConversationStore
     lock: threading.Lock = field(default_factory=threading.Lock)
+    queue: list[str] = field(default_factory=list)  # 待发消息队列(思考期间发的)
     title: str = ""  # 空 → 首条消息发出时自动取 query 前 40 字
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
