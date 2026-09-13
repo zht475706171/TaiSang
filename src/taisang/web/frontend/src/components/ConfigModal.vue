@@ -41,7 +41,7 @@
         <t-form-item label="API Key" name="main_api_key">
           <ApiKeyInput
             v-model="mainForm.api_key"
-            :read-only="mainKeyReadonly"
+            :readonly="mainKeyReadonly"
             :api-key-set="mainKeySet"
             :masked-value="mainKeyMasked"
             @edit="mainKeyReadonly = false"
@@ -88,7 +88,7 @@
         <t-form-item label="API Key" name="sub_api_key">
           <ApiKeyInput
             v-model="subForm.api_key"
-            :read-only="subKeyReadonly"
+            :readonly="subKeyReadonly"
             :api-key-set="subKeySet"
             :masked-value="subKeyMasked"
             @edit="subKeyReadonly = false"
