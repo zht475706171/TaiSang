@@ -482,6 +482,10 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
         if not sess.lock.locked():
             return {"ok": True, "interrupted": False}
         sess.agent.interrupt()
+        # 用户点停止时,若 run 卡在 confirm/permission 永久阻塞,强制 deny 唤醒它
+        # → 工具 denied → run 继续到下个检查点 → cancel_event 生效 → run 结束释放 lock
+        sess.confirmer.force_deny_all()
+        sess.permission.force_deny_all()
         return {"ok": True, "interrupted": True}
 
     @app.get("/api/sessions/{session_id}/queue")
@@ -491,6 +495,21 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
         if sess is None:
             raise HTTPException(404, f"session not found: {session_id}")
         return {"queue": list(sess.queue), "len": len(sess.queue)}
+
+    @app.get("/api/sessions/{session_id}/pending")
+    async def get_pending(session_id: str) -> dict:
+        """返回当前阻塞中的 confirm/permission payload(无则 null)。
+
+        前端切回 session / 刷新页面时调此接口恢复 pending 卡片,
+        避免 SSE 重连后丢失正在等的 confirm/permission(SSE 不 replay 历史事件)。
+        """
+        sess = registry.get_or_load(session_id)
+        if sess is None:
+            raise HTTPException(404, f"session not found: {session_id}")
+        return {
+            "confirm": sess.confirmer.get_pending_payload(),
+            "permission": sess.permission.get_pending_payload(),
+        }
 
     @app.post("/api/sessions/{session_id}/confirm/{token}")
     async def confirm(session_id: str, token: str, req: ConfirmReq) -> dict:
