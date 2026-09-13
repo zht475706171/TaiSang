@@ -402,6 +402,9 @@ export function useChatStream(
         if (parent) {
           pushSubEvent(parent, { id: nextId(), kind: 'thinking', agentId: d.agent_id })
         }
+        // 子 agent 工作时也保持主 thinking 动画:整个 agent 系统在跑,
+        // 否则子 agent 一开始思考主 thinking 就灭,用户以为卡死。
+        thinking.value = true
         return
       }
       thinking.value = true
