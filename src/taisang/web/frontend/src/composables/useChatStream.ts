@@ -555,17 +555,21 @@ export function useChatStream(
       // debug 关闭时:reasoning 不保留(只在中间态 ThinkingIndicator 显示过)。
       // 流式分支传 streamingMessage(已在数组里),pushReasoningIfAny 会 splice 到它前面;
       // 非流式分支 streamingMessage 已 null,走 fallback push 末尾(此时 assistant 还没 push,顺序仍对)。
-      pushReasoningIfAny(streamingMessage.value || undefined)
-      clearThinking()
-      stopping.value = false  // 后台收尾结束,清停止中状态
       if (d.agent_id) {
-        // 子 agent 最终答案:收尾父卡片的流式子消息(不再 push 新条)
+        // 子 agent 最终答案:不清主 thinking(主 agent 可能还在等下个子 agent / 继续)。
+        // 只收尾父卡片的流式子消息(不再 push 新条)。
         const parent = findLastAgentToolCall()
         if (parent) {
           finishSubStreaming(parent, d.text || '', d.interrupted || false, d.agent_id)
           return
         }
+        // 父卡片缺失(异常),降级:不清 thinking,直接 return
+        return
       }
+      // 主 agent 最终答案:清 thinking + stopping
+      pushReasoningIfAny(streamingMessage.value || undefined)
+      clearThinking()
+      stopping.value = false  // 后台收尾结束,清停止中状态
       // 主 agent:流式模式下 FINAL_ANSWER 不重复 push(已在 llm_chunk 累积)
       if (streamingMessage.value && streamingMessage.value.streaming) {
         streamingMessage.value.streaming = false
