@@ -572,6 +572,61 @@ def test_interrupt_endpoint_unknown_session_404(client):
     assert r.status_code == 404
 
 
+# --- GET /pending: 切回 session 恢复 pending confirm/permission 卡片 ---
+
+def test_get_pending_no_pending(client):
+    """新 session 无 pending → GET /pending 返回 {confirm: null, permission: null}。"""
+    sid = client.post("/api/sessions", json={"title": "s"}).json()["id"]
+    r = client.get(f"/api/sessions/{sid}/pending")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["confirm"] is None
+    assert data["permission"] is None
+
+
+def test_get_pending_unknown_session_404(client):
+    """未知 session GET /pending → 404。"""
+    r = client.get("/api/sessions/nonexistent/pending")
+    assert r.status_code == 404
+
+
+def test_interrupt_force_denies_confirm(client):
+    """POST /interrupt 唤醒卡住的 confirm:pending 清空。
+
+    用一个真实阻塞的 confirmer 调用(interrupt force_deny 唤醒它)验证。
+    """
+    import threading
+    import time
+
+    sid = client.post("/api/sessions", json={"title": "s"}).json()["id"]
+    sess = client.app.state.registry.get_or_load(sid)
+    # 模拟 lock 被持有(interrupt 走 force_deny 分支需 lock.locked())
+    sess.lock.acquire(blocking=False)
+    try:
+        done = threading.Event()
+
+        def _blocked():
+            # 真实调用 confirmer,会阻塞,被 interrupt 的 force_deny 唤醒
+            sess.confirmer("a.py", "old", "new")
+            done.set()
+
+        t = threading.Thread(target=_blocked)
+        t.start()
+        # 等 confirmer 进入阻塞(emit 后 payload 可查)
+        deadline = time.time() + 1
+        while sess.confirmer.get_pending_payload() is None and time.time() < deadline:
+            time.sleep(0.01)
+        assert sess.confirmer.get_pending_payload() is not None
+        r = client.post(f"/api/sessions/{sid}/interrupt")
+        assert r.status_code == 200
+        t.join(timeout=2)
+        assert done.is_set()  # 线程被唤醒退出
+    finally:
+        sess.lock.release()
+    # interrupt 后 pending 清空(confirmer 返回时 pop 了 payload)
+    assert sess.confirmer.get_pending_payload() is None
+
+
 # --- 导入项目目录功能:GET /info + POST /pick-directory + POST /switch-directory ---
 
 def test_get_session_info_returns_default_source_root(client, tmp_path):

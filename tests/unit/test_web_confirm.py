@@ -66,3 +66,78 @@ def test_web_confirmer_resolve_unknown_token_returns_false():
     """resolve 一个不存在的 token 返回 False(已超时或从未发起)。"""
     conf = WebConfirmer(emit=lambda t, p: None, timeout=0.1)
     assert conf.resolve("nonexistent", approve=True) is False
+
+
+def test_web_confirmer_stores_pending_payload():
+    """阻塞期间 get_pending_payload 返回当前 payload(含 token)。"""
+    captured = {}
+    conf = WebConfirmer(emit=lambda t, p: captured.__setitem__("token", p["token"]))
+
+    result_box: list[bool] = []
+
+    def call_it():
+        result_box.append(conf("a.py", "old", "new"))
+
+    th = threading.Thread(target=call_it)
+    th.start()
+    deadline = time.time() + 1.0
+    while "token" not in captured and time.time() < deadline:
+        time.sleep(0.01)
+    # 阻塞期间 payload 可查
+    payload = conf.get_pending_payload()
+    assert payload is not None
+    assert payload["file_path"] == "a.py"
+    assert payload["old"] == "old"
+    assert payload["new"] == "new"
+    assert payload["token"] == captured["token"]
+    conf.resolve(captured["token"], approve=True)
+    th.join(timeout=2.0)
+    assert result_box == [True]
+
+
+def test_web_confirmer_payload_cleared_after_resolve():
+    """resolve 后 get_pending_payload 返回 None。"""
+    captured = {}
+    conf = WebConfirmer(emit=lambda t, p: captured.__setitem__("token", p["token"]), timeout=2.0)
+
+    result_box: list[bool] = []
+
+    def call_it():
+        result_box.append(conf("a.py", "old", "new"))
+
+    th = threading.Thread(target=call_it)
+    th.start()
+    deadline = time.time() + 1.0
+    while "token" not in captured and time.time() < deadline:
+        time.sleep(0.01)
+    conf.resolve(captured["token"], approve=False)
+    th.join(timeout=2.0)
+    # resolve 后无 pending
+    assert conf.get_pending_payload() is None
+
+
+def test_web_confirmer_force_deny_all():
+    """force_deny_all 强制 deny 唤醒阻塞线程,返回 False。"""
+    captured = {}
+    conf = WebConfirmer(emit=lambda t, p: captured.__setitem__("token", p["token"]))
+
+    result_box: list[bool] = []
+
+    def call_it():
+        result_box.append(conf("a.py", "old", "new"))
+
+    th = threading.Thread(target=call_it)
+    th.start()
+    deadline = time.time() + 1.0
+    while "token" not in captured and time.time() < deadline:
+        time.sleep(0.01)
+    # force_deny 唤醒
+    conf.force_deny_all()
+    th.join(timeout=2.0)
+    assert result_box == [False]
+
+
+def test_web_confirmer_get_pending_empty():
+    """无 pending 时 get_pending_payload 返回 None。"""
+    conf = WebConfirmer(emit=lambda t, p: None, timeout=0.1)
+    assert conf.get_pending_payload() is None

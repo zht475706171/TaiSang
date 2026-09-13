@@ -105,6 +105,30 @@ def test_delete_times_out_when_run_stuck(tmp_path, mock_env):
         sess.lock.release()
 
 
+def test_delete_force_denies_blocked_confirm(tmp_path, mock_env):
+    """run 卡在 confirm 永久阻塞(用户没点):delete force_deny 唤醒它,跑完释放 lock,删除成功。"""
+    reg = SessionRegistry(tmp_path)
+    sid = reg.create("会话")
+    sess = reg.get_or_load(sid)
+    holding = threading.Event()
+
+    def hold_on_confirm():
+        # 持 lock 并卡在 confirmer(永久阻塞,靠 force_deny 唤醒)
+        with sess.lock:
+            holding.set()
+            sess.confirmer("a.py", "old", "new")  # timeout=None 永久阻塞
+
+    t = threading.Thread(target=hold_on_confirm)
+    t.start()
+    assert holding.wait(timeout=2)
+    # delete:lock 被持有,force_deny 唤醒 confirmer → run 退出释放 lock → 删除
+    ok = reg.delete(sid, timeout=0.5)
+    t.join(timeout=2)
+    assert ok is True
+    assert not t.is_alive()
+    assert not (tmp_path / ".taisang" / "sessions" / sid).exists()
+
+
 def test_delete_during_run_writer_never_crashes(tmp_path, mock_env):
     """复现线上 bug:run 线程持续写 jsonl 期间 delete,writer 不得抛 Errno 2。"""
     reg = SessionRegistry(tmp_path)

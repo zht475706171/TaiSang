@@ -260,3 +260,75 @@ def test_web_permission_initial_dirs_approved(tmp_path: Path) -> None:
     # tmp_path 内不问
     assert perm.check(tmp_path / "subdir") is True
     assert emitted == []
+
+
+def test_web_permission_stores_pending_payload(tmp_path: Path) -> None:
+    """阻塞期间 get_pending_payload 返回当前 payload(含 token + path)。"""
+    import time
+
+    emitted: list[tuple[str, dict]] = []
+
+    def emit(event_type: str, payload: dict) -> None:
+        emitted.append((event_type, payload))
+
+    perm = WebPermissionManager(emit=emit, initial_dirs=[])
+    target = tmp_path / "pending-web"
+    target.mkdir()
+    result_holder: dict = {}
+
+    def _check():
+        result_holder["ok"] = perm.check(target)
+
+    t = threading.Thread(target=_check)
+    t.start()
+    while not emitted:
+        time.sleep(0.01)
+    # 阻塞期间 payload 可查(path 是 _find_project_root 推算的根,可能 != target)
+    payload = perm.get_pending_payload()
+    assert payload is not None
+    assert "path" in payload
+    assert payload["path"]  # 非空
+    assert "token" in payload
+    perm.resolve(emitted[0][1]["token"], approve=True)
+    t.join(timeout=2)
+    assert result_holder["ok"] is True
+    # resolve 后无 pending
+    assert perm.get_pending_payload() is None
+
+
+def test_web_permission_force_deny_all(tmp_path: Path) -> None:
+    """force_deny_all 强制 deny 唤醒阻塞线程,check 返回 False。"""
+    import time
+
+    emitted: list[tuple[str, dict]] = []
+
+    def emit(event_type: str, payload: dict) -> None:
+        emitted.append((event_type, payload))
+
+    perm = WebPermissionManager(emit=emit, initial_dirs=[])
+    target = tmp_path / "force-deny-web"
+    target.mkdir()
+    result_holder: dict = {}
+
+    def _check():
+        result_holder["ok"] = perm.check(target)
+
+    t = threading.Thread(target=_check)
+    t.start()
+    while not emitted:
+        time.sleep(0.01)
+    # force_deny 唤醒
+    perm.force_deny_all()
+    t.join(timeout=2)
+    assert result_holder["ok"] is False
+
+
+def test_web_permission_get_pending_empty() -> None:
+    """无 pending 时 get_pending_payload 返回 None。"""
+    emitted: list[tuple[str, dict]] = []
+
+    def emit(event_type: str, payload: dict) -> None:
+        emitted.append((event_type, payload))
+
+    perm = WebPermissionManager(emit=emit, initial_dirs=[])
+    assert perm.get_pending_payload() is None
