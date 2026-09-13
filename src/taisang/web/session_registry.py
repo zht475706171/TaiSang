@@ -307,13 +307,26 @@ class SessionRegistry:
 
         先 pop 内存(get_or_load 找不到,新 run 进不来);但已在跑的 run
         还持着 sess.lock,直接 rmtree 会让它的 on_append 写已删目录炸
-        Errno 2,故等锁释放再删盘。等不到(run 卡死)返回 False,磁盘
-        保留,前端提示稍后再删。
+        Errno 2,故等锁释放再删盘。
+
+        run 可能卡在 confirm/permission 永久阻塞(用户没点确认),此时 lock
+        被持有拿不到。用 3 轮重试:每轮拿不到 lock 就 force_deny_all 唤醒
+        阻塞的 confirm/permission,让 run 拿到 deny 继续跑完释放 lock。
+        最坏 3×timeout。3 轮仍拿不到(run 真卡死,非 confirm 阻塞)→ 返回 False,
+        磁盘保留,前端提示稍后再删。
         """
         with self._lock:
             sess = self._sessions.pop(session_id, None)
         if sess is not None:
-            if not sess.lock.acquire(timeout=timeout):
+            acquired = False
+            for _ in range(3):
+                if sess.lock.acquire(timeout=timeout):
+                    acquired = True
+                    break
+                # lock 被持有:可能卡在 confirm/permission 永久阻塞,强制 deny 唤醒
+                sess.confirmer.force_deny_all()
+                sess.permission.force_deny_all()
+            if not acquired:
                 return False
             sess.lock.release()
         sess_dir = self.source_root / ".taisang" / "sessions" / session_id
