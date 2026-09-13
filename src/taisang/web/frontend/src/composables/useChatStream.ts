@@ -2,7 +2,7 @@ import { ref, type Ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { MessagePlugin } from 'tdesign-vue-next'
 import type { ChatMessage, HistoryRecord, Todo, UsageData } from '@/types'
-import { getHistory, sendMessage, respondConfirm, respondPermission, interruptSession, getQueue } from '@/api/chat'
+import { getHistory, sendMessage, respondConfirm, respondPermission, interruptSession, getQueue, getPending } from '@/api/chat'
 import { useConfigStore } from '@/stores/config'
 
 let _idCounter = 0
@@ -659,6 +659,30 @@ export function useChatStream(
     }
   }
 
+  /** 切回 session / 刷新时恢复正在阻塞的 confirm/permission 卡片。
+   *  SSE 不 replay 历史事件,pending 卡片只在 GET /pending 里,不调就永久丢失(后端仍阻塞)。
+   *  去重:messages 里已有同 token 卡片则不重复 push(防御极端时序)。 */
+  async function loadPending(id: string) {
+    try {
+      const data = await getPending(id)
+      if (data.confirm) {
+        const exists = messages.value.some(m => m.kind === 'confirm' && m.token === data.confirm!.token)
+        if (!exists) {
+          pushConfirm(data.confirm.token, data.confirm.file_path, data.confirm.old, data.confirm.new)
+        }
+      }
+      if (data.permission) {
+        const exists = messages.value.some(m => m.kind === 'permission' && m.token === data.permission!.token)
+        if (!exists) {
+          pushPermission(data.permission.token, data.permission.path)
+        }
+      }
+    } catch (e) {
+      // 恢复 pending 非关键,静默失败(不影响主流程)
+      console.warn('loadPending failed:', e)
+    }
+  }
+
   async function send(query: string) {
     if (!sessionId.value) return
     // 不立即 push 到 messages:排队期间这条消息显示在底部独立排队区,
@@ -687,6 +711,7 @@ export function useChatStream(
     send,
     stop,
     loadHistory,
+    loadPending,
     openEventStream,
     closeEventStream,
     answerConfirm,

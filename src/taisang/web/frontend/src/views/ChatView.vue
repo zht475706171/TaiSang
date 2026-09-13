@@ -73,7 +73,7 @@ const currentSourceRoot = ref<string | null>(null)
 
 // useChatStream 需要一个 ref,用 toRef 把 computed 转 ref
 const sessionIdRef = toRef(currentId)
-const { messages, thinking, stopping, retryInfo, reasoningText, connectionState, todos, pendingQueue, send, stop, loadHistory, openEventStream, closeEventStream, answerConfirm } =
+const { messages, thinking, stopping, retryInfo, reasoningText, connectionState, todos, pendingQueue, send, stop, loadHistory, loadPending, openEventStream, closeEventStream, answerConfirm } =
   useChatStream(sessionIdRef, () => store.fetchSessions())
 
 watch(
@@ -83,6 +83,8 @@ watch(
     if (id) {
       await loadHistory(id)
       openEventStream(id)
+      // 恢复正在阻塞的 confirm/permission 卡片(SSE 不 replay 历史事件)
+      await loadPending(id)
       // 拉当前工作目录展示在输入栏上方
       try {
         const info = await getSessionInfo(id)
