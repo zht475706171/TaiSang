@@ -702,14 +702,21 @@ export function useChatStream(
   }
 
   async function loadHistory(id: string) {
+    // getHistory 单独 try:session 不存在(草稿态/已删)404 时静默清空,不报错刷屏
     try {
       const records = await getHistory(id)
       renderHistory(records)
-      // 重建队列状态
+    } catch (e) {
+      // 404 = session 不存在(草稿态 id 或已删除),清空 messages,不弹错误
+      messages.value = []
+      return
+    }
+    // 重建队列状态:404 静默(辅助恢复,session 竞态删除时 404 正常)
+    try {
       const q = await getQueue(id)
       pendingQueue.value = q.queue || []
-    } catch (e) {
-      pushRunError(`加载历史失败: ${(e as Error).message}`)
+    } catch {
+      pendingQueue.value = []
     }
   }
 
