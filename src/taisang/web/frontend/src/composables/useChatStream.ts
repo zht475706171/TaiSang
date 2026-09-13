@@ -216,6 +216,55 @@ export function useChatStream(
     parent.subAgentEvents.push(sub)
   }
 
+  // 子 agent 流式 chunk 累积:找父卡片里最后一条 streaming 的子 assistant 消息累积,
+  // 没有就新建一条 streaming 子消息。避免每个 chunk push 一条(子事件爆炸到 2000+)。
+  function appendSubChunk(parent: ChatMessage, textDelta: string, agentId: string) {
+    if (!parent.subAgentEvents) parent.subAgentEvents = []
+    // 找最后一条 streaming 的子 assistant 消息
+    for (let i = parent.subAgentEvents.length - 1; i >= 0; i--) {
+      const m = parent.subAgentEvents[i]
+      if (m.kind === 'assistant' && m.streaming) {
+        if (textDelta) m.text = (m.text || '') + textDelta
+        // reasoning 累积到 reasoningText 子字段(子 agent 不单独存,简化:忽略 reasoning 累积,只累积正文)
+        return
+      }
+    }
+    // 没有流式子消息,新建一条
+    const sub: ChatMessage = {
+      id: nextId(),
+      kind: 'assistant',
+      text: textDelta || '',
+      streaming: true,
+      agentId,
+    }
+    parent.subAgentEvents.push(sub)
+  }
+
+  // 子 agent 流式消息收尾:把最后一条 streaming 子消息标 streaming=false(interrupted)
+  function finishSubStreaming(parent: ChatMessage, text: string, interrupted: boolean, agentId: string) {
+    if (!parent.subAgentEvents) return
+    for (let i = parent.subAgentEvents.length - 1; i >= 0; i--) {
+      const m = parent.subAgentEvents[i]
+      if (m.kind === 'assistant' && m.streaming) {
+        m.streaming = false
+        m.interrupted = interrupted
+        if (!m.text) m.text = text
+        else if (interrupted) m.text = (m.text || '') + ' [interrupted]'
+        return
+      }
+    }
+    // 没有流式子消息(非流式回退),push 一条
+    if (text) {
+      parent.subAgentEvents.push({
+        id: nextId(),
+        kind: 'assistant',
+        text: text || '',
+        interrupted,
+        agentId,
+      })
+    }
+  }
+
   // 子 agent tool_result 填充:在父卡片的嵌套数组里找最后一个同名未填的 tool_call
   function fillSubToolResult(parent: ChatMessage, name: string, preview: string, totalBytes: number) {
     if (!parent.subAgentEvents) return
@@ -380,17 +429,11 @@ export function useChatStream(
     eventSource.addEventListener('llm_chunk', (e: MessageEvent) => {
       const d = safeParse<{ text_delta: string; reasoning_delta: string; agent_id?: string }>(e.data)
       if (!d) return
-      // 子 agent chunk:嵌套到父卡片(降级:无父则忽略)
+      // 子 agent chunk:累积到父卡片的流式子消息(不再每个 chunk push 一条)
       if (d.agent_id) {
         const parent = findLastAgentToolCall()
         if (parent) {
-          pushSubEvent(parent, {
-            id: nextId(),
-            kind: 'llm_chunk',
-            textDelta: d.text_delta,
-            reasoningDelta: d.reasoning_delta,
-            agentId: d.agent_id,
-          })
+          appendSubChunk(parent, d.text_delta, d.agent_id)
         }
         return
       }
@@ -434,7 +477,13 @@ export function useChatStream(
     eventSource.addEventListener('tool_call', (e: MessageEvent) => {
       const d = safeParse<{ name: string; args: Record<string, unknown>; agent_id?: string }>(e.data)
       if (!d) return
-      clearThinking()
+      // 主 agent(无 agent_id)调 Agent 工具派子 agent:保持 thinking 动画,
+      // 让用户知道主 agent 正在等子 agent 完成(否则只看到 Agent 卡片像卡死)。
+      // 子 agent 自己的工具调用(有 agent_id)不清主 agent 的 thinking。
+      // 其他主 agent 工具:清 thinking。
+      if (!d.agent_id && d.name !== 'Agent') {
+        clearThinking()
+      }
       clearStreaming()
       // debug 关闭时:工具卡片不展示(用户只看问答)。但 Agent 工具卡片例外 ——
       // 子 agent 的最终答案会嵌套在里面,关掉会丢答案。所以 Agent 工具卡片始终展示。
@@ -507,16 +556,10 @@ export function useChatStream(
       clearThinking()
       stopping.value = false  // 后台收尾结束,清停止中状态
       if (d.agent_id) {
-        // 子 agent 最终答案:嵌套到父卡片
+        // 子 agent 最终答案:收尾父卡片的流式子消息(不再 push 新条)
         const parent = findLastAgentToolCall()
         if (parent) {
-          pushSubEvent(parent, {
-            id: nextId(),
-            kind: 'assistant',
-            text: d.text || '',
-            interrupted: d.interrupted || false,
-            agentId: d.agent_id,
-          })
+          finishSubStreaming(parent, d.text || '', d.interrupted || false, d.agent_id)
           return
         }
       }
