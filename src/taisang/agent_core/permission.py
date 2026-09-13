@@ -168,10 +168,12 @@ class WebPermissionManager(PermissionManager):
 
     机制同 WebConfirmer:
     1. _ask 生成 token,emit permission_request 事件
-    2. 阻塞 threading.Event.wait(timeout)
+    2. 阻塞 threading.Event.wait(timeout),timeout=None 永久阻塞
     3. 前端弹卡片,POST /api/sessions/{id}/permission/{token} {approve: bool}
     4. 端点调 resolve(token, approve),set event
-    5. _ask 返回 approve;超时默认 deny
+    5. _ask 返回 approve;超时默认 deny(传显式 timeout 时);永久阻塞靠 force_deny_all/interrupt/delete 唤醒
+
+    切 session 不丢卡片:payload 存 _pending_payload,前端切回时 GET /pending 恢复。
     """
 
     def __init__(
@@ -179,28 +181,30 @@ class WebPermissionManager(PermissionManager):
         emit: Callable[[str, dict[str, Any]], None],
         initial_dirs: list[Path],
         home: Path | None = None,
-        timeout: float = 60.0,
+        timeout: float | None = None,
     ) -> None:
         super().__init__(initial_dirs, home)
         self._emit = emit
         self._timeout = timeout
         self._pending: dict[str, threading.Event] = {}
         self._results: dict[str, bool] = {}
+        # 当前阻塞中的 permission payload(含 token),供 GET /pending 恢复卡片用。
+        self._pending_payload: dict[str, dict[str, Any]] = {}
 
     def _ask(self, path: Path) -> bool:
         token = uuid.uuid4().hex[:12]
         evt = threading.Event()
+        payload = {"token": token, "path": str(path)}
         with self._lock:
             self._pending[token] = evt
-        self._emit(
-            "permission_request",
-            {"token": token, "path": str(path)},
-        )
-        ok = evt.wait(timeout=self._timeout)
+            self._pending_payload[token] = payload
+        self._emit("permission_request", payload)
+        evt.wait(timeout=self._timeout)
         with self._lock:
             self._pending.pop(token, None)
+            self._pending_payload.pop(token, None)
             result = self._results.pop(token, False)
-        return ok and result
+        return result
 
     def resolve(self, token: str, approve: bool) -> bool:
         """前端 POST 确认结果时调用。返回 True 表示 token 有效已处理。"""
@@ -211,3 +215,24 @@ class WebPermissionManager(PermissionManager):
             self._results[token] = approve
         evt.set()
         return True
+
+    def get_pending_payload(self) -> dict[str, Any] | None:
+        """返回当前阻塞中的 permission payload(含 token),无则 None。
+
+        供 GET /api/sessions/{id}/pending 查询,前端切回 session 时恢复卡片。
+        """
+        with self._lock:
+            if not self._pending_payload:
+                return None
+            return dict(next(iter(self._pending_payload.values())))
+
+    def force_deny_all(self) -> None:
+        """强制把所有 pending permission 置为 deny 并唤醒阻塞线程。
+
+        用途:delete/interrupt 收尾——run 线程卡在 permission 阻塞,
+        force_deny 唤醒它 → permission 返回 False → 工具 denied → run 继续。
+        """
+        with self._lock:
+            tokens = list(self._pending.keys())
+        for token in tokens:
+            self.resolve(token, False)
