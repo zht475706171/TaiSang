@@ -148,7 +148,9 @@
           <t-input
             v-model="ctxWindowInput"
             placeholder="200"
-            type="number"
+            type="text"
+            inputmode="numeric"
+            pattern="[0-9]*"
           >
             <template #suffix>K tokens</template>
           </t-input>
@@ -326,7 +328,7 @@ async function handleSubmit() {
   // context window:合并 default key,保留其他 per-model key
   // 输入空串 → 删 default key(走 200K 兜底);输入数字 → 写 default key(单位 K → tokens)
   const mergedCtx: Record<string, number> = { ...ctxWindowRaw.value }
-  const ctxInputTrim = ctxWindowInput.value.trim()
+  const ctxInputTrim = String(ctxWindowInput.value ?? '').trim()
   if (ctxInputTrim === '') {
     delete mergedCtx['default']
   } else {
