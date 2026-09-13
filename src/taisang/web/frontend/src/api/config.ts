@@ -30,3 +30,13 @@ export function testConfig(
 ): Promise<ConfigTestResult> {
   return apiPost<ConfigTestResult>('/api/config/test', { model, api_key, base_url, target })
 }
+
+/** 获取免确认模式开关状态 */
+export function getSkipPermissions(): Promise<{ enabled: boolean }> {
+  return apiGet<{ enabled: boolean }>('/api/skip-permissions')
+}
+
+/** 切换免确认模式开关(实时生效) */
+export function setSkipPermissions(enabled: boolean): Promise<{ enabled: boolean }> {
+  return apiPost<{ enabled: boolean }>('/api/skip-permissions', { enabled })
+}

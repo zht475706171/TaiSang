@@ -20,6 +20,8 @@ export interface LLMConfig {
   subagent: LLMConfigSection
   /** 模型 context window 映射(单位 tokens):key 是模型名,"default" 是兜底。空 dict 表示全走 200K。 */
   model_context_window?: Record<string, number>
+  /** 免确认模式开关(从 /api/skip-permissions 单独加载) */
+  skip_permissions?: boolean
 }
 
 /** POST /api/config 请求体:main + subagent + debug + model_context_window。每段 api_key='__unchanged__' 表示保留已存 key。model_context_window=null(字段缺失)表示不改,dict(含空)表示覆盖。 */

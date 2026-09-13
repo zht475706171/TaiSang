@@ -138,6 +138,27 @@
 
       <div class="card-divider"></div>
 
+      <!-- 免确认模式卡 -->
+      <div class="config-card debug-card" :class="{ 'danger-card': skipPermissions }">
+        <div class="debug-row">
+          <div class="debug-label">
+            <div class="card-title-row">
+              <span class="card-accent-bar danger-bar"></span>
+              <span class="card-title">免确认模式</span>
+            </div>
+            <div class="debug-desc">
+              开启后,Agent 执行的所有操作(读写文件、运行命令)将自动放行,不再询问您。
+            </div>
+            <div class="danger-warn">
+              ⚠️ 此模式会关闭所有安全防护,可能导致文件被覆盖或危险命令被执行,请自行承担风险。
+            </div>
+          </div>
+          <t-switch v-model="skipPermissions" @change="handleSkipPermissionsChange" />
+        </div>
+      </div>
+
+      <div class="card-divider"></div>
+
       <!-- Context Window 卡 -->
       <div class="config-card">
         <div class="card-title-row">
@@ -173,7 +194,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import { getConfig, saveConfig, testConfig, type ConfigTestResult } from '@/api/config'
+import { getConfig, saveConfig, testConfig, getSkipPermissions, setSkipPermissions, type ConfigTestResult } from '@/api/config'
 import ApiKeyInput from './ApiKeyInput.vue'
 
 const props = defineProps<{ modelValue: boolean }>()
@@ -196,6 +217,9 @@ interface SectionForm {
 const mainForm = ref<SectionForm>({ model: '', api_key: '', base_url: '' })
 const subForm = ref<SectionForm & { enabled: boolean }>({ enabled: false, model: '', api_key: '', base_url: '' })
 const debugForm = ref(false)
+const debugOriginal = ref(false)
+/** 免确认模式开关(独立于 saveConfig,切换时即时 POST) */
+const skipPermissions = ref(false)
 /** 默认 context window(单位 K)。空串 = 走 200K 兜底。显示用 string,保存时转 int。 */
 const ctxWindowInput = ref('')
 /** load 拿到的完整 model_context_window dict,保存时合并 default key 后回写。 */
@@ -215,7 +239,6 @@ const mainTesting = ref(false)
 const subTesting = ref(false)
 const mainTestResult = ref<ConfigTestResult | null>(null)
 const subTestResult = ref<ConfigTestResult | null>(null)
-const debugOriginal = ref(false)
 
 const canTestMain = computed(() => mainForm.value.model.trim() !== '' && mainForm.value.base_url.trim() !== '')
 const canTestSub = computed(() => subForm.value.model.trim() !== '' && subForm.value.base_url.trim() !== '')
@@ -249,6 +272,14 @@ async function loadConfig() {
     ctxWindowRaw.value = { ...rawCtx }
     const defaultK = rawCtx['default']
     ctxWindowInput.value = defaultK ? String(Math.round(defaultK / 1000)) : ''
+
+    // 免确认模式:从独立端点加载
+    try {
+      const sp = await getSkipPermissions()
+      skipPermissions.value = sp.enabled
+    } catch {
+      skipPermissions.value = false
+    }
   } catch (e) {
     msg.value = '加载配置失败: ' + (e as Error).message
     msgError.value = true
@@ -262,6 +293,19 @@ function cancelEditMainKey() {
 function cancelEditSubKey() {
   subKeyReadonly.value = true
   subForm.value.api_key = ''
+}
+
+/** 免确认模式开关切换:即时 POST,实时生效(不随保存按钮提交) */
+async function handleSkipPermissionsChange(val: boolean) {
+  try {
+    await setSkipPermissions(val)
+    skipPermissions.value = val
+  } catch (e) {
+    // 失败时回滚开关
+    skipPermissions.value = !val
+    msg.value = '切换免确认模式失败: ' + (e as Error).message
+    msgError.value = true
+  }
 }
 
 async function handleTestMain() {
@@ -523,6 +567,20 @@ watch(() => subForm.value.enabled, () => {
   color: var(--td-text-color-placeholder);
   line-height: 1.5;
   margin-top: 4px;
+}
+
+/* 免确认模式(危险) */
+.danger-bar {
+  background: var(--td-error-color, #d54941) !important;
+}
+.danger-card {
+  border-color: var(--td-error-color-2, #f5b0b0) !important;
+}
+.danger-warn {
+  font-size: 12px;
+  color: var(--td-error-color, #d54941);
+  line-height: 1.5;
+  margin-top: 6px;
 }
 .test-result.ok {
   color: var(--td-success-color, #2ba471);
