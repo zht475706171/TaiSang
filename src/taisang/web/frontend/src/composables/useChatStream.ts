@@ -616,12 +616,21 @@ export function useChatStream(
     eventSource.addEventListener('queue_updated', (e: MessageEvent) => {
       const data = safeParse<{ queue: string[]; len: number }>(e.data)
       if (!data) return
-      // 后端队列变化: 同步本地镜像
-      // 注意: queue_updated([]) 有两种来源
-      //   - interrupt 清空(stop() 已本地删气泡, 这里不动)
-      //   - flush 处理(气泡保留作为已发送, 这里也不动)
-      // 所以这里只同步 pendingQueue 镜像, 不操作 messages
-      pendingQueue.value = data.queue || []
+      const newQueue = data.queue || []
+      // queue_updated([]) 有两种来源:
+      //   - drain flush:后端拿锁把队列拼成 prompt 跑下一轮,清队列推 []。
+      //     此时被 drain 掉的消息(原 pendingQueue 里有、newQueue 里没了的)应转为正式
+      //     user 气泡 push 到 messages,作为新一轮 turn 的用户输入显示在 thinking 之前。
+      //   - interrupt 清空:用户点停止,后端 queue.clear() 推 []。
+      //     此时 stopping=true,stop() 已决定不显示这些气泡,不转。
+      if (newQueue.length === 0 && pendingQueue.value.length > 0 && !stopping.value) {
+        // drain flush:把排队的消息转为已发送 user 气泡
+        for (const q of pendingQueue.value) {
+          pushUser(q)
+        }
+      }
+      // 同步本地镜像
+      pendingQueue.value = newQueue
     })
   }
 
@@ -652,17 +661,14 @@ export function useChatStream(
 
   async function send(query: string) {
     if (!sessionId.value) return
-    pushUser(query)  // 立即 push user 气泡(无 thinking 守卫)
+    // 不立即 push 到 messages:排队期间这条消息显示在底部独立排队区,
+    // 不被当前 turn 的流式内容挤动。drain 时(queue_updated 清空)再转已发送气泡。
     pendingQueue.value.push(query)  // 本地镜像
     try {
       await sendMessage(sessionId.value, query)
     } catch (e) {
-      // 发送失败: 从 pendingQueue 移除刚 push 的 query
+      // 发送失败:从 pendingQueue 移除刚 push 的 query
       pendingQueue.value = pendingQueue.value.filter(q => q !== query)
-      // 同时从 messages 删除刚 push 的 user 气泡
-      messages.value = messages.value.filter(
-        m => !(m.kind === 'user' && m.text === query)
-      )
       pushRunError(`发送失败: ${(e as Error).message}`)
     }
   }

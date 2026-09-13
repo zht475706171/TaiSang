@@ -50,6 +50,16 @@
       :retry-info="retryInfo"
       :reasoning-text="reasoningText"
     />
+    <!-- 排队区:思考期间发的消息,后端还没开始跑,钉在最后,与当前 turn 视觉分离 -->
+    <div v-if="pendingQueue.length" class="pending-queue">
+      <div class="pending-header">
+        <span class="pending-dot"></span>
+        <span class="pending-label">排队中({{ pendingQueue.length }})</span>
+      </div>
+      <div v-for="(q, i) in pendingQueue" :key="`pending-${i}`" class="msg user pending">
+        {{ q }}
+      </div>
+    </div>
   </div>
 </template>
 
@@ -61,13 +71,17 @@ import ToolCard from './ToolCard.vue'
 import ConfirmCard from './ConfirmCard.vue'
 import UsageLine from './UsageLine.vue'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   messages: ChatMessage[]
   thinking: boolean
   stopping?: boolean
   retryInfo?: { attempt: number; delaySec: number } | null
   reasoningText?: string
-}>()
+  /** 排队中的消息(后端还没开始跑),钉在底部独立显示 */
+  pendingQueue?: string[]
+}>(), {
+  pendingQueue: () => [],
+})
 
 const listRef = ref<HTMLDivElement | null>(null)
 
@@ -80,6 +94,12 @@ function scrollToBottom() {
 // 消息列表变化(新增/更新)→ 自动滚到底
 watch(
   () => props.messages.length,
+  () => nextTick(scrollToBottom),
+)
+
+// 排队队列变化(排队消息新增)→ 滚到底,让用户看到新发的排队气泡
+watch(
+  () => props.pendingQueue?.length,
   () => nextTick(scrollToBottom),
 )
 
@@ -207,5 +227,42 @@ function renderMarkdown(text: string): string {
   border-radius: 6px;
   font-size: 13px;
   margin: 8px 0;
+}
+
+/* 排队区:思考期间发的消息,后端还没开始跑 */
+.pending-queue {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px dashed var(--td-component-stroke);
+  border-radius: 8px;
+  background: var(--td-bg-color-secondarycontainer, #fafafa);
+}
+.pending-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--td-text-color-placeholder);
+}
+.pending-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--td-warning-color, #ed7b2f);
+  animation: pending-pulse 1.2s ease-in-out infinite;
+}
+@keyframes pending-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+.pending-label {
+  font-family: var(--app-font-mono);
+}
+.msg.pending {
+  margin: 6px 0;
+  margin-left: 0;
+  opacity: 0.75;
+  border-left: 2px solid var(--td-warning-color, #ed7b2f);
 }
 </style>
