@@ -1,4 +1,5 @@
 """消息队列单元测试: _run_next / send_message / interrupt / GET /queue"""
+import asyncio
 import time
 from unittest.mock import patch
 
@@ -24,7 +25,7 @@ def test_run_next_empty_queue_noop(client, tmp_path):
     sess = registry.get_or_load(sid)
     from taisang.web.app import _run_next
     # queue 空,不拿锁
-    _run_next(registry, sess, sid)
+    _run_next(registry, sess, sid, asyncio.new_event_loop())
     assert not sess.lock.locked()
     assert sess.queue == []
 
@@ -162,7 +163,7 @@ def test_run_next_lock_busy_return(client, tmp_path):
     sess.lock.acquire(blocking=False)
     try:
         from taisang.web.app import _run_next
-        _run_next(registry, sess, sid)
+        _run_next(registry, sess, sid, asyncio.new_event_loop())
         # queue 没被消费(没拿到锁)
         assert sess.queue == ["消息"]
     finally:

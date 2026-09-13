@@ -120,9 +120,10 @@ class SwitchDirReq(BaseModel):
     path: str
 
 
-def _run_next(registry: SessionRegistry, sess, session_id: str) -> None:
+def _run_next(registry: SessionRegistry, sess, session_id: str, loop) -> None:
     """尝试跑下一个 turn: 拿锁 + 拼接 queue + 跑。
     拿不到锁(return False) → 已有 turn 在跑, run_end 会自动调本函数。
+    loop: 主线程的 event loop(第一次在 async 路由里拿到,递归 drain 在工作线程里复用)。
     """
     if not sess.queue:  # 空队列没东西跑
         return
@@ -156,9 +157,9 @@ def _run_next(registry: SessionRegistry, sess, session_id: str) -> None:
             )
             sess.broker.publish("run_end", {})
             sess.lock.release()
-            _run_next(registry, sess, session_id)  # 递归 drain
+            _run_next(registry, sess, session_id, loop)  # 递归 drain(复用主 loop)
 
-    asyncio.get_running_loop().run_in_executor(None, _run)
+    loop.run_in_executor(None, _run)
 
 
 def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastAPI:
@@ -254,7 +255,7 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
         sess.broker.publish("queue_updated", {
             "queue": list(sess.queue), "len": len(sess.queue)
         })
-        _run_next(registry, sess, session_id)  # 尝试跑(没拿到锁会 return)
+        _run_next(registry, sess, session_id, asyncio.get_running_loop())  # 尝试跑(没拿到锁会 return)
         return {"ok": True, "queued": was_locked}
 
     @app.get("/api/sessions/{session_id}/messages")
