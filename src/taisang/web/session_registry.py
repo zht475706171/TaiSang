@@ -62,9 +62,10 @@ class _Session:
 class SessionRegistry:
     """会话注册表。单例语义(一个 web 进程一个 registry)。"""
 
-    def __init__(self, source_root: Path, allow_dirs: list[Path] | None = None) -> None:
+    def __init__(self, source_root: Path, allow_dirs: list[Path] | None = None, skip_permissions: bool = False) -> None:
         self.source_root = source_root.resolve()
         self.allow_dirs = allow_dirs or []
+        self.skip_permissions = skip_permissions
         self._sessions: dict[str, _Session] = {}
         self._lock = threading.Lock()
         # MCPManager:进程级单例,启动时连接所有 enabled server。
@@ -133,6 +134,7 @@ class SessionRegistry:
             mcp_manager=self._mcp_manager,
             agents=agents,
             debug=cfg.debug,
+            skip_permissions=self.skip_permissions,
         )
         return _Session(
             session_id=session_id,
@@ -156,6 +158,17 @@ class SessionRegistry:
         with self._lock:
             self._sessions[session_id] = sess
         return session_id
+
+    def set_skip_permissions(self, enabled: bool) -> None:
+        """运行时切换所有 session 的免确认模式。
+
+        Web 设置面板切开关时调用:遍历所有已建 session,翻转 permission.bypass_enabled。
+        下一轮工具调用立即生效(无需重建 service)。
+        """
+        self.skip_permissions = enabled
+        with self._lock:
+            for sess in self._sessions.values():
+                sess.agent.permission.bypass_enabled = enabled
 
     def set_title_from_query(self, session_id: str, query: str) -> bool:
         """首条消息发出时调:若当前 title 为空,取 query 前 40 字作 title。

@@ -298,7 +298,7 @@ class MCPClient:
         result = await self._session.list_resources()
         return [
             McpResourceInfo(
-                uri=r.uri,
+                uri=str(r.uri),
                 name=r.name,
                 description=r.description or "",
                 mime_type=r.mimeType,

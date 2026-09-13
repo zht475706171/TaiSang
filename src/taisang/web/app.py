@@ -45,10 +45,12 @@ from ..config import (
     SubAgentLLMConfig,
     load_config,
     load_model_context_window,
+    load_skip_permissions,
     load_subagent_config,
     mask_api_key,
     save_config,
     save_model_context_window,
+    save_skip_permissions,
     save_subagent_config,
 )
 from .session_registry import SessionRegistry
@@ -162,9 +164,18 @@ def _run_next(registry: SessionRegistry, sess, session_id: str, loop) -> None:
     loop.run_in_executor(None, _run)
 
 
-def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastAPI:
-    """构造 FastAPI app。source_root 是 agent 工作目录,allow_dirs 是允许访问的额外目录。"""
-    registry = SessionRegistry(source_root, allow_dirs=allow_dirs or [])
+def create_app(source_root: Path, allow_dirs: list[Path] | None = None, skip_permissions: bool = False) -> FastAPI:
+    """构造 FastAPI app。source_root 是 agent 工作目录,allow_dirs 是允许访问的额外目录。
+
+    skip_permissions:免确认模式,True 时所有 session 的权限检查/文件确认/危险命令拦截均跳过。
+    也可通过 Web 设置面板运行时切换(settings.json 的 skip_permissions 字段)。
+    """
+    # 启动时读 settings.json 的 skip_permissions(全局设置优先于 CLI flag)
+    from ..config import load_skip_permissions as _load_sp
+
+    if _load_sp():
+        skip_permissions = True
+    registry = SessionRegistry(source_root, allow_dirs=allow_dirs or [], skip_permissions=skip_permissions)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -541,6 +552,25 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None) -> FastA
     register_agents_routes(app, source_root)
 
     from .prompts_api import register_prompts_routes
+
+    # === skip_permissions(免确认模式)===
+
+    @app.get("/api/skip-permissions")
+    async def get_skip_permissions() -> dict:
+        """返回当前免确认模式开关状态。"""
+        return {"enabled": load_skip_permissions()}
+
+    @app.post("/api/skip-permissions")
+    async def set_skip_permissions(req: dict) -> dict:
+        """切换免确认模式开关。写 settings.json + 实时应用到所有 session。
+
+        请求体:{"enabled": true/false}
+        """
+        enabled = bool(req.get("enabled", False))
+        save_skip_permissions(enabled)
+        # 实时切换:遍历所有已建 session,翻转 bypass_enabled
+        registry.set_skip_permissions(enabled)
+        return {"enabled": enabled}
 
     register_prompts_routes(app, registry)
 

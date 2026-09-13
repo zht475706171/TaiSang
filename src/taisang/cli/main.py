@@ -185,7 +185,12 @@ def cli() -> None:
     default="warning",
     help="日志级别(默认 warning,看 session memory 用 info)",
 )
-def chat(repo: str, allow_dirs: tuple[str, ...], log_level: str) -> None:
+@click.option(
+    "--dangerously-skip-permissions",
+    is_flag=True,
+    help="跳过所有权限检查和文件修改确认(危险!请自行承担风险)",
+)
+def chat(repo: str, allow_dirs: tuple[str, ...], log_level: str, dangerously_skip_permissions: bool) -> None:
     """进入交互式 coding agent。"""
     _setup_logging(log_level.lower())
     source_root = _normalize_path(repo)
@@ -193,6 +198,17 @@ def chat(repo: str, allow_dirs: tuple[str, ...], log_level: str) -> None:
         click.echo(f"错误:{source_root} 不是目录", err=True)
         sys.exit(1)
     allow_paths = [source_root] + [_normalize_path(d) for d in allow_dirs]
+
+    if dangerously_skip_permissions:
+        click.secho(
+            "⚠️  --dangerously-skip-permissions 已启用:\n"
+            "  - 目录访问不再询问\n"
+            "  - 文件修改不再确认\n"
+            "  - Bash 危险命令拦截已关闭\n"
+            "请自行承担风险。",
+            fg="red",
+            bold=True,
+        )
 
     llm = _make_llm()
     confirmer = default_confirmer  # 交互式 y/n
@@ -210,6 +226,7 @@ def chat(repo: str, allow_dirs: tuple[str, ...], log_level: str) -> None:
         session_memory=session_mem,
         permission=CliPermissionManager(initial_dirs=allow_paths),
         allow_dirs=allow_paths,
+        skip_permissions=dangerously_skip_permissions,
     )
 
     click.echo(f"taisang agent @ {source_root}")
@@ -300,6 +317,11 @@ def chat(repo: str, allow_dirs: tuple[str, ...], log_level: str) -> None:
     default="warning",
     help="日志级别(默认 warning,看 session memory 用 info,排查问题用 debug)",
 )
+@click.option(
+    "--dangerously-skip-permissions",
+    is_flag=True,
+    help="跳过所有权限检查和文件修改确认(危险!请自行承担风险)",
+)
 def web(
     repo: str,
     port: int,
@@ -307,6 +329,7 @@ def web(
     no_browser: bool,
     allow_dirs: tuple[str, ...],
     log_level: str,
+    dangerously_skip_permissions: bool,
 ) -> None:
     """起本地 Web UI 服务(豆包风格),自动开浏览器。
 
@@ -320,6 +343,17 @@ def web(
         sys.exit(1)
     allow_paths = [source_root] + [_normalize_path(d) for d in allow_dirs]
 
+    if dangerously_skip_permissions:
+        click.secho(
+            "⚠️  --dangerously-skip-permissions 已启用:\n"
+            "  - 目录访问不再询问\n"
+            "  - 文件修改不再确认\n"
+            "  - Bash 危险命令拦截已关闭\n"
+            "请自行承担风险。",
+            fg="red",
+            bold=True,
+        )
+
     try:
         from ..web.app import create_app
     except ImportError as e:
@@ -332,7 +366,7 @@ def web(
 
     import uvicorn
 
-    app = create_app(source_root, allow_dirs=allow_paths)
+    app = create_app(source_root, allow_dirs=allow_paths, skip_permissions=dangerously_skip_permissions)
     url = f"http://{host}:{port}"
     click.echo(f"taisang web UI @ {url}  (repo: {source_root})")
     click.echo("Ctrl+C 退出")

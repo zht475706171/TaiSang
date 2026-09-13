@@ -295,3 +295,26 @@ def reset_prompt_override(key: str) -> PromptsConfig:
     cfg = load_prompts()
     setattr(cfg, key, PromptOverride())
     return _persist_prompts(cfg)
+
+
+# === skip_permissions 配置 ===
+
+
+def load_skip_permissions() -> bool:
+    """读取 settings.json 的 skip_permissions 字段。不存在时返回 False。"""
+    return bool(_load_settings_file().get("skip_permissions", False))
+
+
+def save_skip_permissions(enabled: bool) -> None:
+    """原子写 settings.json 的 skip_permissions 字段,保留其他字段。权限 600。"""
+    p = _settings_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    existing = _load_settings_file()
+    existing["skip_permissions"] = bool(enabled)
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+    try:
+        os.chmod(tmp, 0o600)
+    except OSError:
+        pass  # Windows 无 chmod
+    os.replace(tmp, p)

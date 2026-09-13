@@ -173,6 +173,10 @@ class AgentTool(_BaseTool):
             mcp_manager=self.mcp_manager,
             # NOTE: agents=[] — 子 agent 的 ToolRegistry 不会注册 AgentTool,物理防递归
             agents=[],
+            # 继承父的 skip_permissions:子 agent 共用父 permission 实例,
+            # 但 AgentService.__init__ 会设 bypass_enabled,所以必须传 True
+            # 否则构造时会把父的 bypass_enabled 覆盖为 False。
+            skip_permissions=self.parent_service.permission.bypass_enabled,
         )
 
         if is_fork:

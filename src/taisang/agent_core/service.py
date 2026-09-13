@@ -46,6 +46,7 @@ from .events import (
     USAGE_REPORT,
     AgentEvent,
 )
+from .confirm import AutoApproveConfirmer, BypassableConfirmer
 from .permission import AutoApprovePermissionManager, PermissionManager
 from .prompts import build_system_prompt, format_mcp_section
 from ..user_profile.format import format_profile_section
@@ -175,10 +176,10 @@ class AgentService:
         agent_id: str = "",
         is_fork_child: bool = False,
         agents: list | None = None,
+        skip_permissions: bool = False,
     ) -> None:
         self.llm = llm
         self.source_root = source_root
-        self.confirmer = confirmer
         self.session_memory = session_memory
         self.compaction_state = (
             compaction_state if compaction_state is not None else ContentReplacementState()
@@ -204,6 +205,16 @@ class AgentService:
         initial_approved = allow_dirs if allow_dirs else [source_root]
         self.permission = (
             permission if permission is not None else AutoApprovePermissionManager(initial_approved)
+        )
+        # 免确认模式:skip_permissions=True 时设 bypass_enabled,check() 直接放行,
+        # BypassableConfirmer 也直接放行,BashTool 跳过危险命令黑名单。
+        # Web 端运行时可改 self.permission.bypass_enabled 实时切换。
+        self.permission.bypass_enabled = skip_permissions
+        # 包装 confirmer:bypass_enabled=True 时直接放行,不调 inner confirmer。
+        # bypass_getter 读 self.permission.bypass_enabled,跟 PermissionManager 共享同一布尔源。
+        self.confirmer = BypassableConfirmer(
+            confirmer,
+            bypass_getter=lambda: self.permission.bypass_enabled,
         )
         # 兼容旧代码读取 self.allow_dirs(已批准目录集合)
         self.allow_dirs = initial_approved

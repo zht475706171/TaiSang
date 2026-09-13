@@ -538,8 +538,8 @@ class BashTool(_BaseTool):
         command = args.get("command", "").strip()
         if not command:
             return {"ok": False, "error": "empty command"}
-        # 危险命令黑名单检查
-        if _is_dangerous(command):
+        # 危险命令黑名单检查:免确认模式(bypass_enabled)时跳过
+        if not self.permission.bypass_enabled and _is_dangerous(command):
             return {"ok": False, "error": f"dangerous command blocked: {command[:80]}"}
         # cd 命令:先问用户权限,批准再交给 shell 执行
         import re as _re

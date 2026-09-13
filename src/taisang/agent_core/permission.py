@@ -71,6 +71,11 @@ class PermissionManager:
         self._approved: set[Path] = set()
         self._lock = threading.Lock()
         self._home = home
+        # bypass_enabled:运行时可切换的"免确认模式"开关。
+        # True 时 check() 直接放行所有路径,不问用户。
+        # CLI --dangerously-skip-permissions 在构造后设为 True;
+        # Web 设置面板切换时实时翻转,下一轮工具调用立即生效。
+        self.bypass_enabled: bool = False
         # initial_dirs 直接批准路径本身(不走 _find_project_root)。
         # 否则传 --repo D:/proj 会把 home 整个批准(若 proj 在 home 内)。
         for d in initial_dirs:
@@ -93,7 +98,11 @@ class PermissionManager:
         1. path 本身是否落在某已批准目录内(含子目录) → 直接放行
         2. 否则算 path 的 project root,看 project root 是否已批准;
            未批准则问用户是否批准该 project root
+
+        bypass_enabled=True 时跳过所有检查,直接放行(免确认模式)。
         """
+        if self.bypass_enabled:
+            return True
         try:
             path_resolved = path.resolve()
         except (OSError, ValueError):
