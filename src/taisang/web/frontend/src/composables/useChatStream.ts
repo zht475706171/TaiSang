@@ -486,6 +486,10 @@ export function useChatStream(
       // 其他主 agent 工具:清 thinking。
       if (!d.agent_id && d.name !== 'Agent') {
         clearThinking()
+      } else if (!d.agent_id && d.name === 'Agent') {
+        // 主 agent 派子 agent:保持 thinking 动画,清掉停滞的 reasoning(避免静态文字),
+        // ThinkingIndicator 退化到跳动点(有 thinking-bounce 动画 = 动态感)
+        reasoningText.value = ''
       }
       clearStreaming()
       // debug 关闭时:工具卡片不展示(用户只看问答)。但 Agent 工具卡片例外 ——
