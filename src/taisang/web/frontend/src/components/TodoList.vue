@@ -32,6 +32,9 @@ defineProps<{ todos: Todo[] }>()
   width: 100%;
   box-sizing: border-box;
   font-size: 13px;
+  /* 限制最多约 5 条高度,超出滚动,避免长计划挤掉输出区 */
+  max-height: 160px;
+  overflow-y: auto;
 }
 .todo-item {
   display: flex;
