@@ -1,9 +1,14 @@
 <template>
   <div class="usage-line">
-    <span>turn: prompt={{ turn?.prompt ?? '-' }} completion={{ turn?.completion ?? '-' }} total={{ turn?.total ?? '-' }}</span>
-    <span> · session: {{ session.total }}</span>
-    <span v-if="cache.available"> · cache {{ cacheRate }}%</span>
-    <span v-else> · cache N/A</span>
+    <span class="label">本轮:</span>
+    <span class="k-prompt">输入 {{ turn?.prompt ?? '-' }}</span>
+    <span class="k-completion">输出 {{ turn?.completion ?? '-' }}</span>
+    <span class="k-total">共 {{ turn?.total ?? '-' }}</span>
+    <span class="sep">·</span>
+    <span class="k-session">累计 {{ session.total }}</span>
+    <span class="sep">·</span>
+    <span v-if="cache.available" class="k-cache">缓存 {{ cacheRate }}%</span>
+    <span v-else class="k-cache-na">缓存 N/A</span>
   </div>
 </template>
 
@@ -26,8 +31,37 @@ const cacheRate = computed(() => {
 .usage-line {
   font-family: var(--app-font-mono);
   font-size: 11px;
-  color: var(--td-text-color-placeholder);
   padding: 2px 4px;
   margin-top: -4px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.label {
+  color: var(--td-text-color-placeholder);
+}
+.k-prompt {
+  color: var(--td-text-color-secondary);
+}
+.k-completion {
+  color: var(--td-brand-color);
+}
+.k-total {
+  color: var(--td-text-color-secondary);
+}
+.k-session {
+  color: var(--td-success-color);
+}
+.k-cache {
+  color: var(--td-text-color-placeholder);
+}
+.k-cache-na {
+  color: var(--td-text-color-placeholder);
+  opacity: 0.6;
+}
+.sep {
+  color: var(--td-text-color-placeholder);
+  opacity: 0.5;
 }
 </style>
