@@ -48,6 +48,18 @@ def _normalize_path(path: str) -> Path:
     return Path(os.path.expanduser(path)).resolve()
 
 
+class _SkipProactorConnectionLost(logging.Filter):
+    """过滤 Windows asyncio Proactor _call_connection_lost 噪音日志。
+
+    Windows ProactorEventLoop 在 socket/pipe 对端已关时,shutdown(SHUT_RDWR)
+    抛 OSError,被 asyncio 内部吞成 ERROR 日志。不影响功能,只是刷屏。
+    Linux/macOS SelectorEventLoop 无此问题。
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "_call_connection_lost" not in record.getMessage()
+
+
 def _setup_logging(level: str) -> None:
     """配 root logger level + 格式。
 
@@ -66,6 +78,11 @@ def _setup_logging(level: str) -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
+    # 过滤 Windows ProactorEventLoop _call_connection_lost 噪音:
+    # socket/pipe 对端已关时 shutdown(SHUT_RDWR) 抛 OSError,被 asyncio 吞成 ERROR。
+    # 不影响功能,Linux/macOS SelectorEventLoop 无此问题。
+    if sys.platform == "win32":
+        logging.getLogger("asyncio").addFilter(_SkipProactorConnectionLost())
 
 
 def _make_llm():
