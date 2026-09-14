@@ -57,5 +57,11 @@ dmypy.json
 # Project specific
 # taisang 运行时产物(sessions/observations/session-memory,本地不入库)
 .taisang/
-# 旧名兼容(改名前遗留)
-.code-reader/.superpowers/
+
+# 工具产物/临时目录(本地不入库)
+.code-reader/
+.superpowers/
+1/
+
+# 日志
+*.log
