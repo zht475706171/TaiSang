@@ -214,10 +214,13 @@ def chat(repo: str, allow_dirs: tuple[str, ...], log_level: str, dangerously_ski
     confirmer = default_confirmer  # 交互式 y/n
     session_mem = SessionMemoryService(
         llm=llm,
-        memory_path=PathManager.session_memory_path(source_root, "main"),
+        memory_path=PathManager.session_memory_path("main"),
     )
     # 不在启动时 ensure_file:让 should_extract 的 init 分支(10000 token)
     # 自己创建笔记。extract worker 里有 ensure_file。
+
+    # 启动时迁移旧 source_root/.taisang/sessions/ 到 ~/.taisang/sessions/
+    PathManager.migrate_legacy_sessions(source_root)
 
     agent = AgentService(
         llm=llm,
@@ -227,6 +230,7 @@ def chat(repo: str, allow_dirs: tuple[str, ...], log_level: str, dangerously_ski
         permission=CliPermissionManager(initial_dirs=allow_paths),
         allow_dirs=allow_paths,
         skip_permissions=dangerously_skip_permissions,
+        session_id="main",
     )
 
     click.echo(f"taisang agent @ {source_root}")

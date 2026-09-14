@@ -659,7 +659,7 @@ def test_todo_write_persists_across_runs(tmp_path):
     assert service.todos == []
 
 
-def test_session_memory_trigger_emits_compacted_event(tmp_path):
+def test_session_memory_trigger_emits_compacted_event(tmp_path, monkeypatch):
     """session_memory 触发 extract 时 emit COMPACTED 事件,payload 含 via + trigger。
 
     用 MockLLM 让对话超过 init 阈值(MIN_TOKENS_TO_INIT=10000),should_extract 返回 "init",
@@ -667,6 +667,8 @@ def test_session_memory_trigger_emits_compacted_event(tmp_path):
     """
     from taisang.agent_core.events import COMPACTED
     from taisang.session_memory.service import SessionMemoryService
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     from taisang.storage.paths import PathManager
 
     # 构造大文本让 ctx tokens 超过 10000(init 阈值)
@@ -674,13 +676,14 @@ def test_session_memory_trigger_emits_compacted_event(tmp_path):
     mock = MockLLM([LLMResponse(text="ok", tool_calls=[])])
     session_mem = SessionMemoryService(
         llm=mock,
-        memory_path=PathManager.session_memory_path(tmp_path, "test-session"),
+        memory_path=PathManager.session_memory_path("test-session"),
     )
     service = AgentService(
         llm=mock,
         source_root=tmp_path,
         confirmer=AutoApproveConfirmer(),
         session_memory=session_mem,
+        session_id="test-session",
     )
     # 灌大文本进 ctx(直接 append,user 消息)
     service.ctx.append_user(big_text)
@@ -826,6 +829,9 @@ def test_60kb_observation_triggers_enforce_budget_persist(tmp_path, monkeypatch)
     from taisang.agent_core.tools import ReadFileTool
     from taisang.storage.paths import PathManager
 
+    # monkeypatch HOME 隔离 observations_dir,避免污染真实家目录
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     # monkeypatch 让 read_file 参与持久化(默认 Infinity 被 opt-out)
     monkeypatch.setattr(ReadFileTool, "max_result_size_chars", 100_000)
 
@@ -847,6 +853,7 @@ def test_60kb_observation_triggers_enforce_budget_persist(tmp_path, monkeypatch)
     service = AgentService(
         llm=mock, source_root=tmp_path, confirmer=AutoApproveConfirmer(),
         token_budget=200_000,
+        session_id="test",
     )
     events = []
     service.run("读 big*.txt", on_event=lambda e: events.append(e))
@@ -866,7 +873,7 @@ def test_60kb_observation_triggers_enforce_budget_persist(tmp_path, monkeypatch)
     replaced_tcids = {r["tool_call_id"] for r in p["replaced"]}
 
     # 断言 3:磁盘上有持久化文件(observations_dir 下有 {tcid}.txt)
-    observations_dir = PathManager.observations_dir(tmp_path)
+    observations_dir = PathManager.observations_dir("test")
     persist_files = list(observations_dir.glob("*.txt"))
     assert len(persist_files) >= 1, f"应至少持久化 1 个文件,实际 {persist_files}"
 

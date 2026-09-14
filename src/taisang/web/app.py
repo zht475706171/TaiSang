@@ -54,6 +54,7 @@ from ..config import (
     save_subagent_config,
 )
 from .session_registry import SessionRegistry
+from ..storage.paths import PathManager
 
 log = logging.getLogger(__name__)
 
@@ -175,6 +176,8 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None, skip_per
 
     if _load_sp():
         skip_permissions = True
+    # 启动时迁移旧 source_root/.taisang/sessions/ 到 ~/.taisang/sessions/
+    PathManager.migrate_legacy_sessions(source_root)
     registry = SessionRegistry(source_root, allow_dirs=allow_dirs or [], skip_permissions=skip_permissions)
 
     @asynccontextmanager

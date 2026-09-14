@@ -177,10 +177,12 @@ class AgentService:
         is_fork_child: bool = False,
         agents: list | None = None,
         skip_permissions: bool = False,
+        session_id: str = "",
     ) -> None:
         self.llm = llm
         self.source_root = source_root
         self.session_memory = session_memory
+        self.session_id = session_id
         self.compaction_state = (
             compaction_state if compaction_state is not None else ContentReplacementState()
         )
@@ -385,8 +387,8 @@ class AgentService:
             cancel_event=self._cancel_event,
             service=self,
         )
-        observations_dir = PathManager.observations_dir(self.source_root)
-        transcript_path = self.source_root / ".taisang" / "sessions" / "current.jsonl"
+        observations_dir = PathManager.observations_dir(self.session_id)
+        transcript_path = PathManager.sessions_dir() / self.session_id / "conversation.jsonl"
 
         def _emit(evt: AgentEvent) -> None:
             if on_event is not None:

@@ -728,7 +728,7 @@ class ToolRegistry:
         if permission is None:
             permission = AutoApprovePermissionManager(initial_dirs=[cwd])
         if observations_dir is None:
-            observations_dir = PathManager.observations_dir(cwd)
+            observations_dir = PathManager.observations_dir("default")
         self._shell = shell
         self._permission = permission
         self._cwd = cwd

@@ -12,6 +12,8 @@ from taisang.web.app import create_app
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("TAISANG_MOCK_LLM", "1")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     app = create_app(tmp_path)
     return TestClient(app)
 
@@ -93,6 +95,8 @@ def test_get_or_load_restores_history_after_restart(tmp_path, monkeypatch):
 def test_list_all_reads_title_from_meta(tmp_path, monkeypatch):
     """list_all 从 meta.json 读 title(替代扫目录 mtime 兜底)。"""
     monkeypatch.setenv("TAISANG_MOCK_LLM", "1")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     from taisang.web.session_registry import SessionRegistry
     from taisang.storage.conversation_store import ConversationStore
 
@@ -115,6 +119,8 @@ def test_list_all_reads_title_from_meta(tmp_path, monkeypatch):
 def test_list_all_fallback_when_meta_missing(tmp_path, monkeypatch):
     """meta.json 不存在时 fallback 用 session_id 当 title。"""
     monkeypatch.setenv("TAISANG_MOCK_LLM", "1")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     from taisang.web.session_registry import SessionRegistry
 
     reg = SessionRegistry(tmp_path)
@@ -130,6 +136,8 @@ def test_list_all_fallback_when_meta_missing(tmp_path, monkeypatch):
 def test_send_message_updates_meta(tmp_path, monkeypatch):
     """POST /messages 后,meta.json 的 title 是 query 前 40 字。"""
     monkeypatch.setenv("TAISANG_MOCK_LLM", "1")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     from taisang.web.app import create_app
 
     app = create_app(tmp_path)

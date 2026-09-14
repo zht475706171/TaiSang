@@ -2,11 +2,11 @@
 
 多会话隔离:
 - 每会话一个 AgentService 实例(ctx / compaction_state / token 计数器实例级隔离)
-- session_memory 按 session_id 落到 .taisang/sessions/<id>/session-memory/
+- session_memory 按 session_id 落到 ~/.taisang/sessions/<id>/session-memory/
 - EventBroker 每会话一个,SSE 流隔离
 - WebConfirmer 每会话一个,emit 回调注入到该会话的 EventBroker
 
-会话列表 = 扫 .taisang/sessions/*/ 目录 + 内存活跃实例(二者并集)。
+会话列表 = 扫 ~/.taisang/sessions/*/ 目录 + 内存活跃实例(二者并集)。
 内存实例可能因重启丢失,但磁盘目录还在,重启后 list_all 仍能列出来
 (打开旧会话时 lazy 重建 AgentService 实例)。
 
@@ -105,10 +105,10 @@ class SessionRegistry:
         cfg = load_config()
         session_mem = SessionMemoryService(
             llm=llm,
-            memory_path=PathManager.session_memory_path(self.source_root, session_id),
+            memory_path=PathManager.session_memory_path(session_id),
         )
         # ConversationStore + on_append 回调:ctx 每次 append 同步写 jsonl
-        sessions_dir = self.source_root / ".taisang" / "sessions"
+        sessions_dir = PathManager.sessions_dir()
         store = ConversationStore(session_id=session_id, sessions_dir=sessions_dir)
         # 不在启动时 ensure_file:让 should_extract 的 init 分支(10000 token)
         # 自己创建笔记。否则笔记一开始就存在,init 分支永远走不到,
@@ -135,6 +135,7 @@ class SessionRegistry:
             agents=agents,
             debug=cfg.debug,
             skip_permissions=self.skip_permissions,
+            session_id=session_id,
         )
         return _Session(
             session_id=session_id,
@@ -199,7 +200,7 @@ class SessionRegistry:
         if sess is not None:
             return sess
         # 磁盘有目录则 lazy 重建(重启后恢复历史会话)
-        sess_dir = self.source_root / ".taisang" / "sessions" / session_id
+        sess_dir = PathManager.sessions_dir() / session_id
         if not sess_dir.is_dir():
             return None
         sess = self._build_session(session_id)
@@ -248,7 +249,7 @@ class SessionRegistry:
 
         返回 [{id, title, active, updated_at, relative_time}]。
         """
-        sessions_dir = self.source_root / ".taisang" / "sessions"
+        sessions_dir = PathManager.sessions_dir()
         disk_ids: set[str] = set()
         if sessions_dir.is_dir():
             for p in sessions_dir.iterdir():
@@ -342,7 +343,7 @@ class SessionRegistry:
             if not acquired:
                 return False
             sess.lock.release()
-        sess_dir = self.source_root / ".taisang" / "sessions" / session_id
+        sess_dir = PathManager.sessions_dir() / session_id
         if sess_dir.is_dir():
             shutil.rmtree(sess_dir, ignore_errors=True)
             return True
@@ -375,7 +376,7 @@ class SessionRegistry:
 
         不影响:
         - skills/agents 加载(仍用 registry 启动时的全局配置 + registry.source_root 的 .taisang/skills)
-        - store 历史记录位置(仍在 registry.source_root/.taisang/sessions/<id>/)
+        - store 历史记录位置(仍在 ~/.taisang/sessions/<id>/,跟 repo 解耦)
         - 已批准的旧目录(保留在 permission._approved,用户切回还能访问)
         """
         sess = self.get_or_load(session_id)

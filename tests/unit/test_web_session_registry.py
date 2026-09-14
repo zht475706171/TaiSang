@@ -9,9 +9,11 @@ from taisang.web.session_registry import SessionRegistry
 
 
 @pytest.fixture
-def mock_env(monkeypatch):
-    """TAISANG_MOCK_LLM=1,避免单测依赖真 LLM key。"""
+def mock_env(tmp_path, monkeypatch):
+    """TAISANG_MOCK_LLM=1,HOME/USERPROFILE 隔离到 tmp_path,避免单测依赖真 LLM key/污染家目录。"""
     monkeypatch.setenv("TAISANG_MOCK_LLM", "1")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     yield
 
 
