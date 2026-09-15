@@ -41,6 +41,11 @@ log = logging.getLogger(__name__)
 # regex search 超时秒数(仅 Linux/Mac 生效,Windows 跳过)
 _REGEX_TIMEOUT = 5.0
 
+# Bash 默认/最大超时秒数。对齐 claude-code: 默认 2 分钟,最大 10 分钟。
+# 模型可在 Bash 调用时传 timeout 参数自主调高,但不超过 MAX。
+BASH_DEFAULT_TIMEOUT = 120
+BASH_MAX_TIMEOUT = 600
+
 # Bash 合并输出内联上限(对齐 Claude Code BashTool)。超长落盘到 .taisang/observations/。
 BASH_MAX_OUTPUT = 30_000
 # 落盘时给 agent 的预览字节数。
@@ -502,7 +507,7 @@ class BashTool(_BaseTool):
         shell,
         observations_dir: Path,
         permission: PermissionManager | None = None,
-        timeout: int = 30,
+        timeout: int = BASH_DEFAULT_TIMEOUT,
     ) -> None:
         """
         shell: PersistentShell 实例(由 AgentService 持有,跨 Bash 调用复用)。
@@ -529,6 +534,14 @@ class BashTool(_BaseTool):
                 "type": "object",
                 "properties": {
                     "command": {"type": "string", "description": "shell 命令"},
+                    "timeout": {
+                        "type": "integer",
+                        "description": (
+                            f"可选超时秒数(最大 {BASH_MAX_TIMEOUT}s / {BASH_MAX_TIMEOUT // 60} 分钟)。"
+                            f"不传则默认 {BASH_DEFAULT_TIMEOUT}s ({BASH_DEFAULT_TIMEOUT // 60} 分钟)。"
+                            "长任务(构建/测试)可调高,但不超过上限。"
+                        ),
+                    },
                 },
                 "required": ["command"],
             },
@@ -538,6 +551,16 @@ class BashTool(_BaseTool):
         command = args.get("command", "").strip()
         if not command:
             return {"ok": False, "error": "empty command"}
+        # 超时:优先用模型传入的 timeout,否则用实例默认值;clamp 到 BASH_MAX_TIMEOUT。
+        # 对齐 claude-code BashTool: 模型可单次调高,但不超过 max。
+        arg_timeout = args.get("timeout")
+        if arg_timeout is not None:
+            try:
+                effective_timeout = max(1, min(int(arg_timeout), BASH_MAX_TIMEOUT))
+            except (TypeError, ValueError):
+                effective_timeout = self.timeout
+        else:
+            effective_timeout = self.timeout
         # 危险命令黑名单检查:免确认模式(bypass_enabled)时跳过
         if not self.permission.bypass_enabled and _is_dangerous(command):
             return {"ok": False, "error": f"dangerous command blocked: {command[:80]}"}
@@ -558,7 +581,7 @@ class BashTool(_BaseTool):
                 return {"ok": False, "error": f"permission denied: {raw_path}"}
         # 跑命令(持久 shell,支持 cancel_event 中断)
         try:
-            result = self.shell.run(command, timeout=self.timeout, cancel_event=cancel_event)
+            result = self.shell.run(command, timeout=effective_timeout, cancel_event=cancel_event)
         except Exception as e:  # noqa: BLE001 — 兜底,转成 observation
             return {"ok": False, "error": str(e)}
         # 中断:抛 InterruptedError,让 ToolRegistry.call 透传给主循环
@@ -569,7 +592,7 @@ class BashTool(_BaseTool):
         returncode = result.get("returncode")
         # 超时特殊标记
         if result.get("timeout"):
-            return {"ok": False, "error": f"timeout after {self.timeout}s", "output": combined}
+            return {"ok": False, "error": f"timeout after {effective_timeout}s", "output": combined}
         output_bytes = len(combined.encode("utf-8"))
         if output_bytes > BASH_MAX_OUTPUT:
             # 落盘完整输出,返回 <persisted-output> 包装 + 2KB 预览
@@ -713,7 +736,7 @@ class ToolRegistry:
         shell=None,
         confirmer=None,
         permission: PermissionManager | None = None,
-        bash_timeout: int = 30,
+        bash_timeout: int = BASH_DEFAULT_TIMEOUT,
         observations_dir: Path | None = None,
         skills: list | None = None,
         ctx=None,

@@ -35,7 +35,12 @@ log = logging.getLogger(__name__)
 _SENTINEL_PREFIX = "__TAISANG_DONE_"
 
 # 默认超时秒数。超时后 kill shell + 重启 + 返回 timeout 错误。
-_DEFAULT_TIMEOUT = 30
+# 对齐 claude-code: 默认 2 分钟 (120s)。
+_DEFAULT_TIMEOUT = 120
+
+# 最大超时秒数。对齐 claude-code: 10 分钟 (600s)。
+# 模型可在 Bash 调用时传 timeout 参数自主调高,但不超过此上限。
+_MAX_TIMEOUT = 600
 
 # 输出读取缓冲上限(字节)。超长截断,防 OOM。
 _MAX_READ_BYTES = 1_000_000
@@ -78,7 +83,7 @@ class PipeShell(PersistentShell):
 
     def __init__(self, cwd: Path, timeout: int = _DEFAULT_TIMEOUT) -> None:
         self._cwd = cwd.resolve()
-        self._default_timeout = timeout
+        self._default_timeout = min(timeout, _MAX_TIMEOUT)
         self._counter = 0
         self._proc: subprocess.Popen | None = None
         self._shell_cmd = self._pick_shell()
@@ -208,7 +213,7 @@ class PipeShell(PersistentShell):
         中断检查周期 0.5s(同 _read_until_token 的 line_q.get timeout)。
         """
         self._ensure_alive()
-        timeout = timeout or self._default_timeout
+        timeout = min(timeout or self._default_timeout, _MAX_TIMEOUT)
 
         # cd 特殊处理:更新 Python cwd state + 真正喂给 shell
         # 匹配 `cd <path>` / `cd "<path>"` / `cd '<path>'`,命令开头
