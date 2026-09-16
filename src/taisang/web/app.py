@@ -55,6 +55,7 @@ from ..config import (
 )
 from .session_registry import SessionRegistry
 from ..storage.paths import PathManager
+from ..agent_core.trace import new_trace_id, span, trace_id_var
 
 log = logging.getLogger(__name__)
 
@@ -137,19 +138,31 @@ def _run_next(registry: SessionRegistry, sess, session_id: str, loop) -> None:
     sess.queue.clear()
     sess.broker.publish("queue_updated", {"queue": [], "len": 0})
     prompt = "\n".join(queries)
+    # 每个 turn 一个 trace_id,贯穿 agent.run + 所有子调用(LLM/tool/...)。
+    # 在主线程生成,跨到 executor 线程时 _run 内显式 set(contextvars 不跨线程)。
+    trace_id = new_trace_id()
 
     def _run():
+        # 跨线程边界:executor 线程默认 context 是空的,显式 set trace_id
+        token = trace_id_var.set(trace_id)
         try:
-            sess.agent.run(
-                prompt,
-                on_event=lambda e: sess.broker.publish(
-                    e.type, {**e.payload, "agent_id": e.agent_id}
-                ),
-            )
+            with span("turn", session_id=session_id):
+                sess.agent.run(
+                    prompt,
+                    on_event=lambda e: sess.broker.publish(
+                        e.type,
+                        {
+                            **e.payload,
+                            "agent_id": e.agent_id,
+                            "trace_id": trace_id,
+                        },
+                    ),
+                )
         except Exception as e:  # noqa: BLE001
             log.exception("agent run failed: %s", e)
             sess.broker.publish("run_error", {"error": f"agent run failed: {e}"})
         finally:
+            trace_id_var.reset(token)
             try:
                 registry.update_meta_after_turn(session_id, prompt)
             except Exception as e:  # noqa: BLE001
@@ -158,7 +171,7 @@ def _run_next(registry: SessionRegistry, sess, session_id: str, loop) -> None:
                 "session_title_updated",
                 {"id": session_id, "title": sess.title},
             )
-            sess.broker.publish("run_end", {})
+            sess.broker.publish("run_end", {"trace_id": trace_id})
             sess.lock.release()
             _run_next(registry, sess, session_id, loop)  # 递归 drain(复用主 loop)
 

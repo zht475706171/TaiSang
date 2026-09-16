@@ -37,6 +37,7 @@ from ..agent_core.events import (
 )
 from ..agent_core.permission import CliPermissionManager
 from ..agent_core.service import AgentService
+from ..agent_core.trace import parent_span_id_var, span_id_var, trace_id_var
 from ..config import load_config
 from ..llm_client import LLMClient, LLMResponse, MockLLM
 from ..session_memory.service import SessionMemoryService
@@ -66,6 +67,8 @@ def _setup_logging(level: str) -> None:
     level: 'debug' / 'info' / 'warning' / 'error'。
     session_memory logger 用 'session_memory' 名,INFO 级别能看到
     TRIGGER/STARTED/DONE/SKIPPED + forked agent 每轮 applied/denied 计数。
+    日志格式带 [trace=xxx span=yyy],用 contextvar 贯穿一个 turn 的所有调用,
+    没在 trace 上下文里的日志(启动/MCP 连接等)显示 [trace=-]。
     """
     level_map = {
         "debug": logging.DEBUG,
@@ -73,9 +76,26 @@ def _setup_logging(level: str) -> None:
         "warning": logging.WARNING,
         "error": logging.ERROR,
     }
+    # 用 setLogRecordFactory 给所有 LogRecord 补 trace_id/span_id 字段。
+    # 比 addFilter 更可靠:filter 加在 logger 上时,handler 仍可能 format
+    # 未补字段的 record(如第三方库直接 handler.handle);RecordFactory 在
+    # record 构造时就补,所有 handler 都能拿到。
+    _record_factory = logging.getLogRecordFactory()
+
+    def _factory(*args, **kwargs):
+        record = _record_factory(*args, **kwargs)
+        if not hasattr(record, "trace_id"):
+            record.trace_id = trace_id_var.get()
+        if not hasattr(record, "span_id"):
+            record.span_id = span_id_var.get()
+        if not hasattr(record, "parent_span_id"):
+            record.parent_span_id = parent_span_id_var.get()
+        return record
+
+    logging.setLogRecordFactory(_factory)
     logging.basicConfig(
         level=level_map.get(level, logging.WARNING),
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        format="%(asctime)s [%(levelname)s] [trace=%(trace_id)s span=%(span_id)s] %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
     # 过滤 Windows ProactorEventLoop _call_connection_lost 噪音:
@@ -127,7 +147,7 @@ def _setup_file_logging(level: int) -> None:
 
     handler.setLevel(level)
     handler.setFormatter(logging.Formatter(
-        fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        fmt="%(asctime)s [%(levelname)s] [trace=%(trace_id)s span=%(span_id)s] %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     ))
     logging.getLogger().addHandler(handler)
