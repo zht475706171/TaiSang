@@ -9,9 +9,28 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 from pathlib import Path
 
 log = logging.getLogger(__name__)
+
+
+def _fsync_dir(path: Path) -> None:
+    """Linux 上 fsync 目录,确保 rename/replace 的元数据修改落盘。
+
+    Windows NTFS 无此需求(目录元数据同步由系统保证),直接返回。
+    某些文件系统(如 tmpfs/network fs)不支持 fsync 目录,OSError 跳过。
+    """
+    if sys.platform == "win32":
+        return
+    try:
+        fd = os.open(str(path), os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError as e:
+        log.debug("fsync dir skipped: %s err=%s", path, e)
 
 
 class ConversationStore:
@@ -32,13 +51,16 @@ class ConversationStore:
     def append(self, record: dict) -> None:
         """追加一行 record 到 conversation.jsonl。
 
-        单行 write 在 POSIX 上原子,崩溃最多丢最后一行。
+        write + flush + fsync,断电/蓝屏也不丢最后一行。
+        单行 write 在 POSIX 上原子,加 fsync 后持久化保证完整。
         """
         # 目录可能已删(会话删除竞态/外部清理),写前自愈
         self.session_dir.mkdir(parents=True, exist_ok=True)
         line = json.dumps(record, ensure_ascii=False) + "\n"
         with open(self.jsonl_path, "a", encoding="utf-8") as f:
             f.write(line)
+            f.flush()
+            os.fsync(f.fileno())
 
     def load_all(self) -> list[dict]:
         """读 conversation.jsonl 全文,逐行 json.loads。
@@ -65,11 +87,19 @@ class ConversationStore:
         return records
 
     def write_meta(self, meta: dict) -> None:
-        """整体重写 meta.json。tmp 文件 + os.replace 原子替换。"""
+        """整体重写 meta.json。tmp 文件 + fsync + os.replace 原子替换。
+
+        先把 tmp 写完并 fsync 到硬盘扇区,再原子替换。
+        这样断电时要么旧 meta 完好、要么新 meta 完整,不会出现半截文件。
+        Linux 上还要 fsync 父目录,确保 rename 元数据修改也落盘。
+        """
         tmp = self.meta_path.with_suffix(".json.tmp")
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, self.meta_path)
+        _fsync_dir(self.meta_path.parent)
 
     def load_meta(self) -> dict | None:
         """读 meta.json。损坏/不存在返回 None。"""
