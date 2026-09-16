@@ -83,6 +83,54 @@ def _setup_logging(level: str) -> None:
     # 不影响功能,Linux/macOS SelectorEventLoop 无此问题。
     if sys.platform == "win32":
         logging.getLogger("asyncio").addFilter(_SkipProactorConnectionLost())
+    # 加日志落盘 ~/.taisang/logs/taisang.log (rotating 10MB × 5)。
+    # 出问题/报 bug 时翻这个文件;不在 UI 暴露,普通用户无需感知。
+    # 设 TAISANG_NO_FILE_LOG=1 可关闭(测试用,避免污染家目录)。
+    _setup_file_logging(level_map.get(level, logging.WARNING))
+
+
+def _setup_file_logging(level: int) -> None:
+    """加 RotatingFileHandler 把日志落 ~/.taisang/logs/taisang.log。
+
+    rotating 10MB × 5 份,最多占 ~50MB 磁盘。
+    落盘失败(磁盘满/权限)只 log 一次 warning 到 stderr,不阻断启动。
+    日志内容跟 stdout 完全一致,只是多一份持久化副本供排障/报 bug 用。
+    文件日志带完整日期(stdout 只带时分秒),方便跨天排查。
+    """
+    if os.environ.get("TAISANG_NO_FILE_LOG") == "1":
+        return
+
+    from logging.handlers import RotatingFileHandler
+
+    log_dir = Path.home() / ".taisang" / "logs"
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logging.getLogger(__name__).warning(
+            "无法创建日志目录 %s,跳过文件日志: %s", log_dir, e
+        )
+        return
+
+    log_file = log_dir / "taisang.log"
+    try:
+        handler = RotatingFileHandler(
+            log_file,
+            maxBytes=10 * 1024 * 1024,  # 10MB
+            backupCount=5,
+            encoding="utf-8",
+        )
+    except OSError as e:
+        logging.getLogger(__name__).warning(
+            "无法创建日志文件 %s,跳过文件日志: %s", log_file, e
+        )
+        return
+
+    handler.setLevel(level)
+    handler.setFormatter(logging.Formatter(
+        fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    ))
+    logging.getLogger().addHandler(handler)
 
 
 def _make_llm():
