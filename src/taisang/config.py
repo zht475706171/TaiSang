@@ -8,10 +8,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 
 from pydantic import BaseModel
+
+log = logging.getLogger(__name__)
+
+# 模块级缓存:损坏文件每个进程只 warning 一次,避免 _load_settings_file 的
+# 11 个调用点重复刷屏。损坏状态区分于「文件不存在」(正常,不警告)。
+_settings_corruption_warned = False
 
 
 class LLMConfig(BaseModel):
@@ -40,13 +47,33 @@ def _settings_path() -> Path:
 
 
 def _load_settings_file() -> dict:
+    global _settings_corruption_warned
     p = _settings_path()
     if not p.exists():
         return {}
     try:
         return json.loads(p.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        # 损坏文件当空处理,fallback 到 env/默认
+    except json.JSONDecodeError as e:
+        # JSON 语法损坏:用户手滑编辑了 settings.json。
+        # 首次 log warning(落盘 ~/.taisang/logs/taisang.log),后续静默 fallback。
+        # 不抛:让 load_config 继续走 env/默认,服务能启动让用户在前端改回来。
+        if not _settings_corruption_warned:
+            _settings_corruption_warned = True
+            log.warning(
+                "settings.json 损坏,已忽略并 fallback 到 env/默认。"
+                "请检查 %s 的 JSON 语法(第 %d 行:%s)。",
+                p,
+                e.lineno,
+                e.msg,
+            )
+        return {}
+    except OSError as e:
+        # 读不了(权限/IO 错误):同样静默 fallback,首次 log warning。
+        if not _settings_corruption_warned:
+            _settings_corruption_warned = True
+            log.warning(
+                "settings.json 读取失败,已忽略并 fallback 到 env/默认:%s", e
+            )
         return {}
 
 
