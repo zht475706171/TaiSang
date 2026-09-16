@@ -95,6 +95,8 @@ export interface ChatMessage {
   usage?: UsageData
   // run_error
   error?: string
+  // run_error 关联的 trace_id,用于排障(报 bug 时复制给开发者)
+  traceId?: string
   // llm_retry
   retryAttempt?: number    // 第几次重试(1-based)
   delaySec?: number        // 几秒后重试

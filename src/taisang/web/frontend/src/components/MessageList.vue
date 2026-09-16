@@ -41,6 +41,13 @@
       </div>
       <div v-else-if="m.kind === 'run_error'" class="run-error">
         错误: {{ m.error }}
+        <button
+          v-if="m.traceId"
+          class="copy-trace-btn"
+          @click="copyTraceId(m.traceId)"
+        >
+          复制 trace_id
+        </button>
       </div>
     </template>
     <!-- thinking / stopping 指示器放底部:用户视线在最新消息下方,符合"等待回复出现"的直觉 -->
@@ -66,10 +73,33 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, onMounted } from 'vue'
 import type { ChatMessage } from '@/types'
+import { MessagePlugin } from 'tdesign-vue-next'
 import ThinkingIndicator from './ThinkingIndicator.vue'
 import ToolCard from './ToolCard.vue'
 import ConfirmCard from './ConfirmCard.vue'
 import UsageLine from './UsageLine.vue'
+
+async function copyTraceId(traceId: string) {
+  try {
+    await navigator.clipboard.writeText(traceId)
+    MessagePlugin.success('trace_id 已复制,报 bug 时贴给开发者')
+  } catch {
+    // clipboard API 失败(老浏览器/非 https),fallback execCommand
+    const textarea = document.createElement('textarea')
+    textarea.value = traceId
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.select()
+    try {
+      document.execCommand('copy')
+      MessagePlugin.success('trace_id 已复制,报 bug 时贴给开发者')
+    } catch {
+      MessagePlugin.error(`复制失败,请手动复制: ${traceId}`)
+    }
+    document.body.removeChild(textarea)
+  }
+}
 
 const props = withDefaults(defineProps<{
   messages: ChatMessage[]
@@ -227,6 +257,25 @@ function renderMarkdown(text: string): string {
   border-radius: 6px;
   font-size: 13px;
   margin: 8px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.copy-trace-btn {
+  background: transparent;
+  border: 1px solid var(--td-error-color, #d54941);
+  color: var(--td-error-color, #d54941);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.copy-trace-btn:hover {
+  background: var(--td-error-color-1, #fff0f0);
 }
 
 /* 排队区:思考期间发的消息,后端还没开始跑 */

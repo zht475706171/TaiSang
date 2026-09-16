@@ -193,8 +193,8 @@ export function useChatStream(
     messages.value.push({ id: nextId(), kind: 'usage', usage })
   }
 
-  function pushRunError(error: string) {
-    messages.value.push({ id: nextId(), kind: 'run_error', error })
+  function pushRunError(error: string, traceId?: string) {
+    messages.value.push({ id: nextId(), kind: 'run_error', error, traceId })
   }
 
   // Task 14: 子 agent 事件嵌套渲染辅助函数
@@ -652,12 +652,12 @@ export function useChatStream(
       pushPermission(d.token, d.path)
     })
     eventSource.addEventListener('run_error', (e: MessageEvent) => {
-      const d = safeParse<{ error: string }>(e.data)
+      const d = safeParse<{ error: string; trace_id?: string }>(e.data)
       if (!d) return
       clearThinking()
       clearStreaming()
       stopping.value = false
-      pushRunError(d.error || '未知错误')
+      pushRunError(d.error || '未知错误', d.trace_id)
     })
     eventSource.addEventListener('run_end', () => {
       clearThinking()

@@ -160,7 +160,10 @@ def _run_next(registry: SessionRegistry, sess, session_id: str, loop) -> None:
                 )
         except Exception as e:  # noqa: BLE001
             log.exception("agent run failed: %s", e)
-            sess.broker.publish("run_error", {"error": f"agent run failed: {e}"})
+            sess.broker.publish(
+                "run_error",
+                {"error": f"agent run failed: {e}", "trace_id": trace_id},
+            )
         finally:
             trace_id_var.reset(token)
             try:

@@ -57,6 +57,19 @@ def span(name: str, **fields) -> Iterator[str]:
     trace_id/span_id/parent_span_id 不在 extra 里传,由 cli.main 的
     LogRecordFactory 从 contextvar 自动补到 record;extra 只放业务字段。
     """
+    sid, t0, token_span, token_parent = start_span(name, **fields)
+    try:
+        yield sid
+    finally:
+        end_span(name, sid, t0, token_span, token_parent, **fields)
+
+
+def start_span(name: str, **fields) -> tuple[str, float, object, object]:
+    """手动开始一个 span,返回 (sid, t0, token_span, token_parent)。
+
+    用于不能用 with 的场景(如 generator + retry 包装)。
+    调用方必须在 finally 里调 end_span(name, sid, t0, token_span, token_parent, **fields)。
+    """
     sid = new_span_id()
     # 先 set span_id,再记 start 日志,这样 factory 会把新 span_id 写进 record
     token_span = span_id_var.set(sid)
@@ -70,22 +83,37 @@ def span(name: str, **fields) -> Iterator[str]:
             **fields,
         },
     )
+    return sid, t0, token_span, token_parent
+
+
+def end_span(
+    name: str,
+    sid: str,
+    t0: float,
+    token_span: object,
+    token_parent: object,
+    **fields,
+) -> None:
+    """手动结束一个 span。必须和 start_span 配对,在 finally 里调。"""
+    duration_ms = (time.perf_counter() - t0) * 1000
+    log.info(
+        "span end: %s (%.1fms)",
+        name,
+        duration_ms,
+        extra={
+            "span_name": name,
+            "duration_ms": round(duration_ms, 1),
+            **fields,
+        },
+    )
     try:
-        yield sid
-    finally:
-        duration_ms = (time.perf_counter() - t0) * 1000
-        log.info(
-            "span end: %s (%.1fms)",
-            name,
-            duration_ms,
-            extra={
-                "span_name": name,
-                "duration_ms": round(duration_ms, 1),
-                **fields,
-            },
-        )
         span_id_var.reset(token_span)
+    except (ValueError, LookupError, RuntimeError):
+        pass  # token 已 reset,忽略(防止双重 end)
+    try:
         parent_span_id_var.reset(token_parent)
+    except (ValueError, LookupError, RuntimeError):
+        pass
 
 
 class TraceLogFilter(logging.Filter):

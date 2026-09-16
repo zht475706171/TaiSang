@@ -35,6 +35,7 @@ from pathlib import Path
 from ..storage.paths import PathManager
 from .confirm import AutoDenyConfirmer
 from .permission import AutoApprovePermissionManager, PermissionManager
+from .trace import span
 
 log = logging.getLogger(__name__)
 
@@ -864,15 +865,19 @@ class ToolRegistry:
             raise InterruptedError("tool execution cancelled by user")
         # 每次调用前同步 cwd(Bash cd 后文件工具跟随)
         self._sync_cwd()
-        try:
-            # 透传 cancel_event 给支持的工具(目前只有 BashTool)。
-            # 用 inspect 检查 run 签名是否接受 cancel_event 参数,兼容旧工具。
-            import inspect as _inspect
-            sig = _inspect.signature(tool.run)
-            if "cancel_event" in sig.parameters:
-                return tool.run(args, cancel_event=self._cancel_event)
-            return tool.run(args)
-        except InterruptedError:
-            raise  # 透传,主循环 catch 走中断分支
-        except Exception as e:
-            return {"error": f"tool {name} failed: {e}"}
+        # 用 span 包整个工具调用,trace_id 从 contextvar 取(贯穿当前 turn)。
+        # 一处改动覆盖所有工具(Read/Grep/Glob/Edit/Write/Bash/Todo/Skill/MCP/Agent)。
+        # 用 tool_name 避免和 span() 的 name 参数冲突。
+        with span("tool", tool_name=name):
+            try:
+                # 透传 cancel_event 给支持的工具(目前只有 BashTool)。
+                # 用 inspect 检查 run 签名是否接受 cancel_event 参数,兼容旧工具。
+                import inspect as _inspect
+                sig = _inspect.signature(tool.run)
+                if "cancel_event" in sig.parameters:
+                    return tool.run(args, cancel_event=self._cancel_event)
+                return tool.run(args)
+            except InterruptedError:
+                raise  # 透传,主循环 catch 走中断分支
+            except Exception as e:
+                return {"error": f"tool {name} failed: {e}"}

@@ -10,11 +10,13 @@ import pytest
 
 from taisang.agent_core.trace import (
     TraceLogFilter,
+    end_span,
     new_span_id,
     new_trace_id,
     parent_span_id_var,
     span,
     span_id_var,
+    start_span,
     trace_id_var,
 )
 
@@ -183,3 +185,96 @@ def test_trace_log_filter_does_not_overwrite_existing():
     filt.filter(record)
     assert record.trace_id == "preset1234567890"
     assert record.span_id == "preset12"
+
+
+def test_start_span_end_span_pair():
+    """手动 start_span / end_span 配对,效果和 with span() 一样。"""
+    span_id_before = span_id_var.get()
+    sid, t0, token_span, token_parent = start_span("manual", foo="bar")
+    try:
+        assert span_id_var.get() == sid
+        assert parent_span_id_var.get() == sid
+    finally:
+        end_span("manual", sid, t0, token_span, token_parent, foo="bar")
+    assert span_id_var.get() == span_id_before
+
+
+def test_start_span_end_span_on_exception():
+    """异常路径 end_span 也必须 reset contextvar。"""
+    span_id_before = span_id_var.get()
+    sid, t0, token_span, token_parent = start_span("manual")
+    try:
+        raise RuntimeError("boom")
+    except RuntimeError:
+        end_span("manual", sid, t0, token_span, token_parent)
+    assert span_id_var.get() == span_id_before
+
+
+def test_end_span_double_call_safe():
+    """end_span 调两次不应抛(LookupError 兜底)。"""
+    sid, t0, token_span, token_parent = start_span("manual")
+    end_span("manual", sid, t0, token_span, token_parent)
+    # 第二次调用 token 已失效,应 silently 跳过
+    end_span("manual", sid, t0, token_span, token_parent)
+
+
+def test_span_with_extra_fields():
+    """span 的 **fields 字段应进入 LogRecord,供后续分析。"""
+    import logging as _logging
+
+    records: list[_logging.LogRecord] = []
+
+    class _Capture(_logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    # 监听 taisang.agent_core.trace(span 内部 log 用的 logger 名)
+    logger = _logging.getLogger("taisang.agent_core.trace")
+    logger.setLevel(_logging.DEBUG)
+    handler = _Capture()
+    logger.addHandler(handler)
+    try:
+        with span("test", model="deepseek-chat", step=3):
+            pass
+    finally:
+        logger.removeHandler(handler)
+
+    # 应有 2 条记录:start + end
+    assert len(records) == 2
+    start_rec, end_rec = records
+    assert start_rec.span_name == "test"
+    assert start_rec.model == "deepseek-chat"
+    assert start_rec.step == 3
+    assert end_rec.span_name == "test"
+    assert end_rec.model == "deepseek-chat"
+    assert hasattr(end_rec, "duration_ms")
+    assert end_rec.duration_ms >= 0
+
+
+def test_span_tool_name_field_not_conflicting():
+    """span() 调用时传 tool_name 不应和 span 的 name 参数冲突。
+
+    回归测试:ToolRegistry.call 用 with span("tool", tool_name=name),
+    之前用 name=name 会报 'span() got multiple values for argument name'。
+    """
+    import logging as _logging
+
+    records: list[_logging.LogRecord] = []
+
+    class _Capture(_logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    logger = _logging.getLogger("taisang.agent_core.trace")
+    logger.setLevel(_logging.DEBUG)
+    handler = _Capture()
+    logger.addHandler(handler)
+    try:
+        with span("tool", tool_name="read_file"):
+            pass
+    finally:
+        logger.removeHandler(handler)
+
+    assert len(records) == 2
+    assert records[0].span_name == "tool"
+    assert records[0].tool_name == "read_file"
