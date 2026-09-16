@@ -328,3 +328,94 @@ extend-exclude = "tests/fixtures"
 - `shutil.rmtree(ignore_errors=True)` 不够,它只忽略 rmtree 自己的错,不管后续 writer
 - 测试复现方法:单独线程持 `sess.lock` 循环写 jsonl,主线程 delete,断言 writer 线程 errors 列表为空
 - 幂等性:delete 不存在的会话返回 True(前端照常移除),run 卡死才返回 False → 路由二次查 get_or_load 区分 404 vs 409
+
+### with-close 只 flush 不 fsync,断电丢最后一行(2026-09-16)
+
+**问题**:`with open(...) as f: f.write(line)` 退出时自动 close → flush,但**只到 OS page cache**,断电/蓝屏仍丢。
+
+**解法**:
+```python
+with open(path, "a", encoding="utf-8") as f:
+    f.write(line)
+    f.flush()
+    os.fsync(f.fileno())  # 逼 OS 把 page cache 写到硬盘扇区
+```
+`write_meta` 用 tmp + os.replace 原子替换,还要 fsync 父目录(Linux):
+```python
+fd = os.open(str(parent_dir), os.O_RDONLY)
+try:
+    os.fsync(fd)
+finally:
+    os.close(fd)
+```
+Windows NTFS 不需要 fsync 父目录,跳过。
+
+**教训**:
+- 进程崩溃(with 退出 flush)和断电(fsync)是两档持久化保证
+- 用户数据(对话/meta)要 fsync,日志/普通数据可省
+- fsync 父目录是 PostgreSQL/SQLite 都做的细节,Linux 上 rename/replace 的元数据修改也需要
+
+### setLogRecordFactory 比 addFilter 更可靠(2026-09-16)
+
+**问题**:filter 加在 logger 上时,handler 仍可能 format 未补字段的 record(如第三方库直接 handler.handle)。
+
+**解法**:用 `logging.setLogRecordFactory` 在 record 构造时就补字段:
+```python
+_record_factory = logging.getLogRecordFactory()
+def _factory(*args, **kwargs):
+    record = _record_factory(*args, **kwargs)
+    if not hasattr(record, "trace_id"):
+        record.trace_id = trace_id_var.get()
+    return record
+logging.setLogRecordFactory(_factory)
+```
+
+**教训**:给所有 LogRecord 补字段用 RecordFactory,不是 addFilter。
+
+### contextvars 不跨线程,跨 executor 要显式 set(2026-09-16)
+
+**问题**:`threading.Thread` 不会自动 copy 父线程 contextvar;ThreadPoolExecutor 工作线程看不到主线程 set 之后的值。
+
+**解法**:跨线程边界显式 set + finally reset:
+```python
+def _run():
+    token = trace_id_var.set(trace_id)
+    try:
+        # ... 干活 ...
+    finally:
+        trace_id_var.reset(token)
+```
+
+**教训**:
+- contextvars 自动在 asyncio task 间隔离传递,但**不跨 Thread/executor**
+- 跨线程必须显式 set(或在 spawn 时用 `contextvars.copy_context().run()`)
+
+### contextvars Token reset 重复调用抛 RuntimeError(2026-09-16)
+
+**问题**:`span_id_var.reset(token)` 第二次调用抛 `RuntimeError: Token has already been used once`,不是 ValueError/LookupError。
+
+**解法**:except 加 RuntimeError:
+```python
+try:
+    span_id_var.reset(token_span)
+except (ValueError, LookupError, RuntimeError):
+    pass
+```
+
+**教训**:contextvars.Token 是一次性的,reset 后再用抛 RuntimeError。手动 end_span 的双重调用安全需要兜底这个异常。
+
+### span() 的 name 参数和 kwarg 冲突(2026-09-16)
+
+**问题**:`with span("tool", name=name)` 报 `span() got multiple values for argument 'name'`。
+
+**解法**:换 kwarg 名:`with span("tool", tool_name=name)`。
+
+**教训**:contextmanager 的第一个位置参数名要避开常见业务字段名(name/id/type 等),业务字段用前缀区分(tool_name/span_id 等)。
+
+### MockLLM 没 model 属性(2026-09-16)
+
+**问题**:测试用 MockLLM,生产代码 `with span("LLM call", model=self.llm.model, ...)` 在测试中 AttributeError。
+
+**解法**:`getattr(self.llm, "model", "-")` 兜底。
+
+**教训**:span/日志的字段提取对 Mock 对象要 getattr 兜底,Mock 不一定实现所有真实 client 的属性。
