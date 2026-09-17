@@ -416,3 +416,106 @@ def test_get_or_load_reconstructs_todos_from_disk(tmp_path, mock_env):
     assert sess.agent.todos[0]["content"] == "读 A"
     assert sess.agent.todos[0]["activeForm"] == "正在读 A"
     assert sess.agent.todos[1]["status"] == "pending"
+
+
+def test_gc_excess_no_op_when_under_limit(tmp_path, mock_env):
+    """session 数 < 上限时 gc_excess 不删,返回 0。"""
+    reg = SessionRegistry(tmp_path)
+    for i in range(5):
+        reg.create(title=f"会话{i}")
+    deleted = reg.gc_excess()
+    assert deleted == 0
+    assert len(reg.list_all()) == 5
+
+
+def test_gc_excess_deletes_oldest_when_over_limit(tmp_path, mock_env):
+    """session 数 > 上限时,删除最早(updated_at 最旧),保留最新的。
+
+    用大 max 创建 3 个 session(避免 create 时 GC 误删),再降到 2 调 gc_excess。
+    """
+    import json
+    from taisang.config import _settings_path
+
+    reg = SessionRegistry(tmp_path)
+    settings = _settings_path()
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps({"max_sessions": 100}), encoding="utf-8")
+
+    sids = []
+    for i in range(3):
+        sid = reg.create(title=f"会话{i}")
+        sids.append(sid)
+        sess = reg.get_or_load(sid)
+        sess.updated_at = 1000.0 + i  # 1000, 1001, 1002
+        sess.store.write_meta({"title": f"会话{i}", "updated_at": 1000.0 + i})
+
+    # 降到 max=2,手动调 gc_excess:删最早(updated_at=1000)
+    settings.write_text(json.dumps({"max_sessions": 2}), encoding="utf-8")
+    deleted = reg.gc_excess()
+    assert deleted == 1
+    remaining = {item["id"] for item in reg.list_all()}
+    assert sids[0] not in remaining  # 最早的被删
+    assert sids[1] in remaining
+    assert sids[2] in remaining
+
+
+def test_gc_excess_respects_custom_max_sessions(tmp_path, mock_env):
+    """settings.json 的 max_sessions 字段覆盖默认 50。"""
+    import json
+    from taisang.config import _settings_path
+    settings = _settings_path()
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps({"max_sessions": 3}), encoding="utf-8")
+    reg = SessionRegistry(tmp_path)
+    assert reg._load_max_sessions() == 3
+
+
+def test_gc_excess_uses_default_50_when_no_settings(tmp_path, mock_env):
+    """没 settings.json 时用默认 50。"""
+    reg = SessionRegistry(tmp_path)
+    assert reg._load_max_sessions() == 50
+
+
+def test_gc_excess_skips_invalid_max_sessions(tmp_path, mock_env):
+    """settings.json 的 max_sessions 非法(<=0 或非 int)时用默认 50。"""
+    import json
+    from taisang.config import _settings_path
+    settings = _settings_path()
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps({"max_sessions": -5}), encoding="utf-8")
+    reg = SessionRegistry(tmp_path)
+    assert reg._load_max_sessions() == 50
+
+    settings.write_text(json.dumps({"max_sessions": "not a number"}), encoding="utf-8")
+    assert reg._load_max_sessions() == 50
+
+
+def test_create_triggers_gc_when_over_limit(tmp_path, mock_env):
+    """create() 后触发 gc_excess,超额时自动删最早。
+
+    建 3 个 session(max=3 不触发),第 4 个 create 触发 GC 删最早。
+    注意第 4 个 create 之后立即 GC,此时 sid4 的 updated_at 还没手动设,
+    list_all 里 sid4 用系统时间(远大于 1000+),所以最早仍是 sids[0]。
+    """
+    import json
+    from taisang.config import _settings_path
+    settings = _settings_path()
+    settings.parent.mkdir(parents=True, exist_ok=True)
+    settings.write_text(json.dumps({"max_sessions": 3}), encoding="utf-8")
+
+    reg = SessionRegistry(tmp_path)
+    sids = []
+    for i in range(3):
+        sid = reg.create(title=f"会话{i}")
+        sids.append(sid)
+        sess = reg.get_or_load(sid)
+        sess.updated_at = 1000.0 + i
+        sess.store.write_meta({"title": f"会话{i}", "updated_at": 1000.0 + i})
+
+    # 第 4 个 create 应触发 GC(max=3,有 4 个,删 updated_at=1000 的)
+    sid4 = reg.create(title="会话3")
+
+    remaining = {item["id"] for item in reg.list_all()}
+    assert sids[0] not in remaining  # 最早被 GC
+    assert sid4 in remaining
+    assert len(remaining) == 3

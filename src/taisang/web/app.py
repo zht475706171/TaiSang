@@ -124,6 +124,16 @@ class SwitchDirReq(BaseModel):
     path: str
 
 
+def _safe_gc_excess(registry: SessionRegistry) -> None:
+    """lifespan startup 调:清理超额 session,失败不阻断服务。"""
+    try:
+        deleted = registry.gc_excess()
+        if deleted:
+            log.info("startup gc_excess deleted %d sessions", deleted)
+    except Exception as e:  # noqa: BLE001
+        log.warning("startup gc_excess failed: %s", e)
+
+
 def _run_next(registry: SessionRegistry, sess, session_id: str, loop) -> None:
     """尝试跑下一个 turn: 拿锁 + 拼接 queue + 跑。
     拿不到锁(return False) → 已有 turn 在跑, run_end 会自动调本函数。
@@ -208,6 +218,10 @@ def create_app(source_root: Path, allow_dirs: list[Path] | None = None, skip_per
         # 不阻断服务。失败的 server 前端 /mcp 页能看到,用户可手动重连。
         mcp_manager = registry._mcp_manager
         connect_task = asyncio.create_task(mcp_manager.connect_all())
+        # 启动时清理超额 session(默认上限 50,超出删最早的)。
+        # 跑在工作线程避免阻塞 event loop;delete() 内部有锁等待可能耗时。
+        loop = asyncio.get_running_loop()
+        loop.run_in_executor(None, lambda: _safe_gc_excess(registry))
         # 不 await:fire-and-forget,服务立即就绪,MCP 在后台连
         yield
         # shutdown:cancel 后台连接任务(若还在跑),避免 lingering task

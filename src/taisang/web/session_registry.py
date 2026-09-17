@@ -28,6 +28,11 @@ import structlog
 
 log = structlog.get_logger(__name__)
 
+# 会话数量上限。超过后自动删最早的(updated_at 最旧的)。
+# 50 个对话对个人用户足够,长期使用不膨胀占磁盘。
+# 可通过 settings.json 的 max_sessions 字段覆盖。
+MAX_SESSIONS_DEFAULT = 50
+
 from ..agent_core.permission import WebPermissionManager
 from ..agent_core.service import AgentService
 from ..config import LLMConfig, load_config
@@ -152,12 +157,20 @@ class SessionRegistry:
 
         title 留空 → 前端显示"新会话",首条消息发出时由
         set_title_from_query 自动取 query 前 40 字替换。
+
+        新建后触发 gc_excess:超过 max_sessions(默认 50)时删最早的,
+        避免长期使用 sessions 目录膨胀。
         """
         session_id = uuid.uuid4().hex[:8]
         sess = self._build_session(session_id)
         sess.title = title  # 空就是空,不 fallback 到 id
         with self._lock:
             self._sessions[session_id] = sess
+        # GC 放在 create 成功之后,避免新建失败时误删老 session
+        try:
+            self.gc_excess()
+        except Exception as e:  # noqa: BLE001
+            log.warning("gc_excess after create failed", error=str(e))
         return session_id
 
     def set_skip_permissions(self, enabled: bool) -> None:
@@ -292,6 +305,53 @@ class SessionRegistry:
             )
         items.sort(key=lambda x: x["updated_at"], reverse=True)
         return items
+
+    def _load_max_sessions(self) -> int:
+        """从 settings.json 读 max_sessions,默认 50。"""
+        import json
+        from ..config import _settings_path
+        try:
+            p = _settings_path()
+            if p.exists():
+                data = json.loads(p.read_text(encoding="utf-8"))
+                v = data.get("max_sessions")
+                if isinstance(v, int) and v > 0:
+                    return v
+        except (json.JSONDecodeError, OSError):
+            pass  # settings 损坏由 config.py warning,这里静默
+        return MAX_SESSIONS_DEFAULT
+
+    def gc_excess(self) -> int:
+        """清理超额 session:超过 max_sessions 时删最早的(updated_at 最旧)。
+
+        策略:
+        - 拿 list_all(磁盘 + 内存并集,按 updated_at 倒序)
+        - 超出上限的尾部 session 逐个调 delete() 删除
+        - delete() 失败(lock 拿不到/run 卡死)跳过,继续删下一个
+        - 内存中 active session 也可能被删,但用户同时开 50+ 会话几乎不可能
+          且 delete() 会先 pop 内存,新 run 进不来
+
+        返回删除的 session 数。在 create() 后 + lifespan startup 时调用。
+        """
+        max_sessions = self._load_max_sessions()
+        items = self.list_all()  # 已按 updated_at 倒序
+        if len(items) <= max_sessions:
+            return 0
+        excess = items[max_sessions:]  # 最早的(尾部)
+        deleted = 0
+        for item in excess:
+            sid = item["id"]
+            try:
+                if self.delete(sid):
+                    deleted += 1
+                    log.info("gc_excess deleted session", session_id=sid, updated_at=item.get("updated_at"))
+                else:
+                    log.warning("gc_excess skip session (lock busy)", session_id=sid)
+            except Exception as e:  # noqa: BLE001
+                log.warning("gc_excess failed for session", session_id=sid, error=str(e))
+        if deleted:
+            log.info("gc_excess done", deleted=deleted, remaining=len(items) - deleted, max=max_sessions)
+        return deleted
 
     def update_meta_after_turn(self, session_id: str, last_user_query: str) -> None:
         """turn 结束后更新 meta.json。title 取 last_user_query 前 40 字。
