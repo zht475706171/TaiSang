@@ -46,6 +46,7 @@ def test_e2e_a_mode_subagent_completes_and_returns_text(tmp_path: Path, monkeypa
         LLMResponse(text="根据子 agent 报告,utils.py 在 src/ 下", tool_calls=[]),
     ])
     import taisang.agent_core.agent_tool as at_mod
+    original_make = at_mod._make_child_llm
     at_mod._make_child_llm = lambda parent_llm: child_llm
     try:
         svc = AgentService(
@@ -55,7 +56,7 @@ def test_e2e_a_mode_subagent_completes_and_returns_text(tmp_path: Path, monkeypa
         answer = svc.run("帮我找 utils 文件")
         assert "utils.py" in answer.text
     finally:
-        at_mod._make_child_llm = lambda parent_llm: parent_llm
+        at_mod._make_child_llm = original_make
 
 
 def test_e2e_fork_mode_inherits_parent_context(tmp_path: Path, monkeypatch) -> None:
@@ -80,6 +81,7 @@ def test_e2e_fork_mode_inherits_parent_context(tmp_path: Path, monkeypatch) -> N
         LLMResponse(text="fork 完成了 Task 3", tool_calls=[]),
     ])
     import taisang.agent_core.agent_tool as at_mod
+    original_make = at_mod._make_child_llm
     at_mod._make_child_llm = lambda parent_llm: child_llm
     try:
         svc = AgentService(
@@ -92,7 +94,7 @@ def test_e2e_fork_mode_inherits_parent_context(tmp_path: Path, monkeypatch) -> N
         # 子 agent 看到了父的"用户原始问题"
         assert "用户原始问题" in str(seen)
     finally:
-        at_mod._make_child_llm = lambda parent_llm: parent_llm
+        at_mod._make_child_llm = original_make
 
 
 def test_e2e_async_subagent_notifies_parent(tmp_path: Path, monkeypatch) -> None:
@@ -109,6 +111,7 @@ def test_e2e_async_subagent_notifies_parent(tmp_path: Path, monkeypatch) -> None
         LLMResponse(text="已派 async 任务,等通知", tool_calls=[]),
     ])
     import taisang.agent_core.agent_tool as at_mod
+    original_make = at_mod._make_child_llm
     at_mod._make_child_llm = lambda parent_llm: child_llm
     try:
         svc = AgentService(
@@ -124,7 +127,7 @@ def test_e2e_async_subagent_notifies_parent(tmp_path: Path, monkeypatch) -> None
         assert len(svc._pending_async_notifications) > 0
         assert "async 子 agent 结果" in svc._pending_async_notifications[0]
     finally:
-        at_mod._make_child_llm = lambda parent_llm: parent_llm
+        at_mod._make_child_llm = original_make
 
 
 def test_e2e_verification_agent_defaults_async(tmp_path: Path, monkeypatch) -> None:
@@ -139,6 +142,7 @@ def test_e2e_verification_agent_defaults_async(tmp_path: Path, monkeypatch) -> N
         LLMResponse(text="验证通过", tool_calls=[]),
     ])
     import taisang.agent_core.agent_tool as at_mod
+    original_make = at_mod._make_child_llm
     at_mod._make_child_llm = lambda parent_llm: child_llm
     verification = AgentDefinition(
         agent_type="verification", when_to_use="验证",
@@ -157,7 +161,7 @@ def test_e2e_verification_agent_defaults_async(tmp_path: Path, monkeypatch) -> N
         assert len(svc._pending_async_notifications) > 0
         assert "VERDICT: PASS" in svc._pending_async_notifications[0]
     finally:
-        at_mod._make_child_llm = lambda parent_llm: parent_llm
+        at_mod._make_child_llm = original_make
 
 
 def test_e2e_recursion_guard_subagent_cannot_dispatch(tmp_path: Path, monkeypatch) -> None:
@@ -184,6 +188,7 @@ def test_e2e_recursion_guard_subagent_cannot_dispatch(tmp_path: Path, monkeypatc
     child_llm.chat = fake_chat
     child_llm.chat_stream = fake_chat_stream
     import taisang.agent_core.agent_tool as at_mod
+    original_make = at_mod._make_child_llm
     at_mod._make_child_llm = lambda parent_llm: child_llm
     try:
         svc = AgentService(
@@ -192,7 +197,7 @@ def test_e2e_recursion_guard_subagent_cannot_dispatch(tmp_path: Path, monkeypatc
         )
         svc.run("派子 agent")
     finally:
-        at_mod._make_child_llm = lambda parent_llm: parent_llm
+        at_mod._make_child_llm = original_make
     # 子 agent 工具列表不含 Agent
     all_tools = set()
     for schema_list in captured:
@@ -219,6 +224,7 @@ def test_e2e_usage_report_accumulates_child_usage(tmp_path: Path, monkeypatch) -
                     usage={"prompt_tokens": 50, "completion_tokens": 20, "total_tokens": 70}),
     ])
     import taisang.agent_core.agent_tool as at_mod
+    original_make = at_mod._make_child_llm
     at_mod._make_child_llm = lambda parent_llm: child_llm
     try:
         svc = AgentService(
@@ -229,4 +235,4 @@ def test_e2e_usage_report_accumulates_child_usage(tmp_path: Path, monkeypatch) -
         # 主 session 累计 = 主(300+70) + 子(150) = 520
         assert svc._session_usage["total_tokens"] == 520
     finally:
-        at_mod._make_child_llm = lambda parent_llm: parent_llm
+        at_mod._make_child_llm = original_make
