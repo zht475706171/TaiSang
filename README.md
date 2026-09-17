@@ -218,6 +218,78 @@ taisang chat --repo ~/repos/my-project
 
 ---
 
+## 🛠️ 故障排查
+
+### 装不上 / `pip install` 报错
+
+- **Python 版本:** 需要 3.11+,跑 `python --version` 确认
+- **权限问题:** Windows 不要装到 `C:\Program Files`,用 `pip install --user -e .` 或 venv
+- **网络慢:** 国内可加 `-i https://pypi.tuna.tsinghua.edu.cn/simple`
+- **uv 同步:** 用 uv 的话 `uv sync --extra web --extra dev`
+
+### 启动报 `port already in use`(端口被占)
+
+默认端口 `7392`。两种解法:
+
+```bash
+# 方式一:换端口
+taisang web --port 8000
+
+# 方式二:找出占用进程关掉
+# Windows
+netstat -ano | findstr :7392
+taskkill /PID <PID> /F
+# Linux/Mac
+lsof -i :7392
+kill -9 <PID>
+```
+
+### LLM 连不上 / 响应 401 / 超时
+
+- **api_key 错:** Web UI 右上角 ⚙️ 重新填,或检查 `~/.taisang/settings.json`
+- **base_url 末尾:** 不要带 `/v1`,TaiSang 会自己拼(`/v1/chat/completions`)
+- **模型名拼错:** DeepSeek 用 `deepseek-chat` / `deepseek-reasoner`,Kimi 用 `moonshot-v1-8k` 等
+- **本地 ollama:** `base_url=http://localhost:11434`,model 填 ollama 拉下来的 tag
+- **代理问题:** 公司网络下设置 `HTTPS_PROXY` 环境变量
+
+### MCP server 启动失败
+
+- **stdio 类型:** 检查 `command` 在 PATH 里(跑 `which <cmd>` / `where <cmd>`)
+- **sse 类型:** URL 要包含完整路径(如 `https://xxx/sse`),不是只给 host
+- **看日志:** MCP 启动错误会落到 `~/.taisang/logs/taisang.log`,grep `MCP` 看详情
+- **重连:** Web UI `/mcp` 页点「重连」按钮,不用重启服务
+
+### settings.json 损坏
+
+启动时会弹 warning 带文件路径 + 行号。两种修法:
+
+- **手动改:** 按行号修 JSON 语法错误
+- **删掉重来:** 删 `~/.taisang/settings.json`,重启会生成默认配置
+
+### session 数据丢失 / resume 失败
+
+- **断电保护:** conversation.jsonl 每次 append 都 fsync,断电不丢已完成 turn
+- **session 列表空:** 检查 `~/.taisang/sessions/` 目录,每个 session 一个子目录
+- **超 50 条被删:** 默认上限 50,超过会自动删最早的;想保留更多在 settings.json 设 `"max_sessions": 100`
+
+### 报 bug 要附什么
+
+报 bug 时请附上 **trace_id** + **log 片段**,一秒还原现场:
+
+1. **trace_id:** Web UI 出现 run_error 卡片时,点「复制 trace_id」按钮
+2. **log:** 把 trace_id 贴给开发者,开发者跑:
+   ```bash
+   grep <trace_id> ~/.taisang/logs/taisang.log
+   ```
+   一秒看到整个 turn:哪个 turn 开始、调了哪些 LLM(model/mode/step/duration)、调了哪些工具(tool_name/duration)、哪一步失败
+3. **复现步骤:** 越细越好(用什么 model、输入什么、点了什么按钮)
+
+log 位置:
+- Windows: `C:\Users\<你>\.taisang\logs\taisang.log`(rotating 10MB×5)
+- Linux/Mac: `~/.taisang/logs/taisang.log`
+
+---
+
 ## License
 
 MIT
