@@ -1,0 +1,36 @@
+# 版本控制 / CI 元数据
+.git
+.github
+.gitignore
+.idea
+
+# Python 缓存与测试产物
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+tests/
+
+# 前端依赖(node_modules 由 stage 1 重新装)
+src/taisang/web/frontend/node_modules/
+src/taisang/web/frontend/dist/
+
+# 本地开发数据 / 临时文件
+.taisang/
+taisang_test_home/
+C:temptaisang_test_home
+memory/
+*.log
+
+# 文档
+docs/
+README_EN.md
+
+# Docker 自身
+Dockerfile
+.dockerignore
+.docker/

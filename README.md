@@ -52,6 +52,37 @@ taisang chat
 taisang chat --repo ~/repos/my-project
 ```
 
+### Docker 部署
+
+```bash
+# 构建镜像(多阶段:node 构前端 + python:3.12-slim 跑后端,最终约 354MB)
+docker build -t taisang:latest .
+
+# 起容器(挂载配置 + 项目目录)
+docker run -d --name taisang \
+  -p 8765:8765 \
+  -v ~/.taisang:/home/taisang/.taisang \
+  -v ~/projects:/home/taisang/projects \
+  taisang:latest
+
+# 浏览器打开 http://localhost:8765
+```
+
+或者用 docker-compose:
+
+```bash
+docker compose up -d
+```
+
+`docker-compose.yml` 已预配 volume 和端口,直接 `up -d` 即可。
+
+**说明:**
+- 配置/sessions/logs 挂到宿主 `~/.taisang`,容器重建不丢
+- 工作目录挂到 `~/projects`,agent 在容器内读写宿主代码
+- 容器以非 root 用户 `taisang` (uid 1000) 运行,挂载目录权限要对齐
+- LLM 配置走 `~/.taisang/settings.json`,不需要塞环境变量
+- 国内拉镜像慢:在 Docker Desktop Settings → Docker Engine 加 `registry-mirrors`
+
 ### 首次使用 3 步走
 
 1. **配 LLM key** —— 打开 Web UI 后点右上角 ⚙️ 配置 model / api_key / base_url,保存即生效

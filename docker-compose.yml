@@ -1,0 +1,25 @@
+services:
+  taisang:
+    image: taisang:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: taisang
+    restart: unless-stopped
+    ports:
+      - "${TAISANG_PORT:-8765}:8765"
+    volumes:
+      # 用户配置 / sessions / logs 持久化到宿主 ~/.taisang
+      - ${HOME}/.taisang:/home/taisang/.taisang
+      # 工作目录:把你的 repo 挂进容器,agent 在里面读写代码
+      # 多个 repo 可以挂多个子目录,或挂整个 ~/projects
+      - ${HOME}/projects:/home/taisang/projects
+    environment:
+      - TAISANG_HOST=0.0.0.0
+      - TAISANG_PORT=8765
+      # LLM 配置走 ~/.taisang/settings.json,不需要在这里塞 env
+      # 想用 env 覆盖的话取消注释:
+      # - TAISANG_LLM_BASE_URL=https://api.deepseek.com
+      # - TAISANG_LLM_API_KEY=sk-xxx
+      # - TAISANG_LLM_MODEL=deepseek-chat
+    # tini 已经在 Dockerfile ENTRYPOINT 里,这里不需要再 wrap
